@@ -1,10 +1,13 @@
 """Tests for the git-credential-klangk helper script."""
 
+import importlib.machinery
+import importlib.util
 import json
 import os
 import stat
 import subprocess
 import sys
+import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -19,6 +22,17 @@ SCRIPT = (
     / "tools"
     / "git-credential-klangk"
 )
+
+# The helper is a script (no .py suffix); load it as a module so the pure
+# mechanics (PKCE vectors, provider validation, discovery mapping, token
+# request shapes) can be unit-tested in-process. Module import reads env
+# constants only -- main() is __main__-guarded.
+_loader = importlib.machinery.SourceFileLoader(
+    "git_credential_klangk", str(SCRIPT)
+)
+_spec = importlib.util.spec_from_loader("git_credential_klangk", _loader)
+helper = importlib.util.module_from_spec(_spec)
+_loader.exec_module(helper)
 
 
 @pytest.fixture()
@@ -128,20 +142,34 @@ class _BridgeHandler(BaseHTTPRequestHandler):
         try:
             parsed = json.loads(body)
             self.__class__.requests.append(parsed)
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError, ValueError:
             # The faked provider endpoints receive form-encoded bodies
             # (the helper posts urlencoded data there); they aren't bridge
             # operations, so record them as parsed forms instead.
             try:
                 form = urllib.parse.parse_qs(body.decode())
                 self.__class__.forms.append({k: v[0] for k, v in form.items()})
-            except (UnicodeDecodeError, ValueError):
+            except UnicodeDecodeError, ValueError:
                 pass
             parsed = {}
         self.send_response(self.__class__.response_status)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
         self.wfile.write(self._response_for(self.path, parsed))
+
+    def do_GET(self):
+        """Serve discovery documents: GET <path> from ``routes``, 404
+        otherwise (the helper treats a missing document as 'use the
+        entry's flow')."""
+        body = self.__class__.routes.get(self.path)
+        if body is None:
+            self.send_response(404)
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(body)
 
     def log_message(self, *args):
         pass  # suppress output
@@ -1286,3 +1314,468 @@ class TestDebugRedaction:
         assert result.returncode == 0
         assert "ghp_SUPERSECRET" not in result.stderr
         assert "'password': '***'" in result.stderr
+
+
+# --- authorization_code + PKCE flow (phase 1 mechanics, #3385) --------
+
+
+def _pkce_providers_env(base, **overrides):
+    """One authorization_code_pkce provider entry pointing at the fake
+    server (discovery + endpoints all fake, no live network)."""
+    entry = {
+        "host": "git.example.com",
+        "flow": "authorization_code_pkce",
+        "client_id": "cid-e2e",
+        "authorize_url": f"{base}/login/oauth/authorize",
+        "token_url": f"{base}/login/oauth/access_token",
+        "redirect_uri": "http://127.0.0.1:8124/oauth/callback",
+    }
+    entry.update(overrides)
+    return json.dumps([entry])
+
+
+def _auth_code_discovery(base):
+    """A Gitea-shaped discovery document: no device endpoint, S256
+    supported."""
+    return json.dumps(
+        {
+            "issuer": base,
+            "authorization_endpoint": f"{base}/login/oauth/authorize",
+            "token_endpoint": f"{base}/login/oauth/access_token",
+            "grant_types_supported": ["authorization_code", "refresh_token"],
+            "code_challenge_methods_supported": ["plain", "S256"],
+        }
+    ).encode()
+
+
+def _device_discovery(base):
+    """A GitLab-shaped device-capable document: the device grant listed
+    in grant_types_supported with no device_authorization_endpoint (that
+    key is an OIDC extension GitLab does not emit)."""
+    return json.dumps(
+        {
+            "issuer": base,
+            "token_endpoint": f"{base}/oauth/token",
+            "grant_types_supported": [
+                "authorization_code",
+                "refresh_token",
+                "device_code",
+            ],
+            "code_challenge_methods_supported": ["S256"],
+        }
+    ).encode()
+
+
+def _device_providers_env(base, **overrides):
+    entry = {
+        "host": "git.example.com",
+        "client_id": "cid-e2e",
+        "device_code_url": f"{base}/oauth/authorize_device",
+        "token_url": f"{base}/oauth/token",
+    }
+    entry.update(overrides)
+    return json.dumps([entry])
+
+
+class TestPkceVectors:
+    """The PKCE mechanics against RFC 7636 appendix B."""
+
+    def test_s256_challenge_matches_rfc7636_appendix_b(self):
+        verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+        assert (
+            helper.s256_challenge(verifier)
+            == "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+        )
+
+    def test_make_pkce_pair_shape(self):
+        verifier, challenge = helper.make_pkce_pair()
+        assert len(verifier) == helper.PKCE_VERIFIER_LEN
+        assert set(verifier) <= set(helper.UNRESERVED)
+        assert challenge == helper.s256_challenge(verifier)
+        assert len(challenge) == 43  # base64url(sha256), padding stripped
+
+
+class TestProviderFlowSchema:
+    """The provider map's flow discriminator and per-flow fields."""
+
+    def _entry(self, **overrides):
+        entry = {
+            "host": "git.example.com",
+            "client_id": "cid",
+            "device_code_url": "https://h/oauth/authorize_device",
+            "token_url": "https://h/oauth/token",
+        }
+        entry.update(overrides)
+        return entry
+
+    def test_flow_defaults_to_device_code(self):
+        provider = helper._provider_entry(self._entry())
+        assert provider is not None
+        assert provider["flow"] == helper.FLOW_DEVICE_CODE
+
+    def test_pkce_entry_requires_authorize_url_and_redirect_uri(self):
+        provider = helper._provider_entry(
+            self._entry(
+                flow="authorization_code_pkce",
+                authorize_url="https://h/login/oauth/authorize",
+            )
+        )
+        assert provider is None  # redirect_uri missing
+        provider = helper._provider_entry(
+            self._entry(
+                flow="authorization_code_pkce",
+                authorize_url="https://h/login/oauth/authorize",
+                redirect_uri="http://127.0.0.1:8124/oauth/callback",
+            )
+        )
+        assert provider is not None
+        assert provider["flow"] == helper.FLOW_AUTH_CODE_PKCE
+        assert provider["redirect_uri"].endswith("/oauth/callback")
+
+    def test_unknown_flow_value_is_skipped(self):
+        assert helper._provider_entry(self._entry(flow="implicit")) is None
+
+    def test_stock_providers_stay_device_flow(self, monkeypatch):
+        monkeypatch.setenv("KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID", "gh-id")
+        providers = helper._stock_providers()
+        assert providers["github.com"]["flow"] == helper.FLOW_DEVICE_CODE
+
+
+class TestAuthorizeUrl:
+    def test_authorize_url_carries_pkce_and_state(self):
+        provider = {
+            "client_id": "cid",
+            "authorize_url": "https://h/login/oauth/authorize",
+            "redirect_uri": "http://127.0.0.1:8124/oauth/callback",
+            "scope": "",
+        }
+        url = helper.authorize_url(provider, "the-challenge", "the-state")
+        parsed = urllib.parse.urlsplit(url)
+        assert parsed.netloc == "h"
+        params = urllib.parse.parse_qs(parsed.query)
+        assert params["response_type"] == ["code"]
+        assert params["client_id"] == ["cid"]
+        assert params["code_challenge"] == ["the-challenge"]
+        assert params["code_challenge_method"] == ["S256"]
+        assert params["state"] == ["the-state"]
+        assert params["redirect_uri"] == [
+            "http://127.0.0.1:8124/oauth/callback"
+        ]
+        assert "scope" not in params  # omitted when the entry sets none
+
+    def test_scope_sent_when_entry_sets_one(self):
+        provider = {
+            "client_id": "cid",
+            "authorize_url": "https://h/a",
+            "redirect_uri": "http://127.0.0.1:8124/cb",
+            "scope": "read:repository",
+        }
+        params = urllib.parse.parse_qs(
+            urllib.parse.urlsplit(
+                helper.authorize_url(provider, "c", "s")
+            ).query
+        )
+        assert params["scope"] == ["read:repository"]
+
+
+class TestFlowSelectionMatrix:
+    """select_flow: the discovery document describes the server; the
+    entry is the activation point; challenges catch stale device entries
+    for Gitea-family hosts (#3385)."""
+
+    def _run(
+        self,
+        bridge_server,
+        fake_browser_id,
+        providers_env,
+        stdin_host="git.example.com",
+        extra_stdin="",
+    ):
+        server, port = bridge_server
+        base = f"http://127.0.0.1:{port}"
+        _BridgeHandler.op_bodies = {
+            "peek": json.dumps({"error": "miss"}).encode(),
+            "get": json.dumps({"username": "u", "password": "p"}).encode(),
+        }
+        return run_helper(
+            "get",
+            f"protocol=https\nhost={stdin_host}\n{extra_stdin}\n",
+            env_override={
+                "KLANGKWS_BRIDGE_URL": base,
+                "KLANGKWS_FEATURE_OAUTH_PROVIDERS": providers_env(base),
+            },
+            extra_path=str(fake_browser_id),
+        )
+
+    def test_pkce_flow_uses_pat_dialog_until_the_relay_lands(
+        self, bridge_server, fake_browser_id
+    ):
+        """A PKCE entry whose discovery confirms the grant resolves to
+        the authorization-code flow; phase 1 has no browser relay, so the
+        PAT dialog is the fallback."""
+        server, port = bridge_server
+        base = f"http://127.0.0.1:{port}"
+        _BridgeHandler.routes = {
+            "/.well-known/openid-configuration": _auth_code_discovery(base)
+        }
+        result = self._run(bridge_server, fake_browser_id, _pkce_providers_env)
+        assert result.returncode == 0
+        assert "username=u" in result.stdout
+        ops = [r["operation"] for r in _BridgeHandler.requests]
+        assert ops[0] == "peek"
+        assert "get" in ops  # fell through to the PAT dialog
+        assert "device_flow_show" not in ops
+
+    def test_discovery_confirms_device_flow(
+        self, bridge_server, fake_browser_id
+    ):
+        """A device entry whose discovery advertises the device endpoint
+        keeps the device flow."""
+        server, port = bridge_server
+        base = f"http://127.0.0.1:{port}"
+        _BridgeHandler.routes = {
+            "/.well-known/openid-configuration": _device_discovery(base),
+            "/oauth/authorize_device": json.dumps(
+                {
+                    "device_code": "dc",
+                    "user_code": "UC-1",
+                    "verification_uri": f"{base}/verify",
+                    "interval": 0,
+                    "expires_in": 60,
+                }
+            ).encode(),
+            "/oauth/token": json.dumps(
+                {"access_token": "tok", "token_type": "bearer"}
+            ).encode(),
+        }
+        result = self._run(
+            bridge_server, fake_browser_id, _device_providers_env
+        )
+        assert result.returncode == 0
+        assert "password=tok" in result.stdout
+        ops = [r["operation"] for r in _BridgeHandler.requests]
+        assert "device_flow_show" in ops
+
+    def test_discovery_overrides_a_stale_entry(
+        self, bridge_server, fake_browser_id
+    ):
+        """The entry says device_code but the server advertises
+        authorization_code only: the document wins, and (phase 1) the PAT
+        dialog follows."""
+        server, port = bridge_server
+        base = f"http://127.0.0.1:{port}"
+        _BridgeHandler.routes = {
+            "/.well-known/openid-configuration": _auth_code_discovery(base),
+            "/oauth/authorize_device": json.dumps(
+                {
+                    "device_code": "dc",
+                    "user_code": "UC-1",
+                    "verification_uri": f"{base}/verify",
+                    "interval": 0,
+                    "expires_in": 60,
+                }
+            ).encode(),
+            "/oauth/token": json.dumps(
+                {"access_token": "tok", "token_type": "bearer"}
+            ).encode(),
+        }
+        result = self._run(
+            bridge_server, fake_browser_id, _device_providers_env
+        )
+        assert result.returncode == 0
+        ops = [r["operation"] for r in _BridgeHandler.requests]
+        assert "device_flow_show" not in ops
+        assert "get" in ops
+
+    def test_discovery_advertising_neither_grant_uses_pat_dialog(
+        self, bridge_server, fake_browser_id
+    ):
+        _BridgeHandler.routes = {
+            "/.well-known/openid-configuration": json.dumps(
+                {"grant_types_supported": ["client_credentials"]}
+            ).encode()
+        }
+        result = self._run(bridge_server, fake_browser_id, _pkce_providers_env)
+        assert result.returncode == 0
+        assert "get" in [r["operation"] for r in _BridgeHandler.requests]
+
+    def test_gitea_challenge_rejects_a_stale_device_entry(
+        self, bridge_server, fake_browser_id
+    ):
+        """No discovery document (404), but the host challenges with
+        Basic realm="Gitea": a device entry for it is stale -- Gitea has
+        no device flow -- so the PAT dialog answers."""
+        _BridgeHandler.routes = {}  # every discovery GET answers 404
+        result = self._run(
+            bridge_server,
+            fake_browser_id,
+            _device_providers_env,
+            extra_stdin='wwwauth[]=Basic realm="Gitea"\nwwwauth[]=Bearer',
+        )
+        assert result.returncode == 0
+        ops = [r["operation"] for r in _BridgeHandler.requests]
+        assert "device_flow_show" not in ops
+        assert "get" in ops
+
+    def test_flow_from_discovery_unit(self):
+        # device via the grant list (GitLab's real shape: no
+        # device_authorization_endpoint)
+        assert (
+            helper.flow_from_discovery(
+                {
+                    "grant_types_supported": [
+                        "authorization_code",
+                        "device_code",
+                    ]
+                }
+            )
+            == helper.FLOW_DEVICE_CODE
+        )
+        # device via the endpoint key (an OIDC extension some providers
+        # do emit)
+        assert (
+            helper.flow_from_discovery({"device_authorization_endpoint": "x"})
+            == helper.FLOW_DEVICE_CODE
+        )
+        # device via the RFC 8628 urn spelling
+        assert (
+            helper.flow_from_discovery(
+                {
+                    "grant_types_supported": [
+                        "urn:ietf:params:oauth:grant-type:device_code"
+                    ]
+                }
+            )
+            == helper.FLOW_DEVICE_CODE
+        )
+        # authorization_code only, with S256 (Gitea's shape)
+        assert (
+            helper.flow_from_discovery(
+                {
+                    "grant_types_supported": ["authorization_code"],
+                    "code_challenge_methods_supported": ["S256"],
+                }
+            )
+            == helper.FLOW_AUTH_CODE_PKCE
+        )
+        assert (
+            helper.flow_from_discovery(
+                {
+                    "grant_types_supported": ["authorization_code"],
+                    "code_challenge_methods_supported": ["plain"],
+                }
+            )
+            is None
+        )
+        assert helper.flow_from_discovery("not-a-dict") is None
+        assert helper.flow_from_discovery({}) is None
+
+    def test_wwwauth_realms_parses_multiple_challenges(self):
+        cred = {"wwwauth": ['Basic realm="Gitea"', 'Bearer realm="other"']}
+        assert helper.wwwauth_realms(cred) == ["gitea", "other"]
+        assert helper.is_gitea_family(cred)
+        assert not helper.is_gitea_family({"wwwauth": ['Basic realm="x"']})
+        assert not helper.is_gitea_family({})
+
+    def test_wwwauth_realms_tolerates_quoting_variants(self):
+        """RFC 7235: case-insensitive parameter names; realm values may
+        be single-quoted or bare tokens."""
+        cred = {
+            "wwwauth": [
+                "Basic Realm='Forgejo'",
+                "Basic realm=gitea.example.com",
+                'Basic realm=""',
+            ]
+        }
+        assert helper.wwwauth_realms(cred) == [
+            "forgejo",
+            "gitea.example.com",
+            "",
+        ]
+        assert helper.is_gitea_family(cred)
+
+
+class TestTokenRequestShapes:
+    """exchange_code / refresh_access_token request bodies (public
+    client: no secret anywhere)."""
+
+    def _provider(self, base):
+        return {
+            "host": "git.example.com",
+            "client_id": "cid-e2e",
+            "flow": "authorization_code_pkce",
+            "authorize_url": f"{base}/login/oauth/authorize",
+            "token_url": f"{base}/login/oauth/access_token",
+            "redirect_uri": "http://127.0.0.1:8124/oauth/callback",
+            "scope": "",
+            "username": "oauth2",
+        }
+
+    def test_exchange_code_posts_expected_fields(self, bridge_server):
+        server, port = bridge_server
+        base = f"http://127.0.0.1:{port}"
+        _BridgeHandler.routes = {
+            "/login/oauth/access_token": json.dumps(
+                {
+                    "access_token": "tok",
+                    "refresh_token": "rt",
+                    "expires_in": 3600,
+                }
+            ).encode()
+        }
+        resp = helper.exchange_code(
+            self._provider(base), "the-code", "the-verifier"
+        )
+        assert resp["access_token"] == "tok"
+        form = _BridgeHandler.forms[0]
+        assert form["grant_type"] == "authorization_code"
+        assert form["code"] == "the-code"
+        assert form["code_verifier"] == "the-verifier"
+        assert form["client_id"] == "cid-e2e"
+        assert form["redirect_uri"] == "http://127.0.0.1:8124/oauth/callback"
+        assert "client_secret" not in form
+
+    def test_refresh_posts_expected_fields(self, bridge_server):
+        server, port = bridge_server
+        base = f"http://127.0.0.1:{port}"
+        _BridgeHandler.routes = {
+            "/login/oauth/access_token": json.dumps(
+                {"access_token": "tok2"}
+            ).encode()
+        }
+        resp = helper.refresh_access_token(
+            self._provider(base), "the-refresh-token"
+        )
+        assert resp["access_token"] == "tok2"
+        form = _BridgeHandler.forms[0]
+        assert form["grant_type"] == "refresh_token"
+        assert form["refresh_token"] == "the-refresh-token"
+        assert form["client_id"] == "cid-e2e"
+        assert "client_secret" not in form
+
+    def test_unreachable_token_endpoint_returns_none(self):
+        provider = self._provider("http://127.0.0.1:1")
+        assert helper.exchange_code(provider, "c", "v") is None
+        assert helper.refresh_access_token(provider, "r") is None
+
+
+class TestCredentialOutput:
+    def test_extras_ride_along_when_the_provider_supplies_them(self):
+        out = helper.credential_output(
+            "oauth2", "tok", {"refresh_token": "rt", "expires_in": 3600}
+        )
+        lines = out.splitlines()
+        assert lines[0] == "username=oauth2"
+        assert lines[1] == "password=tok"
+        assert "oauth_refresh_token=rt" in lines
+        expiry = next(
+            ln for ln in lines if ln.startswith("password_expiry_utc=")
+        )
+        # a 3600s token expires roughly an hour from now
+        assert 3500 < int(expiry.split("=")[1]) - int(time.time()) <= 3600
+
+    def test_plain_output_without_token_response(self):
+        assert helper.credential_output("u", "p") == "username=u\npassword=p"
+        assert (
+            helper.credential_output("u", "p", {}) == "username=u\npassword=p"
+        )
