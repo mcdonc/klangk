@@ -38,6 +38,10 @@ to Gitea hosts.
    - **Confidential** — leave **off**. klangk acts as a public client
      (PKCE carries the proof); a confidential application fails the
      PKCE challenge on Gitea 1.22 and newer.
+   - **Scopes** — leave the application unrestricted for git over
+     HTTPS. Gitea's granular scopes apply to its `/api/v1` routes and
+     do not cover the git smart-HTTP endpoints, so restricting the
+     scopes would only exclude git access.
 4. Click **Create Application** and copy the **Client ID** shown on the
    application's page. A public client has no client secret — none is
    needed.
@@ -99,10 +103,11 @@ git clone https://git.example.com/my-org/my-repo.git
 Every later `git` operation in that tab session reuses the token from
 the browser tab's in-memory cache and refreshes it headlessly before it
 expires (Gitea's default access-token lifetime is one hour), so the
-authorization window appears once per tab session. Closing the tab
-clears the cache (all storage is cleared at logout too); the next clone
-opens the authorization window again. Cancelling the dialog, or denying
-the application in Gitea, falls back to the manual token dialog.
+authorization window appears once per tab session. The cache lives in
+the tab's memory: closing or reloading the tab clears it, and the next
+clone opens the authorization window again. Cancelling the dialog, or
+denying the application on Gitea's approval page, falls back to the
+manual token dialog.
 
 ## What happens under the hood
 
@@ -114,8 +119,9 @@ the application in Gitea, falls back to the manual token dialog.
   uses — so the flow opens no new outbound destinations. The browser
   performs no HTTP on the container's behalf.
 - The authorization code is single-use and useless without the PKCE
-  verifier, which never leaves the container process; the `state`
-  value binds the response to the flow that started it.
+  verifier, which never enters the browser relay (it is sent only to
+  the token endpoint — that exchange is PKCE); the `state` value binds
+  the response to the flow that started it.
 
 See [GitHub HTTPS Authentication](features/github-authentication.md)
 for the provider-map reference (per-flow fields, host matching) and the

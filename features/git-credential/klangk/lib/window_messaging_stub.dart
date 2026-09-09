@@ -5,7 +5,9 @@
 Stream<Map<String, String>> gitAuthMessages() => const Stream.empty();
 
 /// Deliver one authorization result to the window that opened this one.
-void sendGitAuthResultToOpener(String code, String state) {}
+/// The message is either a code or a provider error (e.g. the user
+/// denied the application).
+void sendGitAuthResultToOpener(String state, {String? code, String? error}) {}
 
 /// Ask the browser to close this window (works for script-opened popups).
 void closeCurrentWindow() {}

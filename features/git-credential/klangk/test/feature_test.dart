@@ -577,6 +577,32 @@ void main() {
       expect(jsonDecode(result), {'error': 'miss'});
     });
 
+    test('a denial message (error + state) cancels the flow', () async {
+      final pending = startFlow();
+      await Future<void>.delayed(Duration.zero);
+      messages.add({'error': 'access_denied', 'state': 'state-1'});
+      expect(jsonDecode(await pending), {'error': 'cancelled'});
+    });
+
+    test('a second flow displaces the first with a cancellation', () async {
+      final first = startFlow();
+      await Future<void>.delayed(Duration.zero);
+      final second = startFlow();
+      await Future<void>.delayed(Duration.zero);
+      messages.add({'code': 'second-code', 'state': 'state-1'});
+      expect(jsonDecode(await first), {'error': 'cancelled'});
+      expect(jsonDecode(await second)['code'], 'second-code');
+    });
+
+    test('a duplicate delivery does not double-complete', () async {
+      final pending = startFlow();
+      await Future<void>.delayed(Duration.zero);
+      messages.add({'code': 'once', 'state': 'state-1'});
+      await Future<void>.delayed(Duration.zero);
+      messages.add({'code': 'again', 'state': 'state-1'});
+      expect(jsonDecode(await pending)['code'], 'once');
+    });
+
     testWidgets('cancel answers with an error and clears the dialog', (
       tester,
     ) async {

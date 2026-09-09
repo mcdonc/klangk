@@ -11,11 +11,15 @@ library;
 const gitAuthCallbackRoute = '/git-auth-callback';
 
 /// The callback route when the captured page query carries an OAuth
-/// authorization code, else null (a normal boot).
+/// authorization result: a code (approval) or an error (denial), each
+/// with the binding state — else null (a normal boot).
 String? gitAuthCallbackLocation(Map<String, String> capturedQuery) {
-  final code = capturedQuery['code'];
   final state = capturedQuery['state'];
-  if (code == null || code.isEmpty) return null;
   if (state == null || state.isEmpty) return null;
+  final code = capturedQuery['code'];
+  final error = capturedQuery['error'];
+  final hasCode = code != null && code.isNotEmpty;
+  final hasError = error != null && error.isNotEmpty;
+  if (!hasCode && !hasError) return null;
   return gitAuthCallbackRoute;
 }

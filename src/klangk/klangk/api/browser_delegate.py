@@ -99,13 +99,18 @@ async def browser_delegate(
     session, target_sock, payload = _resolve_bridge_target(
         body, app.state.container_registry, app.state.sockets, workspace_id
     )
-    # Credential get operations may wait for user interaction (PAT dialog
-    # or OAuth device flow) — allow up to 15 minutes (matching GitHub's
-    # device code expiry).
+    # Credential get operations may wait for user interaction (PAT
+    # dialog or OAuth device flow) — allow up to 15 minutes (matching
+    # GitHub's device code expiry). The browser authorization flow
+    # waits on the same human timescale: sign-in + 2FA + approval at the
+    # provider (#3385).
     action = payload.get("action", "")
     operation = payload.get("operation", "")
     timeout = (
-        900.0 if action == "git_credential" and operation == "get" else 30.0
+        900.0
+        if action == "git_credential"
+        and operation in ("get", "auth_flow_start")
+        else 30.0
     )
     result = await session.dispatch_browser_request_to(
         target_sock, payload, timeout=timeout

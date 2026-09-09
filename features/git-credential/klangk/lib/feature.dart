@@ -58,12 +58,18 @@ class GitCredentialFeature extends ToolPlugin with ChangeNotifier {
   }
 
   /// One result from the callback popup: matched against the pending
-  /// flow's state; unsolicited or mismatched messages are ignored.
+  /// flow's state; unsolicited or mismatched messages are ignored. A
+  /// code completes the flow; a provider error (denial) cancels it.
   void _deliverAuthMessage(Map<String, String> message) {
     final pending = _pendingAuth;
-    if (pending == null) return;
+    if (pending == null || pending.completer.isCompleted) return;
     if (message['state'] != pending.state) return;
-    pending.completer.complete(message['code'] ?? '');
+    final code = message['code'];
+    if (code != null && code.isNotEmpty) {
+      pending.completer.complete(code);
+    } else if (message['error'] != null) {
+      pending.completer.complete(null);
+    }
   }
 
   @override
@@ -74,8 +80,9 @@ class GitCredentialFeature extends ToolPlugin with ChangeNotifier {
         PluginRoute(
           path: '/git-auth-callback',
           builder: (context, pathParams, queryParams) => GitAuthCallbackPage(
-            code: queryParams['code'] ?? '',
             state: queryParams['state'] ?? '',
+            code: queryParams['code'],
+            error: queryParams['error'],
           ),
         ),
       ];
@@ -167,13 +174,14 @@ class GitCredentialFeature extends ToolPlugin with ChangeNotifier {
   ) async {
     final authorizeUrl = request['authorize_url'] as String? ?? '';
     final state = request['state'] as String? ?? '';
-    final completer = Completer<String?>();
-    _pendingAuth = _PendingAuthFlow(
+    _cancelPendingAuth();
+    final flow = _PendingAuthFlow(
       host: host,
       authorizeUrl: authorizeUrl,
       state: state,
-      completer: completer,
+      completer: Completer<String?>(),
     );
+    _pendingAuth = flow;
     _listenForAuthMessages();
     notifyListeners();
     if (authorizeUrl.isNotEmpty &&
@@ -181,13 +189,27 @@ class GitCredentialFeature extends ToolPlugin with ChangeNotifier {
       openUrl(authorizeUrl);
     }
 
-    final code = await completer.future;
-    _pendingAuth = null;
-    notifyListeners();
+    final code = await flow.completer.future;
+    // Clear only when this flow still owns the slot: a displaced flow's
+    // cleanup must not wipe its successor's pending state.
+    if (identical(_pendingAuth, flow)) {
+      _pendingAuth = null;
+      notifyListeners();
+    }
     if (code == null || code.isEmpty) {
       return jsonEncode({'error': 'cancelled'});
     }
     return jsonEncode({'code': code, 'state': state});
+  }
+
+  /// Answer a displaced flow (a second auth_flow_start while one was
+  /// pending) with a cancellation instead of stranding its bridge
+  /// request (#3385 review).
+  void _cancelPendingAuth() {
+    final previous = _pendingAuth;
+    if (previous != null && !previous.completer.isCompleted) {
+      previous.completer.complete(null);
+    }
   }
 
   Future<String> _handleGet(String key, String host) async {
@@ -323,7 +345,11 @@ class _CredentialOverlayState extends State<_CredentialOverlay> {
       return Positioned.fill(
         child: _AuthFlowDialog(
           flow: authFlow,
-          onCancel: () => authFlow.completer.complete(null),
+          onCancel: () {
+            if (!authFlow.completer.isCompleted) {
+              authFlow.completer.complete(null);
+            }
+          },
         ),
       );
     }

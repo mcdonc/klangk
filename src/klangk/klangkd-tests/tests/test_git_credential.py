@@ -131,8 +131,17 @@ class _BridgeHandler(BaseHTTPRequestHandler):
     # Needed where the answer depends on the request (the auth flow
     # echoes back the state the helper generated, #3385).
     op_handlers = {}
+    # Per-path callables for the faked provider endpoints:
+    # route_handlers[path](form) -> response dict, where form is this
+    # request's parsed body — for endpoints whose answer depends on the
+    # grant_type (a rejected refresh followed by a code exchange).
+    route_handlers = {}
 
     def _response_for(self, path, body_json):
+        handler = self.__class__.route_handlers.get(path)
+        if handler is not None:
+            form = self.__class__.forms[-1] if self.__class__.forms else {}
+            return json.dumps(handler(form)).encode()
         if path in self.__class__.routes:
             return self.__class__.routes[path]
         op = body_json.get("operation", "")
@@ -193,6 +202,7 @@ def bridge_server():
     _BridgeHandler.routes = {}
     _BridgeHandler.op_bodies = {}
     _BridgeHandler.op_handlers = {}
+    _BridgeHandler.route_handlers = {}
 
     server = HTTPServer(("127.0.0.1", 0), _BridgeHandler)
     port = server.server_address[1]
@@ -1337,7 +1347,7 @@ def _pkce_providers_env(base, **overrides):
         "client_id": "cid-e2e",
         "authorize_url": f"{base}/login/oauth/authorize",
         "token_url": f"{base}/login/oauth/access_token",
-        "redirect_uri": "http://127.0.0.1:8124/oauth/callback",
+        "redirect_uri": "http://127.0.0.1:8124/",
     }
     entry.update(overrides)
     return json.dumps([entry])
@@ -1457,7 +1467,7 @@ class TestAuthorizeUrl:
         provider = {
             "client_id": "cid",
             "authorize_url": "https://h/login/oauth/authorize",
-            "redirect_uri": "http://127.0.0.1:8124/oauth/callback",
+            "redirect_uri": "http://127.0.0.1:8124/",
             "scope": "",
         }
         url = helper.authorize_url(provider, "the-challenge", "the-state")
@@ -1469,9 +1479,7 @@ class TestAuthorizeUrl:
         assert params["code_challenge"] == ["the-challenge"]
         assert params["code_challenge_method"] == ["S256"]
         assert params["state"] == ["the-state"]
-        assert params["redirect_uri"] == [
-            "http://127.0.0.1:8124/oauth/callback"
-        ]
+        assert params["redirect_uri"] == ["http://127.0.0.1:8124/"]
         assert "scope" not in params  # omitted when the entry sets none
 
     def test_scope_sent_when_entry_sets_one(self):
@@ -1819,7 +1827,7 @@ class TestTokenRequestShapes:
             "flow": "authorization_code_pkce",
             "authorize_url": f"{base}/login/oauth/authorize",
             "token_url": f"{base}/login/oauth/access_token",
-            "redirect_uri": "http://127.0.0.1:8124/oauth/callback",
+            "redirect_uri": "http://127.0.0.1:8124/",
             "scope": "",
             "username": "oauth2",
         }
@@ -1845,7 +1853,7 @@ class TestTokenRequestShapes:
         assert form["code"] == "the-code"
         assert form["code_verifier"] == "the-verifier"
         assert form["client_id"] == "cid-e2e"
-        assert form["redirect_uri"] == "http://127.0.0.1:8124/oauth/callback"
+        assert form["redirect_uri"] == "http://127.0.0.1:8124/"
         assert "client_secret" not in form
 
     def test_refresh_posts_expected_fields(self, bridge_server):
@@ -1962,10 +1970,14 @@ class TestAuthorizationCodeFlow:
         )
         assert start["host"] == "git.example.com"
         assert "code_challenge_method=S256" in start["authorize_url"]
+        # The registered redirect is the klangk origin root.
         assert (
-            "redirect_uri=http%3A%2F%2F127.0.0.1%3A8124%2Foauth%2Fcallback"
+            "redirect_uri=http%3A%2F%2F127.0.0.1%3A8124%2F"
             in start["authorize_url"]
         )
+        # The PKCE verifier and any secret never enter the relay.
+        assert "code_verifier" not in start
+        assert "client_secret" not in start
         # The exchange posted the verifier container-side.
         exchange = _BridgeHandler.forms[0]
         assert exchange["grant_type"] == "authorization_code"
@@ -2093,3 +2105,56 @@ class TestRefreshFirst:
         assert result.returncode == 0
         assert "password=tok-good" in result.stdout
         assert _BridgeHandler.forms == []
+
+    def test_rejected_refresh_runs_a_fresh_flow(
+        self, bridge_server, fake_browser_id
+    ):
+        """A rejected refresh grant must not serve the stale token: the
+        dead entry is erased and a fresh browser flow starts (#3385
+        review round 1)."""
+        import time as _time
+
+        server, port = bridge_server
+        base = f"http://127.0.0.1:{port}"
+        _BridgeHandler.op_bodies = {
+            "peek": json.dumps(
+                {
+                    "username": "oauth2",
+                    "password": "tok-stale",
+                    "refresh_token": "rt-dead",
+                    "expires_at": int(_time.time()) - 10,
+                }
+            ).encode(),
+        }
+        _BridgeHandler.op_handlers = {
+            "auth_flow_start": lambda p: {
+                "code": "fresh-code",
+                "state": p["state"],
+            },
+        }
+        _BridgeHandler.routes = {
+            "/.well-known/openid-configuration": _auth_code_discovery(
+                base, token_endpoint=f"{base}/login/oauth/access_token"
+            ),
+        }
+        _BridgeHandler.route_handlers = {
+            "/login/oauth/access_token": lambda form: (
+                {"error": "invalid_grant"}
+                if form.get("grant_type") == "refresh_token"
+                else {"access_token": "tok-new"}
+            ),
+        }
+        result = run_helper(
+            "get",
+            "protocol=https\nhost=git.example.com\n\n",
+            env_override={
+                "KLANGKWS_BRIDGE_URL": base,
+                "KLANGKWS_FEATURE_OAUTH_PROVIDERS": _pkce_providers_env(base),
+            },
+            extra_path=str(fake_browser_id),
+        )
+        assert result.returncode == 0
+        assert "password=tok-new" in result.stdout  # fresh flow ran
+        ops = [r["operation"] for r in _BridgeHandler.requests]
+        assert "erase" in ops  # the dead entry was dropped
+        assert "auth_flow_start" in ops

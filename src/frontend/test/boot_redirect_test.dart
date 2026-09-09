@@ -26,5 +26,16 @@ void main() {
     test('empty values are not a callback boot', () {
       expect(gitAuthCallbackLocation({'code': '', 'state': ''}), isNull);
     });
+
+    test('a provider denial (error + state) is a callback boot', () {
+      expect(
+        gitAuthCallbackLocation({'error': 'access_denied', 'state': 'xyz'}),
+        '/git-auth-callback',
+      );
+    });
+
+    test('an error without a state is not a callback boot', () {
+      expect(gitAuthCallbackLocation({'error': 'access_denied'}), isNull);
+    });
   });
 }
