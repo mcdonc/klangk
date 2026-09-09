@@ -181,6 +181,7 @@ in
       flutterMcpToolkit
       flutterUnstable
       git # "error: Failed to find git" during devenv:git-hooks:install
+      gitea # real Gitea instance for e2e testing (#3385): scripts/gitea-e2e.sh
       gzip
       gnutar
       caddy # reverse-proxy engine (Caddy, sole engine in 2.X, #1559/#1642)
@@ -749,6 +750,11 @@ in
   # Idempotent fixture seeding (also run by fmtk-up): sharer/acler/viewer
   # users + the fmtk-verify workspace against a running backend.
   scripts.fmtk-seed.exec = ''exec ${venvPython} "$DEVENV_ROOT/scripts/fmtk-seed.py" "$@"'';
+  # Real Gitea instance for e2e testing (#3385): boot (up), readiness
+  # (ready), idempotent fixture seed incl. a PKCE-capable public OAuth
+  # app (seed), credentials dump (info), stop/reset. See
+  # scripts/gitea-e2e.sh.
+  scripts.gitea-e2e.exec = ''exec bash "$DEVENV_ROOT/scripts/gitea-e2e.sh" "$@"'';
   # fmtk-driven frontend e2e suite (#3232): boots the fmtk-up scratch stack
   # programmatically (headless under CI), drives the debug app through the
   # fmtk CLI, and swaps server config via SIGHUP/restart. The first run in

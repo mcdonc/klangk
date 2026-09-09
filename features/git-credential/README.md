@@ -143,7 +143,13 @@ The feature declares three config variables in `package.json` (all
   }
   ```
 
-  Required: `host`, `client_id`, `device_code_url`, `token_url`. Optional:
+  Required: `host`, `client_id`, `token_url`, and the per-flow
+  endpoints — `device_code_url` for the default `device_code` flow, or
+  `authorize_url` + `redirect_uri` for `flow:
+"authorization_code_pkce"` (the authorization-code browser flow with
+  PKCE S256, for hosts like Gitea that implement no device flow; the
+  browser relay completing it ships next, and the PAT dialog answers
+  until then). Optional: `flow`,
   `scope` (omitted from the code request when empty) and `username`
   (defaults to `oauth2`; GitHub uses `x-access-token`). Entries must use
   the bare host: matching normalizes the credential host (case, explicit
