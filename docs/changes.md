@@ -40,6 +40,21 @@ operators or integrators to act when upgrading.
   Changelog — so the PyPI project and release pages show the sidebar
   links. Changelog points at the docs-rendered changelog page.
 
+### Changed
+
+- **`dart format` pre-commit hook verifies instead of rewriting
+  (#3376).** The hook now runs `dart format --output=none
+--set-exit-if-changed` via `scripts/dart-format-verify.sh` and fails
+  on unformatted files instead of silently rewriting them mid-commit —
+  rewrite mode flipped short→tall style in fresh worktrees (where no
+  `.dart_tool` exists to resolve the language version) and wedged prek's
+  stash rollback during cherry-picks. Files whose package has no
+  `.dart_tool` yet are skipped with a notice; run `dart format` yourself
+  before committing. The frontend CI workflow now checks formatting
+  after `pub get` (src/frontend `lib`+`test` and every feature package
+  with tests), and the five files that were off-canonical at the pinned
+  language version were reformatted.
+
 ## \[v2.0a2] - 2026-09-08
 
 ### Fixed

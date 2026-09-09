@@ -281,7 +281,7 @@ class AuthService extends ChangeNotifier {
             (data['default_classification_banner'] as String? ?? '').trim();
         _netfilterDefaultDomains =
             (data['netfilter_default_domains'] as List?)?.cast<String>() ??
-            const [];
+                const [];
         _netfilterEnabled = (data['netfilter_enabled'] as bool?) ?? false;
         _nixAvailable = (data['nix_available'] as bool?) ?? false;
         _sudoAvailable = (data['sudo_available'] as bool?) ?? false;
@@ -548,9 +548,9 @@ class AuthService extends ChangeNotifier {
   }
 
   Map<String, String> get _authHeaders => {
-    'Content-Type': 'application/json',
-    if (_token != null) 'Authorization': 'Bearer $_token',
-  };
+        'Content-Type': 'application/json',
+        if (_token != null) 'Authorization': 'Bearer $_token',
+      };
 
   /// Auth headers for one request, carrying a fresh DPoP proof when
   /// the token is bound (#3218). [method] is the HTTP verb and [path]
