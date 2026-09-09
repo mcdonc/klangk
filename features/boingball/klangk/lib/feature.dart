@@ -117,14 +117,10 @@ void _playBoingSound({required double panX, bool isFloor = true}) {
     ((web.Event _) {
       final data = reader.result;
       if (data == null) return;
-      ctx
-          .decodeAudioData(data as JSArrayBuffer)
-          .toDart
-          .then((audio) {
-            _boingBuf = audio;
-            play(audio);
-          })
-          .catchError(_ignoreDecodeFailure);
+      ctx.decodeAudioData(data as JSArrayBuffer).toDart.then((audio) {
+        _boingBuf = audio;
+        play(audio);
+      }).catchError(_ignoreDecodeFailure);
     }).toJS,
   );
   reader.readAsArrayBuffer(web.Blob([bytes.toJS].toJS));
@@ -522,7 +518,7 @@ class _BoingBallPainter extends CustomPainter {
   static const _shadowColor = Color(0x44000000);
 
   _BoingBallPainter({required this.state, required this.ballFrac})
-    : super(repaint: state);
+      : super(repaint: state);
 
   @override
   void paint(Canvas canvas, Size size) {
