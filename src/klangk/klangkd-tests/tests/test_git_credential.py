@@ -2158,3 +2158,46 @@ class TestRefreshFirst:
         ops = [r["operation"] for r in _BridgeHandler.requests]
         assert "erase" in ops  # the dead entry was dropped
         assert "auth_flow_start" in ops
+
+    def test_unreachable_refresh_keeps_the_cached_credential(
+        self, bridge_server, fake_browser_id
+    ):
+        """A transient refresh failure (endpoint down / garbage) keeps
+        the cached credential instead of erasing it — a network blip
+        must not force re-authorization (#3385 review round 2)."""
+        import time as _time
+
+        server, port = bridge_server
+        base = f"http://127.0.0.1:{port}"
+        _BridgeHandler.op_bodies = {
+            "peek": json.dumps(
+                {
+                    "username": "oauth2",
+                    "password": "tok-maybe-good",
+                    "refresh_token": "rt-1",
+                    "expires_at": int(_time.time()) + 30,
+                }
+            ).encode(),
+        }
+        _BridgeHandler.routes = {
+            "/.well-known/openid-configuration": _auth_code_discovery(
+                base, token_endpoint=f"{base}/login/oauth/access_token"
+            ),
+            # The token endpoint answers unparseable bytes: unreachable
+            # in helper terms (not a rejected grant).
+            "/login/oauth/access_token": b"gateway garbage",
+        }
+        result = run_helper(
+            "get",
+            "protocol=https\nhost=git.example.com\n\n",
+            env_override={
+                "KLANGKWS_BRIDGE_URL": base,
+                "KLANGKWS_FEATURE_OAUTH_PROVIDERS": _pkce_providers_env(base),
+            },
+            extra_path=str(fake_browser_id),
+        )
+        assert result.returncode == 0
+        assert "password=tok-maybe-good" in result.stdout
+        ops = [r["operation"] for r in _BridgeHandler.requests]
+        assert "erase" not in ops
+        assert "auth_flow_start" not in ops

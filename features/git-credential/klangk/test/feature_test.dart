@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:klangk_feature_git_credential/feature.dart';
+import 'package:klangk_feature_git_credential/git_auth_callback_page.dart';
 
 void main() {
   late GitCredentialFeature feature;
@@ -684,6 +685,30 @@ void main() {
         'host': 'github.com',
       });
       expect(jsonDecode(result).containsKey('refresh_token'), isFalse);
+    });
+  });
+
+  group('callback page', () {
+    testWidgets('approval state posts the code to the opener', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: GitAuthCallbackPage(state: 's-1', code: 'c-1'),
+        ),
+      );
+      await tester.pump();
+      expect(find.text('Authorization received'), findsOneWidget);
+    });
+
+    testWidgets('denial state renders the denied message', (tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: GitAuthCallbackPage(state: 's-1', error: 'access_denied'),
+        ),
+      );
+      await tester.pump();
+      expect(find.text('Authorization denied'), findsOneWidget);
     });
   });
 
