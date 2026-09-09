@@ -52,14 +52,15 @@ def at_login(harness, app) -> None:
     """Land on the usable login form: route there, wait for the page,
     and dismiss any leftover login-banner consent dialog (a swapped
     banner's dialog masks the form from the semantic tree)."""
+    app.ensure_tab_at_app()
     app.navigate("/login")
-    if not app.has_text("Log In", 10000):
+    if not app.has_text("Log In", 5000):
         # a leftover session guards /login away (a must-change user is
         # bounced back to /change-password; a normal one to
         # /workspaces) — end it, then the route sticks. A dead app
         # (closed window, lost isolate) restarts instead.
         try:
-            app.auth_eval("auth!.logout(); return 'ok';")
+            app.dart_logout()
         except FmtkError:
             harness.restart_app()
     app.wait_for_login_page()
