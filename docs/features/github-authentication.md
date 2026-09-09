@@ -243,11 +243,27 @@ Each entry:
   port, or trailing dot). Matching normalizes the credential host (case,
   explicit port, trailing dot) and tolerates a `www.` prefix on it, but
   never matches by suffix — `github.com.evil.com` is not `github.com`.
+- **`flow`** (optional, default `device_code`) — which OAuth flow the
+  helper runs for the host: `device_code` (RFC 8628) or
+  `authorization_code_pkce` (the authorization-code browser flow with
+  PKCE S256, for hosts like Gitea that implement no device flow; it
+  needs `authorize_url` and `redirect_uri` instead of
+  `device_code_url`, and a public — non-confidential — OAuth
+  application). The browser relay completing the authorization-code
+  flow ships next; until it lands, the PAT dialog answers for these
+  hosts. The host's OIDC discovery document overrides `flow` when its
+  `token_endpoint` names the entry's `token_url` — the document
+  describes the grant the server implements.
 - **`client_id`** (required) — the OAuth application's client ID (public
   clients need no secret, same as GitHub).
-- **`device_code_url`** / **`token_url`** (required) — the provider's
-  RFC 8628 endpoints. For GitLab (self-managed or gitlab.com) these are
+- **`device_code_url`** / **`token_url`** (required for `device_code`) —
+  the provider's RFC 8628 endpoints. For GitLab (self-managed or
+  gitlab.com) these are
   `https://<host>/oauth/authorize_device` and `https://<host>/oauth/token`.
+- **`authorize_url`** / **`redirect_uri`** (required for
+  `authorization_code_pkce`) — the provider's authorization endpoint
+  and the callback the OAuth application registered (the klangk app
+  origin's `/oauth/callback`).
 - **`scope`** (optional) — requested scope string; omitted from the code
   request when empty.
 - **`username`** (optional) — the git username reported with the token.
