@@ -2239,6 +2239,19 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
 
 ### Changed
 
+- **`dart format` pre-commit hook verifies instead of rewriting
+  (#3376).** The hook now runs `dart format --output=none
+--set-exit-if-changed` via `scripts/dart-format-verify.sh` and fails
+  on unformatted files instead of silently rewriting them mid-commit —
+  rewrite mode flipped short→tall style in fresh worktrees (where no
+  `.dart_tool` exists to resolve the language version) and wedged prek's
+  stash rollback during cherry-picks. Files whose package has no
+  `.dart_tool` yet are skipped with a notice; run `dart format` yourself
+  before committing. The frontend CI workflow now checks formatting
+  after `pub get` (src/frontend `lib`+`test` and every feature package
+  with tests), and the five files that were off-canonical at the pinned
+  language version were reformatted.
+
 - **`GET /events` renamed to `GET /events/containers` (#3205).**
   The container start/stop history moved under the `/events`
   resource's Containers stream now that the identity/privilege audit
