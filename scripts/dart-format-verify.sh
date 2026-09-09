@@ -13,9 +13,12 @@ set -euo pipefail
 
 resolved=()
 for f in "$@"; do
-  pkg_dir=$(dirname "$f")
+  # Canonicalize first: prek passes repo-root-relative paths, and a bare
+  # relative walk converges on "." instead of "/" for package-less files
+  # (a tracked root-level .dart would hang the loop forever).
+  pkg_dir=$(realpath -m -- "$(dirname -- "$f")")
   while [ "$pkg_dir" != "/" ] && [ ! -f "$pkg_dir/pubspec.yaml" ]; do
-    pkg_dir=$(dirname "$pkg_dir")
+    pkg_dir=$(dirname -- "$pkg_dir")
   done
   if [ -f "$pkg_dir/.dart_tool/package_config.json" ]; then
     resolved+=("$f")

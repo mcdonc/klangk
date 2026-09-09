@@ -6,7 +6,7 @@ Pre-commit hooks run automatically on `git commit` via [git-hooks.nix](https://g
 - **check-executables-have-shebangs** — ensures executable scripts have a shebang line
 - **deferred-imports** — flags non-module-scope imports
 - **check-toml** — TOML syntax validation
-- **dart format (verify)** — fails on Dart files that are not canonically formatted instead of rewriting them; run `dart format` yourself before committing (the hook skips files whose package has no `.dart_tool` yet — run `flutter pub get` there and CI covers the rest)
+- **dart format (verify)** — fails on Dart files that are not canonically formatted instead of rewriting them; run `dart format` yourself before committing. The hook skips files whose package has no `.dart_tool` yet (run `flutter pub get` there); the frontend CI workflow checks formatting for `src/frontend` and every feature package after `pub get`
 - **markdownlint** — Markdown linting
 - **nixfmt** — Nix formatting
 - **prettier** — TypeScript, JavaScript, and YAML formatting
