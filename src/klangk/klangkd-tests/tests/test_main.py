@@ -2695,10 +2695,18 @@ class TestMainEntryCallback2910:
             patch.object(util_mod.Util, "check_pid_file", return_value=None),
             patch.object(util_mod.Util, "write_pid_file"),
             patch.object(util_mod.Util, "remove_pid_file") as mock_remove,
-            # Make stop_background_workers blow up — runtime_shutdown
-            # and process_shutdown must still run.
-            patch(
-                "klangk.lifecycle.stop_background_workers",
+            # Make the stop_background_workers step blow up —
+            # runtime_shutdown and process_shutdown must still run.
+            # Fail the *last* worker stop awaited inside the step (the
+            # proxy watchdog's), not the whole step: mocking the whole
+            # step leaves every background-worker task running past
+            # loop close, and on slow (macOS) runners an in-flight
+            # aiosqlite delivery then hits the closed loop — the #1250
+            # hazard, refiled as #3396 — with the thread exception
+            # landing on whichever test runs next on the worker.
+            patch.object(
+                app.state.proxy_watchdog,
+                "stop",
                 new_callable=AsyncMock,
                 side_effect=RuntimeError("sweeper exploded"),
             ),
