@@ -148,8 +148,8 @@ The feature declares three config variables in `package.json` (all
   `authorize_url` + `redirect_uri` for `flow:
 "authorization_code_pkce"` (the authorization-code browser flow with
   PKCE S256, for hosts like Gitea that implement no device flow; the
-  browser relay completing it ships next, and the PAT dialog answers
-  until then). Optional: `flow`,
+  authorize popup opens on first auth and the tab cache refreshes the
+  token headlessly — see docs/gitea.md). Optional: `flow`,
   `scope` (omitted from the code request when empty) and `username`
   (defaults to `oauth2`; GitHub uses `x-access-token`). Entries must use
   the bare host: matching normalizes the credential host (case, explicit

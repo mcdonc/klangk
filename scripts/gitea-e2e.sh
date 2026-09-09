@@ -38,7 +38,7 @@ BASE_URL="http://127.0.0.1:$GITEA_PORT"
 # The default OAuth redirect: the fmtk origin-splitting proxy, because
 # the frontend is same-origin only and that is the origin the SPA
 # callback route will live on in the browser-relayed flow (#3385).
-DEFAULT_REDIRECT_URI="http://127.0.0.1:8124/oauth/callback"
+DEFAULT_REDIRECT_URI="http://127.0.0.1:8124/"
 READY_TIMEOUT="${GITEA_E2E_READY_TIMEOUT:-60}"
 
 log() { printf '\033[1m[gitea-e2e]\033[0m %s\n' "$*"; }

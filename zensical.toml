@@ -35,6 +35,7 @@ nav = [
     { "CLI" = "reference/cli.md" },
     { "SSH Agent Forwarding" = "features/ssh-agent-forwarding.md" },
     { "GitHub HTTPS Authentication" = "features/github-authentication.md" },
+    { "Gitea" = "gitea.md" },
     { "Debug Panel" = "features/debug-panel.md" },
     { "Logging" = "features/logging.md" },
     { "Workspace Admission" = "features/admission.md" },
