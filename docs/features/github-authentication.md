@@ -249,9 +249,8 @@ Each entry:
   PKCE S256, for hosts like Gitea that implement no device flow; it
   needs `authorize_url` and `redirect_uri` instead of
   `device_code_url`, and a public — non-confidential — OAuth
-  application). The browser relay completing the authorization-code
-  flow ships next; until it lands, the PAT dialog answers for these
-  hosts. The host's OIDC discovery document overrides `flow` when its
+  application; see [Gitea](../gitea.md) for the full walkthrough). The
+  host's OIDC discovery document overrides `flow` when its
   `token_endpoint` names the entry's `token_url` — the document
   describes the grant the server implements.
 - **`client_id`** (required) — the OAuth application's client ID (public
@@ -262,8 +261,10 @@ Each entry:
   `https://<host>/oauth/authorize_device` and `https://<host>/oauth/token`.
 - **`authorize_url`** / **`redirect_uri`** (required for
   `authorization_code_pkce`) — the provider's authorization endpoint
-  and the callback the OAuth application registered (the klangk app
-  origin's `/oauth/callback`).
+  and the redirect registered with the OAuth application: the klangk
+  deployment's public origin root (e.g. `https://klangk.example.com/`).
+  The authorization popup returns there, and the app hands the result
+  to the workspace tab that opened it.
 - **`scope`** (optional) — requested scope string; omitted from the code
   request when empty.
 - **`username`** (optional) — the git username reported with the token.

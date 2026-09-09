@@ -840,6 +840,17 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **Git authentication via the browser for Gitea hosts (#3385).** A
+  `KLANGKWS_FEATURE_OAUTH_PROVIDERS` entry with
+  `flow: authorization_code_pkce` runs the OAuth authorization-code
+  flow with PKCE (S256) for hosts like Gitea that implement no device
+  flow: the first `git clone` opens an authorization popup, approval
+  happens on the Gitea page, and the tab session refreshes the token
+  headlessly afterwards. The operator registers a public OAuth
+  application in Gitea's user settings pointing at the klangk origin;
+  see the new [Gitea](/gitea/) docs chapter. GitHub and GitLab device
+  flows are unchanged.
+
 - **PyPI project links (#3369).** The `klangk` wheel now carries
   `project.urls` — Homepage, Documentation, Repository, Issues, and
   Changelog — so the PyPI project and release pages show the sidebar
