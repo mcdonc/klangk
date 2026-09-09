@@ -129,10 +129,37 @@ SUITE_SWAPPED_KEYS = frozenset(
 
 VM_URI_TIMEOUT = 600
 HTTP_TIMEOUT = 15
+# How long "No Flutter isolate found" must persist (with the tab on
+# the app origin) before exec() treats it as a dwds wedge and restarts
+# the flutter run — the ordinary dwds re-attach race after a page load
+# self-heals in seconds, so the first sighting only arms a marker.
+WEDGE_RECOVERY_SECONDS = 25
+ISOLATE_GONE_MARK = "No Flutter isolate found"
+# How long the browser's async Clear-Site-Data wipe (the logout
+# response's header, #3335) can still race a fresh JWT after the Dart
+# token is confirmed clear. Tracked as a deadline on the client — only
+# a real logout arms it, so arrivals with nothing being wiped (a fresh
+# boot, an already-logged-out page) don't pay the pause (#3231).
+STORAGE_WIPE_GRACE_SECONDS = 5.0
+
+
+def proxy_origin() -> str:
+    """The origin the driven tab serves the app from (the caddy proxy)."""
+    return f"http://127.0.0.1:{PROXY_PORT}"
 
 
 class FmtkError(RuntimeError):
-    """A fmtk CLI call returned ok=false (message + details)."""
+    """A fmtk CLI call returned ok=false (message + details).
+
+    Envelope-less failures carry the process's full stderr on
+    ``.stderr`` — the human-readable message embeds only the last 500
+    chars, and an exception like "No Flutter isolate found" sits at the
+    TOP of fmtk's stack trace, cut out of the tail a marker match on
+    the message alone would read."""
+
+    def __init__(self, message: str, stderr: str = "") -> None:
+        super().__init__(message)
+        self.stderr = stderr
 
 
 class HarnessTimeout(FmtkError):
@@ -1023,6 +1050,7 @@ class FlutterRun:
         self.vm_uri = ""
         self.log_offset = 0
         self.launch_serial = 0
+        self.isolate_gone_since: float | None = None
 
     def chrome_env(self) -> dict:
         env = dict(os.environ)
@@ -1130,7 +1158,10 @@ class FlutterRun:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
-                client.exec("get_app_errors", {"count": 1})
+                # raw_exec, not exec: this poll IS the boot wait — the
+                # isolate is not attached yet, so exec()'s wedge
+                # recovery would restart the launch it waits for.
+                client.raw_exec("get_app_errors", {"count": 1})
                 return
             except FmtkError:
                 time.sleep(2)
@@ -1208,6 +1239,31 @@ class FlutterRun:
             except ProcessLookupError:
                 pass
 
+    def recover_from_wedge(self) -> None:
+        """Restart flutter run + Chrome after a dwds isolate wedge.
+
+        A tab that navigates off the app origin and back can leave the
+        flutter tool's debug session permanently desynced: the VM
+        service keeps answering, but no Flutter isolate ever
+        re-registers, so every fmtk exec fails with "No Flutter isolate
+        found" while the app itself keeps running, undriven (observed
+        after the unverified-email OIDC scenario parked the tab on the
+        backend's JSON error page and returned it — the 2026-09-09
+        nightly lost every test after that point). Reloading the page
+        does not re-register (the tool's execution-context tracking is
+        the broken side, not the page), so the deterministic cure is a
+        fresh flutter run — the restart_app shape.
+
+        The outgoing instance's rolling error window dies with it: an
+        error the wedged instance threw in its last undriven moments
+        can no longer fail its test. That trade is deliberate — the
+        alternative is every subsequent test failing on a dead debug
+        connection (#3231).
+        """
+        self.isolate_gone_since = None
+        self.stop()
+        self.launch()
+
     def stop(self) -> None:
         # Close the browser window FIRST: a wedged app (dead isolate,
         # hung boot) can keep flutter run from tearing its Chrome down,
@@ -1253,6 +1309,7 @@ class FmtkClient:
     def __init__(self, flutter: "FlutterRun") -> None:
         self.flutter = flutter
         self.nav_serial = 0
+        self.wipe_deadline: float | None = None
 
     @property
     def vm_uri(self) -> str:
@@ -1262,6 +1319,22 @@ class FmtkClient:
         return uri
 
     def exec(self, name: str, args: dict | None = None) -> object:
+        """Run one fmtk command, recovering a dwds isolate wedge.
+
+        A persistent "No Flutter isolate found" (see
+        :meth:`recover_if_wedged`) restarts the flutter run transparently
+        and replays the command against the fresh app; every other
+        failure propagates untouched."""
+        try:
+            data = self.raw_exec(name, args)
+        except FmtkError as exc:
+            if not self.recover_if_wedged(exc):
+                raise
+            data = self.raw_exec(name, args)
+        self.flutter.isolate_gone_since = None
+        return data
+
+    def raw_exec(self, name: str, args: dict | None = None) -> object:
         proc = subprocess.run(
             [
                 "fmtk",
@@ -1286,13 +1359,72 @@ class FmtkClient:
             )
         return envelope.get("data")
 
+    def recover_if_wedged(self, exc: FmtkError) -> bool:
+        """Recover a dwds isolate wedge; False unless recovery ran.
+
+        "No Flutter isolate found" with the tab on the app origin is
+        either the ordinary dwds re-attach race after a page load
+        (self-heals in seconds) or the permanent wedge — the two are
+        indistinguishable per call, so the first sighting only arms the
+        marker on the FlutterRun and recovery fires once the state has
+        outlasted WEDGE_RECOVERY_SECONDS. The signature match reads
+        the full stderr (``exc.stderr``), not just the message — the
+        message embeds only the tail, and the exception line sits at
+        the top of fmtk's stack. A tab parked away from the app origin
+        (the SSO chain at the IdP, a backend error page) legitimately
+        has no isolate — that state is the caller's to handle, so it
+        neither arms nor recovers.
+        """
+        gone = ISOLATE_GONE_MARK in f"{exc}\n{exc.stderr}"
+        if not gone or not self.app_tab_at_origin():
+            self.flutter.isolate_gone_since = None
+            return False
+        now = time.monotonic()
+        since = self.flutter.isolate_gone_since
+        if since is not None and now - since >= WEDGE_RECOVERY_SECONDS:
+            print(
+                "[fmtk] dwds isolate wedge (isolate gone for "
+                f"{now - since:.0f}s with the tab on the app origin) — "
+                "restarting the flutter run",
+                flush=True,
+            )
+            self.flutter.recover_from_wedge()
+            return True
+        self.flutter.isolate_gone_since = now if since is None else since
+        return False
+
+    def app_tab_at_origin(self) -> bool:
+        """Whether the driven tab is on the app origin — the state where
+        an attached isolate is expected. A missing Chrome or tab counts
+        as True: nothing parked can be lost by restarting, and a Chrome
+        that died outright leaves the same exec failures behind."""
+        try:
+            url = cdp_app_tab()["url"]
+        except (FmtkError, OSError, ValueError):
+            return True
+        return url.startswith(proxy_origin())
+
+    def ensure_tab_at_app(self, path: str = "/#/login") -> None:
+        """Return a parked-away tab to the app before any driving.
+
+        A failed SSO leg leaves the tab at the IdP or a backend error
+        page with the Flutter isolate dead — every fmtk exec fails
+        while it stays there, and the failure cascades through every
+        later scenario. The full-page load back onto the app origin
+        re-attaches the VM service (a wedged dwds session recovers
+        through exec()'s restart); the caller's own waits ride out the
+        load."""
+        if not self.app_tab_at_origin():
+            cdp_eval(f"location.href='{proxy_origin()}{path}'")
+
     def parse_envelope(self, stdout: str, name: str, stderr: str) -> dict:
         try:
             return json.loads(stdout)
         except ValueError:
             raise FmtkError(
                 f"fmtk {name} printed no JSON envelope (stderr: {stderr[-500:]}; "
-                f"stdout: {stdout[-500:]})"
+                f"stdout: {stdout[-500:]})",
+                stderr=stderr,
             ) from None
 
     # --- snapshot / interaction helpers ---------------------------------
@@ -1398,31 +1530,58 @@ class FmtkClient:
             self.tap_label("Logout")
         except FmtkError:
             self.tap_rightmost_button()
+        # the logout response started the browser's async storage wipe
+        # (#3335) — arm the grace the next login-surface arrival waits
+        # out before any flow writes a fresh JWT (#3321)
+        self.arm_storage_wipe()
         self.wait_for_login_page()
 
-    def _wait_logged_out(self, timeout: float = 10) -> None:
-        """Spin until the Dart AuthService has no token, then pause for
-        the browser's ``Clear-Site-Data`` processing to settle.
+    def arm_storage_wipe(self) -> None:
+        """Arm the post-logout storage-wipe grace (see _wait_logged_out).
 
-        The Dart in-memory token clears instantly on logout, but the
-        server's ``Clear-Site-Data: "storage"`` header (#3335) tells
-        the browser to wipe sessionStorage **asynchronously**.  If the
-        next login writes a new JWT before the wipe completes, the
-        deferred wipe destroys it.  After confirming the Dart state is
-        clear, a brief pause lets the browser finish the storage wipe."""
+        Every path that ends a session over the wire starts the
+        browser's async wipe — the UI logout, the Dart-side logout the
+        at_login fallbacks use (AuthService.logout POSTs /auth/logout
+        before clearing the token), and the IdP-routed logout."""
+        self.wipe_deadline = time.monotonic() + STORAGE_WIPE_GRACE_SECONDS
+
+    def dart_logout(self) -> None:
+        """End a lingering session through the Dart service (the
+        at_login fallback when no logout button is on screen). The
+        service POSTs /auth/logout, whose response starts the storage
+        wipe — arm the grace exactly as logout() does."""
+        self.auth_eval("auth!.logout(); return 'ok';")
+        self.arm_storage_wipe()
+
+    def _wait_logged_out(self, timeout: float = 10) -> None:
+        """Spin until the Dart AuthService has no token, then — only
+        when a logout on this app instance armed the browser's async
+        ``Clear-Site-Data: "storage"`` wipe (#3335) — wait out its
+        grace: a login that fires before the wipe completes may lose
+        its new JWT (#3321). Arrivals with no wipe pending (a fresh
+        boot, an already-logged-out page) return without the pause —
+        the unconditional sleep here used to sit between every
+        at_login and the form fill (#3231)."""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
                 result = self.auth_eval("return auth!.isLoggedIn.toString();")
                 if result == "false":
-                    # Give the browser time to finish Clear-Site-Data
-                    # processing before the next login writes to storage.
-                    time.sleep(5)
+                    self.settle_storage_wipe()
                     return
             except FmtkError:
                 pass  # evaluator may fail transiently during teardown
             time.sleep(0.5)
         raise HarnessTimeout("AuthService still logged-in after logout")
+
+    def settle_storage_wipe(self) -> None:
+        """Sleep out any remainder of an armed wipe deadline."""
+        if self.wipe_deadline is None:
+            return
+        remaining = self.wipe_deadline - time.monotonic()
+        self.wipe_deadline = None
+        if remaining > 0:
+            time.sleep(remaining)
 
     def tap_rightmost_button(self) -> None:
         """Tap the button with the greatest right edge (ties: topmost).
@@ -1703,7 +1862,11 @@ class FmtkClient:
         return data
 
     def dismiss_login_banner(self) -> None:
-        if self.has_text("I Accept", 3000):
+        # A 1s probe: the consent dialog renders WITH the form, and
+        # wait_for_login_page has already gated on the form — 3s here
+        # was 6s of dead time per at_login+login flow when no banner
+        # is configured (#3231).
+        if self.has_text("I Accept", 1000):
             self.tap_label("I Accept")
 
     def wait_for_login_page(self, timeout_ms: int = 90000) -> None:
