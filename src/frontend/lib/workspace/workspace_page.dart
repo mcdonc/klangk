@@ -173,9 +173,17 @@ class _WorkspacePageState extends State<WorkspacePage> {
     // #2768: re-resolve the effective marking when the workspace row
     // changes (the server notifies on a classification_banner edit, so
     // the banner updates live after saving in the settings panel).
+    // The mounted guard is load-bearing: the event can arrive while
+    // this page is deactivating (a SIGHUP-driven ws reset pushes it as
+    // the router swaps pages), and _fetchWorkspaceName reads the
+    // element's ancestors synchronously — an unguarded call there is
+    // an uncaught "deactivated widget" error (#3402 CI run).
     _markingSub = context.read<WsClient>().workspacesChanged.listen(
-          (_) => _fetchWorkspaceName(),
-        );
+      (_) {
+        if (!mounted) return;
+        _fetchWorkspaceName();
+      },
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) => _connectToWorkspace());
   }
 

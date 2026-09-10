@@ -2645,6 +2645,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Workspace page no longer throws during teardown under a live config
+  reload (#3402).** A `workspacesChanged` push arriving while the
+  workspace page was deactivating — a SIGHUP reload resetting the
+  workspace socket just as the page is navigated away — ran the
+  classification-marking re-resolve on the deactivated element and
+  surfaced as an uncaught "deactivated widget" error in the browser
+  console. The listener now returns early once the page is no longer
+  mounted.
 - **Cancel in a git authorization dialog now fails the git operation
   (#3402).** Cancelling the workspace's git-authorization dialog (or
   denying the app on the provider's approval page) during a Gitea
