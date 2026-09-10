@@ -60,7 +60,12 @@ RUN_MODE = prod
 
 [server]
 PROTOCOL = http
-HTTP_ADDR = 127.0.0.1
+# 0.0.0.0 like the backend's own egress listener: workspace containers
+# reach this instance through the pasta gateway (host.containers.internal),
+# which maps onto the host's non-loopback side — a 127.0.0.1 bind is RST'd
+# from inside the container while the browser legs stay on 127.0.0.1 via
+# DOMAIN/ROOT_URL below (#3385).
+HTTP_ADDR = 0.0.0.0
 HTTP_PORT = $GITEA_PORT
 DOMAIN = 127.0.0.1
 ROOT_URL = $BASE_URL/

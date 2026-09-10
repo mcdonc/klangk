@@ -47,16 +47,20 @@ def assert_wired(source: str, needles: tuple[str, ...], why: str) -> None:
 
 
 def test_app_ini_locks_the_instance_down():
-    """Fresh-boot posture: installer locked, registration closed, sqlite,
-    loopback-only listener — the instance must never present an open
-    install page or accept signups mid-suite."""
+    """Fresh-boot posture: installer locked, registration closed, sqlite —
+    the instance must never present an open install page or accept signups
+    mid-suite. The listener binds 0.0.0.0 like the backend's own egress
+    listener: workspace containers reach it through the pasta gateway
+    (host.containers.internal), which maps onto the host's non-loopback
+    side — a 127.0.0.1 bind is refused from inside the container while
+    the browser legs stay on 127.0.0.1 via DOMAIN/ROOT_URL (#3385)."""
     up = _UP.read_text()
     assert_wired(
         up,
         (
             "INSTALL_LOCK = true",  # in [security] (env: GITEA__security__)
             "DB_TYPE = sqlite3",
-            "HTTP_ADDR = 127.0.0.1",
+            "HTTP_ADDR = 0.0.0.0",
             "DISABLE_SSH = true",
             "DISABLE_REGISTRATION = true",
         ),
@@ -96,6 +100,21 @@ def test_seed_creates_a_public_oauth_client():
             "generate-access-token",
         ),
         "the seed must register a PKCE-capable public OAuth app",
+    )
+
+
+def test_seed_creates_a_private_clone_target():
+    """git only invokes the credential helper for a repo that demands
+    auth, so the seed must carry a PRIVATE auto-initialized repo beside
+    the public one."""
+    seed = _SEED.read_text()
+    assert_wired(
+        seed,
+        (
+            'PRIVATE_REPO_NAME = "e2e-private-repo"',
+            "ensure_repo(base, token, PRIVATE_REPO_NAME, True)",
+        ),
+        "the seed must provision the private clone target",
     )
 
 

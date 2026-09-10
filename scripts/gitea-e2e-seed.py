@@ -7,7 +7,9 @@ already be listening. Creates, reusing what already exists on re-runs:
   closed, so the seed is the only account source),
 - an API token (scopes: all), verified per run and regenerated only when
   it stops working — stored in ``<state>/token.txt``,
-- the public auto-initialized repo ``gitea-admin/e2e-repo``,
+- the public auto-initialized repo ``gitea-admin/e2e-repo`` plus the
+  PRIVATE ``gitea-admin/e2e-private-repo`` (git only asks the credential
+  helper for a private repo — that is the OAuth flow's trigger),
 - the OAuth2 application ``klangk-e2e``: a public client (PKCE-capable —
   confidential clients fail the PKCE challenge on Gitea >= 1.22,
   go-gitea/gitea#33956) whose redirect URI comes from the caller. A
@@ -35,6 +37,9 @@ ADMIN_USER = "gitea-admin"
 ADMIN_PASSWORD = "gitea-e2e-admin"
 ADMIN_EMAIL = "gitea-admin@example.com"
 REPO_NAME = "e2e-repo"
+# The credential-demanding clone target: git only asks the helper for a
+# PRIVATE repo, so the OAuth E2E clones this one (#3385).
+PRIVATE_REPO_NAME = "e2e-private-repo"
 APP_NAME = "klangk-e2e"
 TOKEN_HEX = re.compile(r"\b[0-9a-f]{40}\b")
 READY_TIMEOUT = 60
@@ -153,8 +158,8 @@ def ensure_token(state: Path, base: str) -> str:
     return token
 
 
-def ensure_repo(base: str, token: str) -> None:
-    status, _ = api(base, "GET", f"/api/v1/repos/{ADMIN_USER}/{REPO_NAME}", token, None)
+def ensure_repo(base: str, token: str, name: str, private: bool) -> None:
+    status, _ = api(base, "GET", f"/api/v1/repos/{ADMIN_USER}/{name}", token, None)
     if status == 200:
         return
     status, detail = api(
@@ -163,8 +168,8 @@ def ensure_repo(base: str, token: str) -> None:
         "/api/v1/user/repos",
         token,
         {
-            "name": REPO_NAME,
-            "private": False,
+            "name": name,
+            "private": private,
             "auto_init": True,
             "description": "clone target for klangk E2E (#3385)",
         },
@@ -235,7 +240,8 @@ def main() -> None:
     wait_ready(base)
     ensure_admin(args.state)
     token = ensure_token(args.state, base)
-    ensure_repo(base, token)
+    ensure_repo(base, token, REPO_NAME, False)
+    ensure_repo(base, token, PRIVATE_REPO_NAME, True)
     app = ensure_oauth_app(base, token, args.redirect_uri)
 
     _write_private(
@@ -257,6 +263,7 @@ def main() -> None:
             (
                 f"url:       {base}",
                 f"repo:      {base}/{ADMIN_USER}/{REPO_NAME}.git",
+                f"private:   {base}/{ADMIN_USER}/{PRIVATE_REPO_NAME}.git",
                 f"admin:     {ADMIN_USER} / {ADMIN_PASSWORD}",
                 f"api token: {token}",
                 f"oauth2 client_id:     {app['client_id']}",
