@@ -889,13 +889,29 @@ def ensure_feature_manifest() -> None:
         # klangk_features at the stub — the app compiles with no
         # features and the bridge answers "Unknown action" for every
         # feature op until pub get rewrites it.
-        subprocess.run(
+        pub_get = subprocess.run(
             ["flutter", "pub", "get"],
             cwd=REPO_ROOT / "src" / "frontend",
-            check=True,
             capture_output=True,
+            text=True,
             timeout=600,
+            # Same guard as scripts/flutterbuildweb.sh: a transitive git
+            # dependency (ag-ui, via the pinned lock) carries git-LFS
+            # objects — a test fixture image its own e2e apps use, never
+            # needed to compile the Dart package — and unauthenticated
+            # CI cannot fetch it (#1691-class). Pointer files suffice.
+            env={**os.environ, "GIT_LFS_SKIP_SMUDGE": "1"},
         )
+        if pub_get.returncode != 0:
+            # check=True would raise a bare CalledProcessError that
+            # discards the captured output — the only place the cause
+            # lives on a headless CI runner (a 69 here has meant
+            # everything from a pub.dev outage to an unwritable pub
+            # cache; the stderr names which).
+            raise FmtkError(
+                f"flutter pub get failed (rc={pub_get.returncode}): "
+                f"{(pub_get.stdout + pub_get.stderr)[-2000:]}"
+            )
     emitted = REPO_ROOT / "src" / "frontend" / "build" / "web" / "features.json"
     if not emitted.is_file():
         subprocess.run(
