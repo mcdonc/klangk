@@ -1,12 +1,12 @@
-name: "E2E: fmtk Frontend Tests"
+name: "E2E: fmtk Frontend Tests (core)"
 
 on:
   schedule:
-    # Daily at 05:23 UTC — deliberately off the 06:00–06:43 UTC cluster
-    # (fuzz-daily, frontend-e2e-cross-browser, the CDK pentests) so this
-    # suite is not queued behind them. Scheduled runs use stock runners:
-    # the `inputs` context is empty on `schedule`, so the `runner` input
-    # below coalesces to ubuntu-latest (#3300).
+    # Daily at 05:23 UTC — off the 06:00–06:43 UTC cluster (fuzz-daily,
+    # frontend-e2e-cross-browser, the CDK pentests) so this suite is not
+    # queued behind them. Scheduled runs use stock runners: the `inputs`
+    # context is empty on `schedule`, so the `runner` input below
+    # coalesces to ubuntu-latest (#3300).
     - cron: "23 5 * * *"
   workflow_dispatch:
     inputs:
@@ -23,6 +23,13 @@ on:
   # fixed, a PR-triggered run could also red any backend PR through the
   # src/klangk/** paths filter (#3266); validate a PR branch by
   # dispatching this workflow on it.
+  #
+  # The fmtk suite is split across three workflows so each run fits the
+  # 60-minute job budget — one stack boot plus a module group each
+  # (#3402): this one covers the app-shell surfaces (login flows, config
+  # swaps, settings, features, harness recovery); the sibling workflows
+  # cover workspaces/terminals/files/sharing and the external-party flows
+  # (network, OIDC, Gitea git-auth).
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -32,9 +39,7 @@ jobs:
   # fmtk-driven browser e2e (#3232/#3231): boots the fmtk-up scratch stack
   # (headless Chrome under CI — no DISPLAY) and drives the debug frontend
   # through the fmtk CLI. The frontend compiles from source via
-  # `flutter run --debug`; the suites start real workspace containers, so
-  # CI builds the workspace image and the network sidecar (interactive
-  # egress fail-closes without the sidecar) before running them.
+  # `flutter run --debug`; this group starts no workspace containers.
   test-fmtk-e2e:
     runs-on: ${{ inputs.runner == 'nix' && 'nix' || 'ubuntu-latest' }}
     timeout-minutes: 60
@@ -54,14 +59,20 @@ jobs:
       - uses: ./.github/actions/e2e-suite
         with:
           run: "true"
-          suite: test-fmtk-e2e
-          suite-name: fmtk
+          suite: >-
+            test-fmtk-e2e
+            src/frontend/e2e-tests/fmtk/test_smoke.py
+            src/frontend/e2e-tests/fmtk/test_harness_recovery.py
+            src/frontend/e2e-tests/fmtk/test_features.py
+            src/frontend/e2e-tests/fmtk/test_user_settings.py
+            src/frontend/e2e-tests/fmtk/test_settings.py
+          suite-name: fmtk-core
 
       - name: Upload harness logs
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: fmtk-e2e-logs
+          name: fmtk-e2e-core-logs
           retention-days: 7
           path: |
             .devenv/state/fmtk/klangkd.log

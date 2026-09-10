@@ -1,0 +1,66 @@
+name: "E2E: fmtk Frontend Tests (flows)"
+
+on:
+  schedule:
+    # Daily at 05:39 UTC — off the 06:00–06:43 UTC cluster, staggered
+    # behind the fmtk core and workspaces groups so the three sibling
+    # workflows do not stampede the queue. Scheduled runs use stock
+    # runners (#3300).
+    - cron: "39 5 * * *"
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: "Runner kind: stock (ubuntu-latest) or the self-hosted nix VM"
+        type: choice
+        options: [stock, nix]
+        default: stock
+  # No pull_request/push triggers and no path gating (#3300) — the daily
+  # schedule carries the regression signal; validate a PR branch by
+  # dispatching this workflow on it. Suite split rationale: #3402.
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  # fmtk-driven browser e2e (#3232/#3231) — the external-party flow group:
+  # admin/user management, auth flows, network egress, the OIDC SSO chain
+  # (in-process fake IdP), and the Gitea git-credential browser flow
+  # (#3385 — boots its own real Gitea beside the stack). CI builds the
+  # workspace image and the network sidecar (the git-auth scenarios start
+  # a real workspace container) before running them.
+  test-fmtk-e2e:
+    runs-on: ${{ inputs.runner == 'nix' && 'nix' || 'ubuntu-latest' }}
+    timeout-minutes: 60
+    env:
+      FMTK_E2E_FRESH: "1"
+    steps:
+      - uses: actions/checkout@v7
+
+      # Stock runners only (see backend-e2e-tests.yml).
+      - uses: ./.github/actions/devenv-setup
+        if: inputs.runner != 'nix'
+
+      - uses: ./.github/actions/e2e-suite
+        with:
+          run: "true"
+          suite: >-
+            test-fmtk-e2e
+            src/frontend/e2e-tests/fmtk/test_admin.py
+            src/frontend/e2e-tests/fmtk/test_auth.py
+            src/frontend/e2e-tests/fmtk/test_network.py
+            src/frontend/e2e-tests/fmtk/test_oidc.py
+            src/frontend/e2e-tests/fmtk/test_gitea_git_auth.py
+          suite-name: fmtk-flows
+
+      - name: Upload harness logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fmtk-e2e-flows-logs
+          retention-days: 7
+          path: |
+            .devenv/state/fmtk/klangkd.log
+            .devenv/state/fmtk/caddy.log
+            .devenv/state/fmtk/flutter-e2e.log
+            .devenv/state/fmtk/gitea.log
