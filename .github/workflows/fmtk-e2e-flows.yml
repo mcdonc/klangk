@@ -1,6 +1,14 @@
 name: "E2E: fmtk Frontend Tests (flows)"
 
 on:
+  # TEMPORARY (#3402): a workflow_dispatch target must be registered
+  # from the default branch, and this file is not on main until the PR
+  # merges — this pull_request trigger runs the flows group on THIS PR
+  # only (a PR event reads the workflow file from the PR's merge ref).
+  # REMOVE BEFORE MERGE: the schedule + dispatch below take over on
+  # main, and the suite is deliberately not PR-triggered (#3300).
+  pull_request:
+    branches: [main]
   schedule:
     # Daily at 05:39 UTC — off the 06:00–06:43 UTC cluster, staggered
     # behind the fmtk core and workspaces groups so the three sibling
