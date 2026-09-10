@@ -2645,6 +2645,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Cancel in a git authorization dialog now fails the git operation
+  (#3402).** Cancelling the workspace's git-authorization dialog (or
+  denying the app on the provider's approval page) during a Gitea
+  browser-flow clone exits the credential helper with an error, so git
+  tries its next configured helper and otherwise reports a fatal
+  authentication failure — the documented contract. Previously the
+  helper re-prompted with the manual token dialog, leaving the clone
+  waiting on a dialog nobody asked for.
 - **SSO login completes under an every-visit login banner
   (#3371).** With `login_banner_every_visit` on, the browser's
   return from the identity provider carried a one-time login code

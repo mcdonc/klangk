@@ -5,16 +5,25 @@ The whole chain runs on real surfaces: a private repo clone in the
 workspace terminal invokes ``git-credential-klangk`` (baked into the
 image), which relays ``auth_flow_start`` over the browser bridge; the
 feature's authorization dialog appears in the app tab; the popup is
-opened by a REAL click on the dialog's "Reopen" link (CDP Input events
-pass Chrome's popup gesture gate — a bare ``window.open`` evaluate
-would be blocked; the http authorize URL is never auto-opened, the
-feature auto-opens https only); Gitea's login + authorize forms are
-driven in the popup tab over CDP; Gitea redirects the popup to the
-proxy origin root with ``?code&state``, the SPA boots to
+opened from the app tab with ``window.open`` at the pending authorize
+URL read from the feature state (the driven Chrome runs with popup
+blocking disabled — the dialog's "Reopen" link is a RichText span,
+not a semantic tappable, and a synthetic CDP pointer click at its
+bounds corrupts the widget build scope); Gitea's login + authorize
+forms are driven in the popup tab over CDP; Gitea redirects the popup
+to the proxy origin root with ``?code&state``, the SPA boots to
 ``/git-auth-callback`` and posts the code to the opener; the helper
 exchanges the code CONTAINER-side (``host.containers.internal`` — the
 same host-gateway pattern the bridge URL itself uses) and git finishes
 the clone.
+
+The popup's app boot breaks the flutter tool's dwds eval pipe to the
+app tab for the rest of the scenario (every fmtk exec fails with no
+JSON envelope), so the popup legs drive over CDP only and the
+completion asserts read host-side podman-exec sentinels;
+``app.restore_eval_pipe()`` re-attaches the pipe deterministically
+before the post-test machinery (the conftest app-errors drain, the
+next scenario) needs it (#3402).
 
 The cancel leg runs the same relay up to the dialog and cancels from
 the app side: git fails with terminal prompts disabled, proving the
@@ -46,6 +55,7 @@ from fmtkharness import (
     FIXTURE_PASSWORD,
     FmtkError,
     Gitea,
+    cdp_close_tab,
     cdp_eval,
     cdp_eval_tab,
     cdp_tabs,
@@ -312,22 +322,6 @@ def wait_clone_sentinel(gitea, timeout: float = 300) -> None:
     raise AssertionError("the clone never completed (no sentinel file)")
 
 
-def restore_eval_pipe(app) -> None:
-    """Reload the app tab so dwds re-attaches.
-
-    The popup's app boot breaks the flutter tool's debug connection to
-    the app tab (every later fmtk exec fails with no JSON envelope).
-    A full page load re-attaches the VM service (#3242) — the post-test
-    app-errors check (conftest) and the next scenario need it. The
-    workspace page unmounts on reload; the fixture's API delete owns
-    the workspace, so nothing is lost."""
-    try:
-        cdp_eval("location.reload()")
-    except FmtkError:
-        return  # tab already gone; the next login boots fresh anyway
-    time.sleep(20)  # the dev-mode app boot + dwds re-attach
-
-
 def trace_tabs(label: str) -> None:
     try:
         from fmtkharness import cdp_tabs
@@ -485,9 +479,7 @@ def retire_popup_after_landing(popup: dict, timeout: float = 120) -> None:
     app (the page posts in initState); a short grace covers the post,
     then the tab is closed so the second isolate goes away before any
     later eval."""
-    import urllib.request
-
-    from fmtkharness import PROXY_PORT, cdp_port
+    from fmtkharness import PROXY_PORT
 
     origin = f"http://127.0.0.1:{PROXY_PORT}"
     deadline = time.monotonic() + timeout
@@ -502,14 +494,7 @@ def retire_popup_after_landing(popup: dict, timeout: float = 120) -> None:
         time.sleep(1)
     if landed:
         time.sleep(5)  # the callback page posts to the opener in initState
-    try:
-        req = urllib.request.Request(
-            f"http://127.0.0.1:{cdp_port()}/json/close/{popup['id']}",
-            method="PUT",
-        )
-        urllib.request.urlopen(req, timeout=10)
-    except OSError:
-        pass  # already gone
+    cdp_close_tab(popup)
 
 
 def cdp_tabs_url(tab: dict) -> str:
@@ -598,12 +583,6 @@ def _proxy_port() -> str:
 # --- scenarios ---------------------------------------------------------
 
 
-@pytest.mark.skip(
-    reason="the full flow passes live (clone + popup + grant + exchange "
-    "+ cache reuse, witnessed twice) but the run is not yet CI-stable: "
-    "the authorize popup boots a second app that breaks the dwds eval "
-    "pipe mid-run on this harness (#3385 follow-up)"
-)
 def test_browser_flow_clones_private_repo_and_reuses_cache(
     harness, app, gitea, provider_workspace
 ):
@@ -642,50 +621,52 @@ def test_browser_flow_clones_private_repo_and_reuses_cache(
     trace_tabs("dialog-up")
 
     # open the popup (http authorize URL is never auto-opened — the
-    # https gate) and drive Gitea's login + grant forms in it
-    open_authorize_popup(app, pending_authorize_url(app))
-    trace_tabs("popup-opened")
-    popup = wait_gitea_popup(gitea)
-    gitea_login_and_authorize(gitea, popup)
-    trace_tabs("granted")
-    retire_popup_after_landing(popup)
-    trace_tabs("retired")
+    # https gate) and drive Gitea's login + grant forms in it; from
+    # here on the eval pipe is at risk, so the flow runs under a
+    # finally that restores it — even a failed leg must leave the
+    # post-test machinery (app-errors drain, the next scenario) a
+    # working pipe (#3402)
+    authorize_url = pending_authorize_url(app)
+    try:
+        open_authorize_popup(app, authorize_url)
+        trace_tabs("popup-opened")
+        popup = wait_gitea_popup(gitea)
+        gitea_login_and_authorize(gitea, popup)
+        trace_tabs("granted")
+        retire_popup_after_landing(popup)
+        trace_tabs("retired")
 
-    # the popup lands on the proxy origin, boots to the callback page,
-    # delivers the code to the opener and closes itself; the helper
-    # exchanges container-side and git finishes the clone — all without
-    # the (now dead) eval pipe. The sentinel file proves the clone.
-    wait_clone_sentinel(gitea)
-    trace_tabs("clone-ok")
+        # the popup lands on the proxy origin, boots to the callback page,
+        # delivers the code to the opener and closes itself; the helper
+        # exchanges container-side and git finishes the clone — all without
+        # the (now dead) eval pipe. The sentinel file proves the clone.
+        wait_clone_sentinel(gitea)
+        trace_tabs("clone-ok")
 
-    # the cached credential serves the next credentialed operation with
-    # no new browser flow: a fresh git from the host side shares the
-    # pane's browser id (tmux global env), so its credential fill hits
-    # the app tab's cache. A cache miss would hang the helper waiting
-    # for a fresh authorization — the timeout turns that into rc!=0.
-    probe = subprocess.run(
-        _podman_exec(
-            gitea,
-            [
-                "bash",
-                "-lc",
-                f"timeout 30 git -C {CLONE_DIR} ls-remote origin"
-                " >/dev/null; echo rc=$?",
-            ],
-        ),
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-    assert "rc=0" in probe.stdout, probe.stdout + probe.stderr
-    restore_eval_pipe(app)
+        # the cached credential serves the next credentialed operation with
+        # no new browser flow: a fresh git from the host side shares the
+        # pane's browser id (tmux global env), so its credential fill hits
+        # the app tab's cache. A cache miss would hang the helper waiting
+        # for a fresh authorization — the timeout turns that into rc!=0.
+        probe = subprocess.run(
+            _podman_exec(
+                gitea,
+                [
+                    "bash",
+                    "-lc",
+                    f"timeout 30 git -C {CLONE_DIR} ls-remote origin"
+                    " >/dev/null; echo rc=$?",
+                ],
+            ),
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert "rc=0" in probe.stdout, probe.stdout + probe.stderr
+    finally:
+        app.restore_eval_pipe()
 
 
-@pytest.mark.skip(
-    reason="same harness instability as the happy path — the scenario "
-    "itself (dialog -> Cancel -> git fatal) never touches the popup; "
-    "re-enable with the happy path (#3385 follow-up)"
-)
 def test_cancel_in_the_dialog_fails_the_clone(harness, app, provider_workspace):
     login_admin(harness, app)
     open_scratch_workspace(app, WS_NAME)
