@@ -289,6 +289,18 @@ class _WorkspacePageState extends State<WorkspacePage> {
           return;
         }
         wsClient.addListener(_onClientUpdate);
+        // The listener above only sends ui_ready on a *transition* to
+        // connected — but the connect can complete before the listener
+        // attaches, leaving the page's _connecting/_disconnected flags
+        // untouched and the socket never subscribed for bridge routing
+        // (browser-delegate requests 502 until some later reconnect,
+        // #3385). Send it now too: the server-side handler is
+        // idempotent (a set-add plus the pending-status flush).
+        if (wsClient.currentWorkspaceId == widget.workspaceId) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) wsClient.sendUiReady();
+          });
+        }
       },
       onContainerEvent: (name, value) {
         if (!mounted) return;
