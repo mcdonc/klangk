@@ -33,6 +33,8 @@ operators or integrators to act when upgrading.
 
 ## \[Unreleased]
 
+## \[v2.0a3] - 2026-09-10
+
 ### Added
 
 - **Git authentication via the browser for Gitea hosts (#3385).** A
