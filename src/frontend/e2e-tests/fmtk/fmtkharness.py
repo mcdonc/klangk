@@ -705,7 +705,16 @@ def cdp_wait_tab_url(prefixes: tuple[str, ...], timeout: float = 60) -> str:
 
 def cdp_eval(js: str) -> object:
     """Evaluate ``js`` in the app tab (one-shot CDP websocket)."""
-    ws_url = cdp_app_tab()["webSocketDebuggerUrl"]
+    return cdp_eval_tab(cdp_app_tab(), js)
+
+
+def cdp_eval_tab(tab: dict, js: str) -> object:
+    """Evaluate ``js`` in a specific tab (one-shot CDP websocket).
+
+    The git-auth popup legs (#3385) drive Gitea's login and authorize
+    forms in the popup tab while the app tab holds the flow dialog.
+    """
+    ws_url = tab["webSocketDebuggerUrl"]
     with ws_connect(ws_url) as ws:
         ws.send(
             json.dumps(
@@ -721,6 +730,228 @@ def cdp_eval(js: str) -> object:
     if result.get("subtype") == "error":
         raise FmtkError(f"cdp_eval threw: {result.get('description')}")
     return result.get("value")
+
+
+def cdp_mouse_click(tab: dict, x: float, y: float) -> None:
+    """A trusted mouse click at page coordinates in a tab.
+
+    CDP Input events are real input as far as Chrome is concerned, so a
+    click that opens a popup passes the user-gesture gate (a bare
+    ``Runtime.evaluate`` ``window.open`` is blocked). The git-auth flow's
+    "Reopen" link is an http URL — the feature only auto-opens https —
+    so the E2E clicks it like a user would (#3385).
+    """
+    with ws_connect(tab["webSocketDebuggerUrl"]) as ws:
+        for msg_id, method, params in (
+            (
+                1,
+                "Input.dispatchMouseEvent",
+                {
+                    "type": "mousePressed",
+                    "x": x,
+                    "y": y,
+                    "button": "left",
+                    "clickCount": 1,
+                },
+            ),
+            (
+                2,
+                "Input.dispatchMouseEvent",
+                {
+                    "type": "mouseReleased",
+                    "x": x,
+                    "y": y,
+                    "button": "left",
+                    "clickCount": 1,
+                },
+            ),
+        ):
+            ws.send(json.dumps({"id": msg_id, "method": method, "params": params}))
+            ws.recv()
+
+
+def ensure_feature_manifest() -> None:
+    """Materialize the feature Dart packages + ``features.json``.
+
+    Two build outputs a fresh worktree lacks (#3385):
+
+    - the feature Dart payload: ``pubspec_overrides.yaml`` points at
+      ``dart-stub`` — an empty aggregator ("no features") — until
+      ``import_dart_features.py`` (full, not ``--features-only``)
+      materializes the real packages and rewrites the overrides. A dev
+      app built against the stub registers NO features (the bridge
+      answers ``Unknown action`` for every feature op).
+    - ``frontend_dir/features.json``: the backend's feature list AND
+      the container-env bridge (``container_env_keys``) — without it,
+      ``features_config:`` values never reach workspace containers.
+
+    Idempotent: real (non-stub) overrides and an existing manifest are
+    left alone; a backend already booted re-reads the manifest on the
+    next SIGHUP (``Features.reconfigure``).
+    """
+    target = REPO_ROOT / "src" / "klangk" / "klangk" / "frontend" / "features.json"
+    overrides = REPO_ROOT / "src" / "frontend" / "pubspec_overrides.yaml"
+    payload = DEVENV_STATE / "klangk" / "features"
+    aggregator = payload / ".dart" / "lib" / "klangk_features.dart"
+    needs_import = not overrides.is_symlink() or not aggregator.is_file()
+    if not needs_import:
+        stub_marker = "Stub — no features" in aggregator.read_text()
+        needs_import = stub_marker or "git_credential" not in aggregator.read_text()
+    if not (payload / "features.lock").is_file():
+        # Materialize the feature payload (the klangk:update-features
+        # task's own two steps).
+        subprocess.run(
+            ["bash", "scripts/stub_dart_features.sh"],
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+            timeout=300,
+        )
+        subprocess.run(
+            [
+                str(VENV_PYTHON),
+                "scripts/update_features.py",
+                "--payload-dir",
+                str(payload),
+            ],
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+            timeout=300,
+        )
+    if needs_import:
+        subprocess.run(
+            [
+                str(VENV_PYTHON),
+                "scripts/import_dart_features.py",
+                "--payload-dir",
+                str(payload),
+            ],
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+            timeout=600,
+        )
+        # Refresh the compile graph: the overrides symlink changed, but
+        # a stale .dart_tool/package_config.json still resolves
+        # klangk_features at the stub — the app compiles with no
+        # features and the bridge answers "Unknown action" for every
+        # feature op until pub get rewrites it.
+        subprocess.run(
+            ["flutter", "pub", "get"],
+            cwd=REPO_ROOT / "src" / "frontend",
+            check=True,
+            capture_output=True,
+            timeout=600,
+        )
+    emitted = REPO_ROOT / "src" / "frontend" / "build" / "web" / "features.json"
+    if not emitted.is_file():
+        subprocess.run(
+            [
+                str(VENV_PYTHON),
+                "scripts/import_dart_features.py",
+                "--features-only",
+                "--payload-dir",
+                str(payload),
+            ],
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+            timeout=300,
+        )
+    manifest = json.loads(emitted.read_text())
+    if not manifest.get("container_env_keys"):
+        raise FmtkError(
+            "the emitted features.json carries no container_env_keys — "
+            "the container-env bridge (features_config -> containers) "
+            "would silently do nothing"
+        )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(emitted, target)
+
+
+class Gitea:
+    """The E2E Gitea instance (``scripts/gitea-e2e.sh``, #3385).
+
+    A real nixpkgs Gitea on 127.0.0.1:8993, state under DEVENV_STATE's
+    ``gitea`` (shared with the standalone harness — same instance, same
+    fixtures, whether a human booted it via ``gitea-e2e up`` or the
+    suite did). The OAuth application's redirect targets the fmtk
+    proxy origin root, where the SPA callback route lives; the browser
+    legs (authorize, the redirect back) run in the driven Chrome, the
+    token exchange runs inside the workspace container via
+    ``host.containers.internal`` — the same host-gateway pattern the
+    bridge URL itself uses.
+    """
+
+    PORT = int(os.environ.get("GITEA_E2E_PORT", "8993"))
+    ADMIN_USER = "gitea-admin"
+    ADMIN_PASSWORD = "gitea-e2e-admin"
+    PRIVATE_REPO = "e2e-private-repo"
+
+    def __init__(self) -> None:
+        self.state_dir = DEVENV_STATE / "gitea"
+        self.log_path = STATE_DIR / "gitea.log"
+
+    @property
+    def base(self) -> str:
+        return f"http://127.0.0.1:{self.PORT}"
+
+    def is_ours_and_healthy(self) -> bool:
+        try:
+            version = http_get_json(f"{self.base}/api/v1/version")
+            return bool(version.get("version"))
+        except (FmtkError, OSError, ValueError):
+            return False
+
+    def ensure(self) -> None:
+        """Healthy instance reused (ours or a human's ``gitea-e2e up``);
+        anything else gets a fresh boot."""
+        if self.is_ours_and_healthy():
+            self.seed()
+            return
+        self.log_path.parent.mkdir(parents=True, exist_ok=True)
+        log = open(self.log_path, "ab")
+        subprocess.Popen(
+            ["bash", str(REPO_ROOT / "scripts/gitea-e2e.sh"), "up"],
+            cwd=REPO_ROOT,
+            stdout=log,
+            stderr=log,
+            start_new_session=True,
+        )
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            if self.is_ours_and_healthy():
+                self.seed()
+                return
+            time.sleep(1)
+        raise HarnessTimeout(
+            f"gitea never became healthy on {self.base} (log: {self.log_path})"
+        )
+
+    def seed(self) -> None:
+        """Idempotent seed with the proxy-origin redirect (the same
+        origin-splitting proxy the SPA rides, so PROXY_PORT overrides
+        stay coherent)."""
+        seeded = subprocess.run(
+            [
+                "bash",
+                str(REPO_ROOT / "scripts/gitea-e2e.sh"),
+                "seed",
+                "--redirect-uri",
+                f"http://127.0.0.1:{PROXY_PORT}/",
+            ],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if seeded.returncode != 0:
+            raise FmtkError(f"gitea seed failed: {seeded.stderr.strip()}")
+
+    def oauth_client(self) -> dict:
+        """The seeded OAuth application (client_id, redirect_uri)."""
+        return json.loads((self.state_dir / "oauth2.json").read_text())
 
 
 class Backend:
@@ -1061,11 +1292,19 @@ class FlutterRun:
         # bare remote-debugging-port fallback matched ANY chrome and
         # cross-fired on the neighbors (#3238).
         env["FMTK_CHROME_PROFILE"] = str(STATE_DIR / "chrome-profile")
+        # Popup blocking off for the driven browser: the git-auth flow's
+        # popup is opened by CDP ``window.open`` (no user-activation
+        # signal — a synthetic pointer event corrupts the widget build
+        # scope instead, the #3385 probe). A real user clicks the
+        # dialog's Reopen link; the driven browser only ever opens the
+        # URLs the suite itself computed.
+        base_flags = "--disable-popup-blocking"
         if headless_requested():
-            env["FMTK_CHROME_FLAGS"] = (
-                "--headless=new --no-sandbox --disable-gpu "
+            base_flags += (
+                " --headless=new --no-sandbox --disable-gpu "
                 "--disable-dev-shm-usage --window-size=1600,1000"
             )
+        env["FMTK_CHROME_FLAGS"] = base_flags
         return env
 
     def flutter_args(self, url_suffix: str = "") -> list[str]:
@@ -2096,6 +2335,7 @@ class Harness:
     def boot(self, fresh: bool = False) -> None:
         if fresh:
             self.wipe()
+        ensure_feature_manifest()
         self.backend.ensure()
         self.heal_swapped_settings()
         # The sink's port is ephemeral, so the SMTP settings are rewritten

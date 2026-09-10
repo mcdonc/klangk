@@ -22,6 +22,14 @@ to Gitea hosts.
 - Any user account on the Gitea instance. Registering the OAuth
   application is a user-level settings page, so a regular account is
   enough; an instance administrator is not required.
+- A Gitea instance that answers on an address workspace containers can
+  reach. A Gitea running on the same machine as klangkd binds a real
+  interface address (`0.0.0.0` or the host's LAN address): workspace
+  containers reach the host through a gateway that maps onto its
+  non-loopback side, so a listener bound to `127.0.0.1` refuses their
+  connections. Workspaces reach the Gitea address through the normal
+  egress path, so it is subject to the same consent or allow-list
+  rules as any other destination.
 
 ## Register the OAuth application in Gitea
 
@@ -54,21 +62,16 @@ same applications, but you do not need it to create one.
 ## Configure klangk
 
 Add a provider entry for your Gitea host. Deploy-wide via the YAML
-config (`features_config`):
+config — the `features_config` block maps the feature's environment
+key to the JSON list, kept as one string:
 
 ```yaml
 features_config:
-  oauth_providers:
-    - host: git.example.com
-      flow: authorization_code_pkce
-      client_id: "<the Client ID from the step above>"
-      authorize_url: https://git.example.com/login/oauth/authorize
-      token_url: https://git.example.com/login/oauth/access_token
-      redirect_uri: https://klangk.example.com/
+  KLANGKWS_FEATURE_OAUTH_PROVIDERS: '[{"host": "git.example.com", "flow": "authorization_code_pkce", "client_id": "<the Client ID from the step above>", "authorize_url": "https://git.example.com/login/oauth/authorize", "token_url": "https://git.example.com/login/oauth/access_token", "redirect_uri": "https://klangk.example.com/"}]'
 ```
 
-Or as an environment variable on the server (same JSON list format as
-[GitHub HTTPS Authentication](features/github-authentication.md)):
+Or as an environment variable on the server (the same JSON list,
+without the quoting the YAML form needs):
 
 ```sh
 KLANGKWS_FEATURE_OAUTH_PROVIDERS='[
@@ -83,8 +86,12 @@ KLANGKWS_FEATURE_OAUTH_PROVIDERS='[
 ]'
 ```
 
-The `redirect_uri` is the same origin you registered in Gitea. A
-Forgejo instance uses the same endpoint paths.
+The `redirect_uri` is the same origin you registered in Gitea. The
+block key can also be the stripped, lowercased short form
+(`oauth_providers:`) with the same JSON-string value — the form the
+[environment reference](reference/environment.md) lists per key.
+
+A Forgejo instance uses the same endpoint paths.
 
 ## The first clone
 
