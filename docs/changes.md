@@ -4098,3 +4098,12 @@ users(id)`, so the decider handler passing the decider's email violated the
   page renders the real description instead of the "author has not
   provided" placeholder; its hero image uses an absolute URL so it renders
   on PyPI too.
+
+- **Gitea provider config example (`docs/gitea.md`, #3385).** The
+  `features_config:` example showed a nested YAML list; the block takes
+  the JSON list as one string under the feature key. The chapter also
+  notes that a Gitea on the klangk host must bind a real interface
+  address (workspace containers reach the host through a gateway that
+  maps onto its non-loopback side) and documents the browser-bridge
+  `ui_ready` fix that left every bridge request failing until a
+  reconnect.

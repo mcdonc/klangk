@@ -22,6 +22,9 @@ src/frontend/build/
 # Feature build artifacts
 features/**/klangk/.dart_tool/
 features/**/klangk/build/
+# The backend's frontend_dir (build-emitted features.json lands here;
+# import_dart_features.py + the fmtk harness materialize it).
+src/klangk/klangk/frontend/
 # Wheel build output (scripts/build_wheel.sh -> src/klangk/dist/).
 src/klangk/dist/
 src/frontend/.flutter-plugins
