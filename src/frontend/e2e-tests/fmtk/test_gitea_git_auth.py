@@ -680,6 +680,9 @@ def test_cancel_in_the_dialog_fails_the_clone(harness, app, provider_workspace):
     )
     app.wait_for_text("Sign in to 127.0.0.1", 60000)
     app.tap_button_exact("Cancel")
+    # the dialog unwound on the app side (the buffer assert below
+    # proves the container side: git's fatal + the marker echo)
+    app.wait_gone("Waiting for authorization...", 15)
 
     buffer = buffer_until(
         app, lambda b: re.search(f"^{CANCEL_OK}$", b, re.M), timeout=90

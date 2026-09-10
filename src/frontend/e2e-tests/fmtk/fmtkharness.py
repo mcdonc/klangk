@@ -683,9 +683,11 @@ def cdp_tabs() -> list[dict]:
 
 
 def cdp_app_tab() -> dict:
-    """The app tab — the one non-internal page Chrome has. When the SSO
-    chain is mid-flight the same tab sits at the backend or IdP origin;
-    it stays "the app tab" the whole way (#3242)."""
+    """The first non-internal page tab (Chrome lists targets newest-first,
+    so this is the most recently opened one). Correct for the single-tab
+    flows — the SSO chains navigate the tab in place; the git-auth
+    popup era needs identity-based selection instead
+    (:func:`cdp_main_app_tab`)."""
     tabs = cdp_tabs()
     if not tabs:
         raise FmtkError("no page tab in the driven chrome")
@@ -746,18 +748,40 @@ def cdp_close_tab(tab: dict) -> None:
         pass  # already gone
 
 
-def cdp_close_extra_tabs() -> None:
-    """Close every driven-Chrome page tab except the first (the app
-    tab — Chrome lists targets in creation order, and the app tab
-    predates any popup the suites opened).
+def cdp_main_app_tab() -> dict | None:
+    """The tab the fmtk eval pipe should drive once a multi-tab flow is
+    over: the one on the app origin that is not the git-auth popup.
+
+    Position cannot identify it — Chrome's ``/json/list`` ordering is
+    newest-first, so ``tabs[0]`` is the popup the moment one exists —
+    so the URL must: the app tab sits on the proxy origin at a normal
+    route, while the popup either sits on the provider's origin or
+    carries the flow's ``?code=`` landing / ``/git-auth-callback``
+    route. None when no tab qualifies (the caller must not close
+    anything then — closing the last tab takes the browser down)."""
+    for tab in cdp_tabs():
+        url = tab["url"]
+        if (
+            url.startswith(proxy_origin())
+            and "/git-auth-callback" not in url
+            and "?code=" not in url
+        ):
+            return tab
+    return None
+
+
+def cdp_close_extra_tabs(keep: dict) -> None:
+    """Close every driven-Chrome page tab except ``keep`` (by target
+    id — order-independent).
 
     The git-auth authorize popup is a second app instance at the proxy
     origin (#3385); one still open when the eval pipe is restored (a
     failed flow) keeps a second Flutter isolate registered, and every
     later fmtk exec then races the two for "the" isolate. Closing down
-    to exactly one app tab makes the post-flow state deterministic."""
-    for tab in cdp_tabs()[1:]:
-        cdp_close_tab(tab)
+    to exactly the kept tab makes the post-flow state deterministic."""
+    for tab in cdp_tabs():
+        if tab["id"] != keep["id"]:
+            cdp_close_tab(tab)
 
 
 def cdp_mouse_click(tab: dict, x: float, y: float) -> None:
@@ -1694,17 +1718,22 @@ class FmtkClient:
         different signature than the isolate wedge, so exec()'s
         recovery does not fire) while the app tab itself keeps
         working. The cure, in order: close every tab except the app
-        tab, full-page load the app tab back onto the app origin (a
-        page load re-attaches the VM service, #3242), and poll the
-        toolkit until it answers — a fixed sleep cannot cover a slow
-        CI boot. A load that has not re-attached by the deadline falls
-        back to a fresh flutter run (the permanent-wedge cure,
+        tab (identified by URL — Chrome lists targets newest-first, so
+        position would pick the popup), full-page load the app tab
+        back onto the app origin (a page load re-attaches the VM
+        service, #3242), and poll the toolkit until it answers — a
+        fixed sleep cannot cover a slow CI boot. A load that has not
+        re-attached by the deadline falls back to a fresh flutter run
+        (the permanent-wedge cure,
         :meth:`FlutterRun.recover_from_wedge`), which waits for the
-        toolkit itself.
+        toolkit itself. A Chrome that died outright also lands in the
+        fallback: the whole CDP preamble is best-effort.
         """
         self.flutter.isolate_gone_since = None
-        cdp_close_extra_tabs()
         try:
+            keep = cdp_main_app_tab()
+            if keep is not None:
+                cdp_close_extra_tabs(keep)
             cdp_eval(f"location.href='{proxy_origin()}/'")
         except (FmtkError, OSError, ValueError):
             pass  # chrome/tab gone — the restart below boots a fresh one
