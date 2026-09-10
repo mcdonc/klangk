@@ -1,0 +1,3661 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Multi-User AI Sandboxing, Collaboration and Coding Platform">
+      
+      
+        <meta name="author" content="Chris McDonough">
+      
+      
+        <link rel="canonical" href="https://mcdonc.github.io/klangk/2.0a3/features/authentication/">
+      
+      
+        <link rel="prev" href="../">
+      
+      
+        <link rel="next" href="../auth-modes/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/favicon.png">
+      <meta name="generator" content="zensical-0.0.60">
+    
+    
+      
+        <title>Authentication - Klangk</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.ce62732f.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#authentication" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Klangk" class="md-header__button md-logo" aria-label="Klangk" data-md-component="logo">
+      
+  <img src="../../assets/logo.svg" alt="Klangk">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Klangk
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Authentication
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="slate" data-md-color-primary="green" data-md-color-accent="green"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-moon" viewBox="0 0 24 24"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/mcdonc/klangk" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/klangk
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Klangk" class="md-nav__button md-logo" aria-label="Klangk" data-md-component="logo">
+      
+  <img src="../../assets/logo.svg" alt="Klangk">
+
+    </a>
+    Klangk
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mcdonc/klangk" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/klangk
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Home
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Getting Started
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Features
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Features
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Authentication
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Authentication
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#email-and-password" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Email and password
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Email and password">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#registration" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Registration
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#password-reset" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Password reset
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#email-delivery" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Email delivery
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#single-sign-on-oidc" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Single sign-on (OIDC)
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#account-self-service" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Account self-service
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sessions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Sessions
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#token-delivery-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Token delivery policy
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#brute-force-protection" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Brute-force protection
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#concurrent-session-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Concurrent session limits
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#concurrent-logon-auditing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Concurrent-logon auditing
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#session-workstation-binding-replay-protection" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Session workstation binding (replay protection)
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#idle-session-timeout" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Idle session timeout
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-up-sudo-mode-for-privileged-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Step-up (sudo mode) for privileged operations
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dormant-account-auto-disable" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Dormant-account auto-disable
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#consent-banner" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Consent banner
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dpop-session-token-binding-xss-theft-protection" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        DPoP session-token binding (XSS theft protection)
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../auth-modes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Auth Modes
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../authorization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Authorization
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../handles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Handles
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../admin-management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Admin Management
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../invitations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Invitations
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../workspaces/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspaces
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../terminal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Terminal
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../the-shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The Shell
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../service-command/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Service Command
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../auto-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Auto-Start
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../health-check/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Health Check
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../egress-filtering/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Egress Filtering
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../sandbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Sandbox
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../file-viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  File Viewer
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ai-coding-harnesses/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  AI Coding Harnesses
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../features/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Feature Activation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../export-import/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Export & Import
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hosted-apps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Hosted Apps
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  CLI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ssh-agent-forwarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  SSH Agent Forwarding
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../github-authentication/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  GitHub HTTPS Authentication
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../gitea/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Gitea
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../debug-panel/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Debug Panel
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../logging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Logging
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../admission/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace Admission
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crash-recovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Crash Recovery
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../server-scheduling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Server Scheduling
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../nix/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Nix
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../sandboxes/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Sandboxes
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Sandboxes
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../sandboxes/openclaw/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  OpenClaw
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../sandboxes/hermes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Hermes
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Deployment
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Deployment
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/docker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Running with Docker
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/packaged/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Packaged klangkd
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/hosting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Hosting & Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/behind-a-proxy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Behind a Reverse Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/https-hosting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  HTTPS Hosting
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/airgapped/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Air-Gapped Deployment
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/customizing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Customizing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/fips/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  FIPS 140-3 Mode
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/signals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Process Signals
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/decommissioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Decommissioning
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/falco/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Falco Exec Audit
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/podman/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Podman
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/oidc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  OIDC
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/backup-restore/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Backup and Restore
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/audit-integrity/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Audit Record Integrity
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Reference
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Reference
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/acl/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  ACL System
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/api-endpoints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API Endpoints
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/klangkd-config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Configuration File
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/environment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Environment Variables
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../development/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Klangk Development
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7" id="__nav_7_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Klangk Development
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/ci/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  CI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/pre-commit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Pre-commit Hooks
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/schema-migrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Database Schema Changes
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/releasing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Releasing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/building-images/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Building Images
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/stable-branches/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Stable Branches
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/super-e2e/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Super-E2E
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Changelog
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../architecture/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Architecture
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_9" id="__nav_9_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Architecture
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/llm-proxy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LLM Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/browser-bridge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Browser Bridge
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/workspace-jwt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace JWT
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/egress-flow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Egress Request Flow
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#email-and-password" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Email and password
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Email and password">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#registration" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Registration
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#password-reset" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Password reset
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#email-delivery" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Email delivery
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#single-sign-on-oidc" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Single sign-on (OIDC)
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#account-self-service" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Account self-service
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sessions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Sessions
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#token-delivery-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Token delivery policy
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#brute-force-protection" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Brute-force protection
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#concurrent-session-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Concurrent session limits
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#concurrent-logon-auditing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Concurrent-logon auditing
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#session-workstation-binding-replay-protection" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Session workstation binding (replay protection)
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#idle-session-timeout" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Idle session timeout
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-up-sudo-mode-for-privileged-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Step-up (sudo mode) for privileged operations
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dormant-account-auto-disable" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Dormant-account auto-disable
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#consent-banner" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Consent banner
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dpop-session-token-binding-xss-theft-protection" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        DPoP session-token binding (XSS theft protection)
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+  <nav class="md-path" aria-label="Navigation" >
+    <ol class="md-path__list">
+      
+        
+  
+  
+    <li class="md-path__item">
+      <a href="../.." class="md-path__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-path__item">
+        <a href="../" class="md-path__link">
+          
+  
+  <span class="md-ellipsis">
+    Features
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+  
+
+
+<h1 id="authentication">Authentication<a class="headerlink" href="#authentication" title="Permanent link">&para;</a></h1>
+<p><a href="../../assets/admin/login.png"><img alt="Login page" src="../../assets/admin/login.png" /></a></p>
+<p>Klangk supports two ways to log in: email/password accounts and
+single sign-on (SSO) via OIDC providers like Keycloak, Okta, or
+Azure AD. You can use either or both. There is also a no-login
+<strong>local-dev</strong> mode (<code>KLANGKD_AUTH_MODES=none</code>) that auto-logs you in
+as the seeded default user with no password — see
+<a href="../auth-modes/">Auth Modes</a>.</p>
+<h2 id="email-and-password">Email and password<a class="headerlink" href="#email-and-password" title="Permanent link">&para;</a></h2>
+<p>With <code>KLANGKD_AUTH_MODES</code> set to <code>password</code> (or <code>both</code>), klangk uses
+email/password accounts. New users register with an email address, receive
+a verification link, and set a password. Passwords are hashed with
+PBKDF2-HMAC-SHA512 (600,000 iterations) via Python's <code>hashlib</code>, so hashing
+routes through the OpenSSL the container provides — FIPS-approvable when
+the FIPS provider is active (<a href="../../deployment/fips/">FIPS</a>).</p>
+<h3 id="registration">Registration<a class="headerlink" href="#registration" title="Permanent link">&para;</a></h3>
+<p>By default, anyone can register. Set <code>KLANGKD_DISABLE_REGISTRATION</code>
+to block new signups and hide the registration link.</p>
+<p>After registering, users must verify their email before they can log
+in. The verification email contains a signed link that activates the
+account and logs the user in automatically.</p>
+<p>If the email doesn't arrive, click <strong>Resend verification email</strong> on
+the login page (rate-limited to once per minute).</p>
+<h3 id="password-reset">Password reset<a class="headerlink" href="#password-reset" title="Permanent link">&para;</a></h3>
+<p>Click <strong>Forgot password?</strong> on the login page. A reset link is sent to
+the email address (the response is always "sent" regardless of whether
+the account exists, to prevent email enumeration). The link expires
+after 1 hour.</p>
+<h3 id="email-delivery">Email delivery<a class="headerlink" href="#email-delivery" title="Permanent link">&para;</a></h3>
+<p>Verification and password-reset emails are sent via SMTP if configured
+(<code>KLANGKD_SMTP_HOST</code>, <code>KLANGKD_SMTP_PORT</code>, etc.), or via the local
+<code>sendmail</code> binary otherwise. See
+<a href="../../reference/environment/">Environment Variables</a> for the full list
+of SMTP settings.</p>
+<h2 id="single-sign-on-oidc">Single sign-on (OIDC)<a class="headerlink" href="#single-sign-on-oidc" title="Permanent link">&para;</a></h2>
+<p>Klangk can authenticate users through one or more OIDC identity
+providers. When configured, the login page shows a button for each
+provider alongside the email/password form (or instead of it, if
+<code>KLANGKD_AUTH_MODES</code> is set to <code>oidc</code>).</p>
+<p>Users are created automatically on their first SSO login — no
+separate registration step. If a user already has an email/password
+account with the same address, it is linked to their SSO identity.</p>
+<p>The CLI (<code>klangk login</code>) supports OIDC too: it opens a browser for
+the SSO flow and receives the token via a temporary localhost callback.</p>
+<p>See <a href="../../reference/oidc/">OIDC Configuration</a> for setup instructions.</p>
+<h2 id="account-self-service">Account self-service<a class="headerlink" href="#account-self-service" title="Permanent link">&para;</a></h2>
+<p>Logged-in users can change their own <strong>password</strong>, <strong>handle</strong>, and
+<strong>email</strong> without an admin. All three are available from:</p>
+<ul>
+<li>the web UI <strong>Settings</strong> page, and</li>
+<li>the CLI <code>klangk account</code> group (<code>show</code>, <code>passwd</code>, <code>handle</code>, <code>email</code>).</li>
+</ul>
+<p>Handle and email changes require your current password to confirm; a
+password change requires your current password. Validation is enforced the
+same way on every surface (and again, authoritatively, on the server):</p>
+<ul>
+<li><strong>handle</strong> — lowercase, <code>[a-z0-9._-]+</code>, at most 32 characters. Changing
+  it affects how others see you — and, on per-handle-home workspaces,
+  your terminal home directory (<code>/home/&lt;handle&gt;</code>, see
+  <a href="../handles/">Handles</a>) — so the CLI confirms before applying it.</li>
+<li><strong>email</strong> — must be a well-formed address. The account is marked
+  unverified and a verification email is sent to the new address; verify it
+  to fully activate the change. The address must not already be in use.</li>
+<li><strong>password</strong> — must meet the server's minimum length
+  (<code>KLANGKD_MIN_PASSWORD_LENGTH</code>, default 8).</li>
+</ul>
+<p>Because the session JWT's subject is your user id (not your email), an
+email change does <strong>not</strong> invalidate your current session — the CLI simply
+re-files its cached token under the new address.</p>
+<blockquote>
+<p>Accounts with no password (OIDC-only users, whose credentials are
+managed by their identity provider) cannot use these routes — change
+your password, handle, and email through your IdP instead.</p>
+</blockquote>
+<h2 id="sessions">Sessions<a class="headerlink" href="#sessions" title="Permanent link">&para;</a></h2>
+<p>Klangk uses JWT tokens for sessions. Token lifetime defaults to 24
+hours (configurable via <code>KLANGKD_ACCESS_TOKEN_HOURS</code>). Tokens are
+automatically refreshed before they expire, so long-running sessions
+stay active without requiring re-login. Logging out blocklists the
+token immediately.</p>
+<p>Your session survives page refreshes. If you navigate to a workspace
+URL while logged out, you'll be redirected to the login page and
+returned to your original URL after logging in.</p>
+<h2 id="token-delivery-policy">Token delivery policy<a class="headerlink" href="#token-delivery-policy" title="Permanent link">&para;</a></h2>
+<p>Session tokens (JWTs) are never placed in URLs. URLs leak into browser
+history, <code>Referer</code> headers, and reverse-proxy/server access logs, so a
+session credential riding a URL is a leak waiting to happen. The
+delivery rules are:</p>
+<ul>
+<li><strong>API calls</strong> carry the session JWT in the <code>Authorization: Bearer</code>
+  header.</li>
+<li><strong>WebSocket connections</strong> carry it in the handshake's
+  <code>Sec-WebSocket-Protocol</code> header (the browser WebSocket API cannot set
+  <code>Authorization</code>, so the client offers the <code>bearer</code> subprotocol plus
+  the token, and the server echoes <code>bearer</code>). The token never rides the
+  <code>?token=</code> query string. The workspace sidecar authenticates its
+  socket with the <code>Authorization</code> header it already uses for HTTP.</li>
+<li><strong>OIDC login completion</strong> redirects a one-time, 60-second login code
+  (<code>/#/oidc-complete?code=…</code> for the web, <code>?code=…</code> on the CLI's
+  localhost callback). The completer redeems it via
+  <code>POST /auth/oidc/exchange</code> for the session token — the JWT itself
+  never rides a URL.</li>
+<li><strong>Email links</strong> (verification, password reset, invitations) are the
+  one place a token must travel by URL, because email is the delivery
+  channel. These tokens are single-purpose, one-time, and short-lived:
+  verification tokens are bound to the address they were minted for
+  and are consumed by the first redemption, an email change, or
+  72 hours (a stale link only matches again in the narrow case of the
+  account changing its address away and back while the link is still
+  unexpired); reset tokens are bound to a digest of the current password
+  hash (the first successful reset consumes every outstanding link) and
+  expire after 1 hour; invitation tokens are consumed when the
+  invitation is accepted. Links use the URL fragment (<code>#/verify?…</code>),
+  which browsers do not send to servers or in <code>Referer</code> headers.
+  Redeeming a verification token sends it in the <code>POST</code> body, not the
+  query string.</li>
+<li><strong>Logs</strong> never contain raw tokens: the register log line records a
+  SHA-256 prefix of the verification token, and WS URLs carry no token
+  at all.</li>
+</ul>
+<h2 id="brute-force-protection">Brute-force protection<a class="headerlink" href="#brute-force-protection" title="Permanent link">&para;</a></h2>
+<p>By default, Klangk locks accounts after repeated failed login
+attempts (5 failures within the counting window). The same lockout
+covers the credential check on <code>POST /auth/resend-verification</code> —
+failed password guesses there count against the account's login
+counter, and a locked-out account cannot use it either. Failed
+credential checks cost the same whether or not the account exists,
+so response timing cannot be used to enumerate accounts. To tune or
+disable the lockout, set:</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>KLANGKD_LOGIN_LOCKOUT_FAILURES</code></td>
+<td><code>5</code></td>
+<td>Failed attempts before lockout (0 = off)</td>
+</tr>
+<tr>
+<td><code>KLANGKD_LOGIN_LOCKOUT_WINDOW</code></td>
+<td><code>300</code></td>
+<td>Time window in seconds for counting</td>
+</tr>
+<tr>
+<td><code>KLANGKD_LOGIN_LOCKOUT_DURATION</code></td>
+<td><code>900</code></td>
+<td>How long the lockout lasts (seconds)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="concurrent-session-limits">Concurrent session limits<a class="headerlink" href="#concurrent-session-limits" title="Permanent link">&para;</a></h2>
+<p>Set <code>KLANGKD_MAX_SESSIONS_PER_USER</code> to cap how many concurrent
+login sessions a user may have (default <code>0</code> = no limit). Each login
+(password, OIDC, verification, password-reset auto-login, invite
+acceptance) counts as one session; refreshing a token keeps the same
+slot. When a new login pushes the user past the cap, the <strong>oldest</strong>
+session is revoked via the token blocklist — its next HTTP request
+gets <code>401 Token has been revoked</code> and its next WebSocket connect is
+rejected with code <code>4001</code>, logging that client out. Sessions whose
+token has already
+expired are purged lazily and never count toward the cap.</p>
+<h2 id="concurrent-logon-auditing">Concurrent-logon auditing<a class="headerlink" href="#concurrent-logon-auditing" title="Permanent link">&para;</a></h2>
+<p>Every session records the workstation it was established from: the
+effective client IP (behind a trusted reverse proxy this is the real
+client from <code>X-Real-IP</code>/<code>X-Forwarded-For</code>; a direct caller cannot
+spoof it) and the <code>User-Agent</code> string. When a login is concurrent
+with an active session from a <strong>different</strong> workstation, klangkd
+writes an audit record to the server log:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>audit: concurrent logon from different workstations: user=&lt;id&gt; email=&lt;email&gt; new session from 198.51.100.9; concurrent with session(s) from 203.0.113.7
+</span></code></pre></div>
+<p>This is the signal to review when credentials may be shared with (or
+stolen by) a second machine — especially useful when no session cap
+is configured. Sessions with an unknown IP (created before the
+feature, or from clients whose address cannot be resolved) are never
+reported as different, and a user logging in twice from the same
+machine is not audited.</p>
+<p>Admins can query a user's active sessions at any time — see
+<a href="../../reference/api-endpoints/#get-apiv1usersidsessions"><code>GET /api/v1/users/{id}/sessions</code></a>
+in the API reference. Each row shows when the session was established,
+when it expires, when it was last seen active, and the workstation it
+came from.</p>
+<p>Behind a reverse proxy, the workstation audit works only when the proxy
+chain forwards the real client IP (<code>X-Real-IP</code> / <code>X-Forwarded-For</code> plus
+<code>KLANGKD_TRUSTED_PROXY_CIDRS</code>). If that is misconfigured, every session
+records the proxy's address and no audit records are ever written — see
+<a href="../../deployment/behind-a-proxy/#concurrent-logon-auditing-depends-on-the-proxy-chain">Behind a Reverse Proxy: concurrent-logon auditing</a>
+for how to verify the setup.</p>
+<h2 id="session-workstation-binding-replay-protection">Session workstation binding (replay protection)<a class="headerlink" href="#session-workstation-binding-replay-protection" title="Permanent link">&para;</a></h2>
+<p>Session JWTs are bearer tokens: by default (<code>off</code>), anyone who captures
+one can use it until it expires. Set <code>KLANGKD_SESSION_WORKSTATION_BINDING</code> to bind
+each session to the workstation it was established from, so a captured
+token <strong>cannot be replayed from another machine</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>off</code></td>
+<td>No binding (the default) — any token holder may use it until expiry.</td>
+</tr>
+<tr>
+<td><code>ip</code></td>
+<td>Requests must come from the same network as the session's establishment.</td>
+</tr>
+<tr>
+<td><code>strict</code></td>
+<td>Like <code>ip</code>, and the <code>User-Agent</code> must also match.</td>
+</tr>
+</tbody>
+</table>
+<p>Every authenticated HTTP request, token refresh, and WebSocket connect
+is checked against the session's recorded workstation (the effective
+client IP, proxy-trust-aware; two IPv6 addresses inside one /64 count
+as the same network, so address rotation does not kill roaming
+clients). A mismatch means the token left the machine it was issued
+to: the request is rejected (<code>401</code> / WebSocket close <code>4001</code>), the
+session is revoked, and an audit record names both workstations:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>audit: session binding violation: jti=&lt;id&gt; issued to ip=198.51.100.7 ua=klangk-cli/1.0, presented from ip=203.0.113.9 ua=klangk-cli/1.0; session revoked
+</span></code></pre></div>
+<p>The revocation is also recorded in the structured audit stream (#3205)
+as a <code>session.revoke</code> row (detail <code>reason: workstation-binding</code>, the
+bound workstation in the detail, the presenting one as the row's
+source IP), queryable via
+<a href="../../reference/api-endpoints/#get-apiv1eventsaudit"><code>GET /api/v1/events/audit</code></a>
+by holders of <code>manage-events</code>.</p>
+<p>The legitimate client shares the token with the thief, so it is logged
+out too and must re-authenticate — that is the point: a replayed token
+dies the moment it is used from elsewhere. Sessions with an unknown
+recorded IP (rows created before the workstation feature, or clients
+whose address cannot be resolved) are never rejected. The setting is
+reloadable on SIGHUP; arming it applies to existing sessions
+immediately.</p>
+<p>Trade-offs to weigh before arming <code>ip</code>/<code>strict</code>: a user whose network
+address legitimately changes mid-session (laptop moving between Wi-Fi
+and tethering, VPN toggles) is logged out and must log in again; in
+<code>strict</code> mode a browser update changes the <code>User-Agent</code> with the same
+effect. Users behind the same NAT as an attacker are not distinguished
+by <code>ip</code> mode — binding narrows the replay window to the same network,
+it does not eliminate same-NAT replay. Binding judges only what the
+workstation resolver can see: if a deployment resolves no client IPs
+at all (e.g. <code>KLANGKD_REJECT_PROXY_HEADERS</code> set while every client
+arrives as an unresolvable peer), every presentation reads as unknown
+and binding never rejects — verify the proxy chain forwards the real
+client IP (see
+<a href="#concurrent-logon-auditing">concurrent-logon auditing</a>) when arming
+binding.</p>
+<h2 id="idle-session-timeout">Idle session timeout<a class="headerlink" href="#idle-session-timeout" title="Permanent link">&para;</a></h2>
+<p>Tokens expire by <strong>age</strong>, but clients refresh them proactively, so age
+alone never logs out a session nobody is using. Set
+<code>KLANGKD_SESSION_IDLE_TIMEOUT_MINUTES</code> (default <code>0</code> = off) to terminate
+sessions after <strong>inactivity</strong> instead:</p>
+<ul>
+<li><strong>Activity</strong> is an authenticated HTTP request or an inbound WebSocket
+  frame — including the web client's 60-second heartbeat, so a browser
+  the user is actually watching stays logged in. A token refresh is
+  deliberately <strong>not</strong> activity (it is the enforcement seam), so a
+  client that only refreshes cannot idle past the window.</li>
+<li>When the window is armed, <strong>token refreshes are refused</strong> for sessions
+  idle past it (<code>401 Session timed out due to inactivity</code>, token
+  blocklisted), and a quiet WebSocket is <strong>closed by the server</strong> with
+  code <code>4001</code> (client logout).</li>
+<li>Access-token lifetimes are <strong>capped at the window</strong>, so an idle
+  client surfaces at its next refresh within the window plus one
+  refresh interval instead of coasting on a long-lived token.</li>
+<li><code>admins</code>-group members get the shorter <strong>privileged window</strong> — the
+  lesser of this setting and
+  <code>KLANGKD_PRIVILEGED_SESSION_IDLE_TIMEOUT_MINUTES</code> (default <code>10</code>;
+  <code>0</code> turns the split off, giving admins the general window).</li>
+</ul>
+<p>The window is read live at issue/refresh/sweep time, so a SIGHUP reload
+applies immediately. Arming it on an existing deployment judges sessions
+created before the feature by their issuance time (the session's
+<code>last_seen_at</code> is backfilled from <code>created_at</code>) — idle ones terminate on
+their next refresh; active ones get stamped by their next request. Note
+the transition cost: tokens minted while unarmed are <strong>not</strong> recapped, so
+a pre-arm session only surfaces at its next refresh — up to its residual
+<code>KLANGKD_ACCESS_TOKEN_HOURS</code> lifetime away. To cut that window short,
+force a re-login (revoke sessions via the admin UI) when arming, or wait
+out one full token lifetime after arming.</p>
+<h2 id="step-up-sudo-mode-for-privileged-operations">Step-up (sudo mode) for privileged operations<a class="headerlink" href="#step-up-sudo-mode-for-privileged-operations" title="Permanent link">&para;</a></h2>
+<p>Once an admin is logged in, the ordinary bearer token authorizes the
+whole session — so a hijacked or momentarily unattended admin session
+could otherwise perform destructive operations with no fresh proof of
+credential knowledge. Set <code>KLANGKD_STEP_UP_WINDOW_MINUTES</code> (default
+<code>0</code> = off; <code>15</code> is the recommended hardening value) to require
+<strong>reauthentication ("step-up")</strong> before privileged writes:</p>
+<ul>
+<li><strong>Gated operations</strong> are the admin write surface — user
+  management (create/edit/delete/unlock), group management,
+  invitations (send/revoke/resend), raw ACL rewrites
+  (<code>PUT /acl/resource</code>), server stop/recycle schedules, volume
+  deletes — plus the <strong>takeover-class writes on a workspace you do
+  not own</strong>: deletion, the raw ACL rewrite
+  (<code>PUT /workspaces/{id}/acl</code>, which can grant <code>*</code> and Deny the
+  owner), ownership transfer, and role assignments (the <code>owners</code>
+  role group carries the <code>*</code> wildcard, so minting an owner is the
+  same takeover). Listings and other reads are never gated, and
+  writes to your <strong>own</strong> workspace (including deleting, resharing,
+  transferring, or changing roles on it) stay on the plain permission
+  check — self-service, bounded by the grants the owner or an admin
+  chose.</li>
+<li>A gated write is refused with a machine-readable
+  <code>403 {"error": "step_up_required"}</code> until the session's owner
+  confirms their password at <code>POST /api/v1/auth/step-up</code>. The
+  confirmation endpoint has the same lockout accounting as login, so
+  it is not a free password-guessing oracle for an attacker holding a
+  hijacked session.</li>
+<li>Every gate outcome lands in the structured <strong>audit log</strong>
+  (<code>audit_events</code>): <code>step_up.refused</code> (a gated write was refused —
+  the session-hijack signal this feature exists to surface),
+  <code>step_up.confirmed</code>, <code>step_up.failed</code> (a wrong password at the
+  confirmation endpoint), and <code>step_up.exempt</code>.</li>
+<li>The confirmation is <strong>per session</strong>: it is stamped on the calling
+  session's row, survives token refresh (a refresh is the same
+  session continuing), dies with logout or revocation, and never
+  unlocks a second session of the same user. Inside the window every
+  gated write passes; outside it the next one prompts again.</li>
+<li><strong>OIDC-managed accounts</strong> (no klangk password) cannot confirm a
+  password; they are exempt from the gate, and each exempt pass is
+  recorded as a <code>step_up.exempt</code> audit event for operators reviewing
+  SIEM output. Deployments that arm the window and want full coverage
+  should give their admins local passwords.</li>
+</ul>
+<p>The clients handle the prompt automatically: the web client shows a
+password dialog (re-prompting on a wrong password, up to three
+attempts), confirms, and retries the refused request; the CLI prompts
+on the terminal the same way. The window is read live at check time,
+so a SIGHUP reload applies immediately (disarming it mid-session
+makes the next write pass without a prompt).</p>
+<h2 id="dormant-account-auto-disable">Dormant-account auto-disable<a class="headerlink" href="#dormant-account-auto-disable" title="Permanent link">&para;</a></h2>
+<p>Accounts that go unused for too long are disabled automatically. Set
+<code>KLANGKD_INACTIVITY_DISABLE_DAYS</code> (default <code>35</code>; <code>0</code> disables the
+sweep) to change the window. An account counts as active when it makes
+any authenticated API request — klangkd stamps a per-user
+<code>last_activity_at</code> (throttled to one write per minute) on the token
+auth path, so a client that stays logged in via token refresh stays
+counted even though it never logs in again. Logins and (for
+never-used accounts) the creation date are also counted as activity —
+the sweep judges on the <strong>newest</strong> of the three.</p>
+<p>The sweep runs at startup and hourly. When it disables an account,
+login (password, OIDC, and no-auth local), token refresh, and every
+authenticated API request fail with <code>403 Account disabled</code>; the
+WebSocket rejects new connects for that user. Disabling an account
+also <strong>closes its live WebSocket connections</strong> (close code <code>4001</code>,
+which logs the client out) — admin disable and the inactivity sweep
+both do this. A disabled account is also sent no password-reset
+email (the reset endpoint refuses it anyway; the forgot-password
+response stays <code>"sent"</code> so the disabled state is not revealed).</p>
+<p>Two classes of account are never auto-disabled:</p>
+<ul>
+<li>members of the <code>admins</code> group — an idle deployment must not lock out
+  every operator, and</li>
+<li>the system agent (it does not authenticate).</li>
+</ul>
+<p>A disabled account keeps all of its data; an admin re-enables it via
+<code>PATCH /api/v1/users/{id}</code> with <code>{"disabled": false}</code> (admins
+cannot disable their own account through the same endpoint).
+<code>GET /api/v1/users</code> reports each user's <code>disabled</code>,
+<code>last_login_at</code>, and <code>last_activity_at</code> fields. The setting is
+reloadable on SIGHUP.</p>
+<h2 id="consent-banner">Consent banner<a class="headerlink" href="#consent-banner" title="Permanent link">&para;</a></h2>
+<p>If <code>KLANGKD_LOGIN_BANNER</code> is set, users see a consent page before
+the login form. They must accept before proceeding. This is useful
+for legal notices or terms-of-service acknowledgements. See
+<a href="../../reference/environment/">Environment Variables</a> for details.</p>
+<h2 id="dpop-session-token-binding-xss-theft-protection">DPoP session-token binding (XSS theft protection)<a class="headerlink" href="#dpop-session-token-binding-xss-theft-protection" title="Permanent link">&para;</a></h2>
+<p>Web sessions bind their JWT to a key the browser refuses to export
+(#3218). The web client generates a WebCrypto ECDSA P-256 keypair
+whose private half is held non-extractable in IndexedDB, and every
+session mint is <strong>born bound</strong>: the SPA's minting requests (login,
+register, verify, reset, invite, local) carry the public half
+(base64url JWK in the <code>Klangk-Binding-Jwk</code> header), so the token
+carries the key's RFC 7638 thumbprint in <code>cnf.jkt</code> from the first
+byte. OIDC logins ride the key on the login URL into the state
+cookie (a top-level navigation cannot carry headers), and the
+callback mint is born bound the same way. Every authenticated
+request (a <code>DPoP</code> header) and every WebSocket connect (a one-shot
+<code>dpop</code> query parameter) must present a fresh proof signed by that
+key: a stolen bound token is useless without it, and the key cannot
+be read by any script — an XSS can act as the user while the tab is
+live, but cannot steal a credential that outlives the reload. With
+born-bound mints there is no unbound window at all — nothing to
+read, sabotage, or bind-first with a substituted key (#3230).</p>
+<p>The <strong>bind deadline</strong> is the backstop. On the header paths a bare
+marker without a usable key is rejected with 400, so stripping the
+key from the SPA's request yields a failed login, not a weaker
+token. On the OIDC path the key rides the login URL; a web flow
+whose navigation lost it is refused at the callback, and a web
+build that cannot bind at all (plain HTTP to a remote host) rides
+an explicit <code>none</code> so its session is minted unmarked and keeps the
+pre-#3230 behavior. A token that nonetheless carries a <code>wbd</code>
+claim — mint time plus <code>KLANGKD_WEB_BIND_GRACE_SECONDS</code>, default
+300 seconds, <code>0</code> disables — is refused everywhere once past the
+deadline while still unbound: every API request, token refresh,
+bind call, and WebSocket connect answers 401, and every established
+socket (main and consent-decider alike) is armed to close at the
+deadline, not at the token's natural expiry. The deadline is a
+signed claim and survives refresh and bind swaps unchanged — and a
+rotation re-arms the live sockets for the replacement token — so
+no rotation can reset it. The re-login re-enters the bind flow
+under attacker-free conditions, or surfaces the sabotage. A
+transient bind failure on the web is retried every 30 seconds
+inside the window; a failure that outlives the window costs a
+re-login, not the session's secrecy. CLI and TUI clients are always
+unmarked and unaffected — their tokens keep working indefinitely.</p>
+<p>What remains deliberately out of model: a script able to <em>rewrite
+the minting request or login navigation itself</em> (swap or strip its
+binding key, or force the <code>none</code> marker) is not stopped by any of
+this. On the password flows that script reads the login credentials
+out of the same request; on OIDC the credential is the IdP's own
+HttpOnly session — but either way a script alive in the page at
+login time owns the resulting session, whatever it is minted with.
+The controls here bound the attacker who arrives <em>after</em> the
+session was minted.</p>
+<p>Operational notes:</p>
+<ul>
+<li><strong>Secure context required.</strong> WebCrypto (<code>crypto.subtle</code>) exists only
+  on HTTPS or localhost. A web build served over plain HTTP to a remote
+  host cannot bind and knows it: it stops marking its minting requests,
+  so those sessions keep the unbound, pre-#3230 behavior — the same
+  insecure-transport exposure the whole session already has there.
+  Serve the web client over HTTPS to get the bound posture.</li>
+<li><strong>Clock skew matters now.</strong> Proofs older (or further ahead) than
+  <code>PROOF_WINDOW_SECONDS</code> (300) are rejected. A workstation whose clock
+  drifts more than ~5 minutes sees every authenticated request fail
+  with <code>401 Invalid DPoP proof: stale proof</code> and a re-login loop; the
+  remedy is fixing the client clock (the server clock is the
+  reference).</li>
+<li><strong>Key loss forces re-login.</strong> A bound token whose IndexedDB key is
+  gone (cleared site data, new browser profile) cannot prove
+  possession; the client detects this at startup and drops the session.</li>
+<li>The one-shot proofs are remembered for the freshness window only; a
+  server restart clears that memory (a captured, already-consumed
+  proof could be replayed exactly once, within its window, and only
+  alongside the token itself — the same exposure as the
+  token-in-URL issue tracked in #3201).</li>
+<li><strong>The bind deadline is baked per token.</strong> It is read from
+  <code>KLANGKD_WEB_BIND_GRACE_SECONDS</code> at mint time (reloadable on SIGHUP);
+  sessions minted before a change keep the deadline they were minted
+  with.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-circle-arrow-up" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m16 12-4-4-4 4M12 16V8"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../" class="md-footer__link md-footer__link--prev" aria-label="Previous: Overview">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Overview
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../auth-modes/" class="md-footer__link md-footer__link--next" aria-label="Next: Auth Modes">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Auth Modes
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 Chris McDonough
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["content.code.copy","content.code.select","navigation.footer","navigation.indexes","navigation.instant","navigation.instant.prefetch","navigation.path","navigation.sections","navigation.top","navigation.tracking","search.highlight"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"default":"latest","provider":"mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.88ee1349.min.js"></script>
+      
+    
+  </body>
+</html>

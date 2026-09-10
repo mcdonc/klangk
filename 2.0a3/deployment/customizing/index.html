@@ -1,0 +1,3713 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Multi-User AI Sandboxing, Collaboration and Coding Platform">
+      
+      
+        <meta name="author" content="Chris McDonough">
+      
+      
+        <link rel="canonical" href="https://mcdonc.github.io/klangk/2.0a3/deployment/customizing/">
+      
+      
+        <link rel="prev" href="../airgapped/">
+      
+      
+        <link rel="next" href="../fips/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/favicon.png">
+      <meta name="generator" content="zensical-0.0.60">
+    
+    
+      
+        <title>Customizing - Klangk</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.ce62732f.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#customizing-a-deployment" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Klangk" class="md-header__button md-logo" aria-label="Klangk" data-md-component="logo">
+      
+  <img src="../../assets/logo.svg" alt="Klangk">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Klangk
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Customizing
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="slate" data-md-color-primary="green" data-md-color-accent="green"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-moon" viewBox="0 0 24 24"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/mcdonc/klangk" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/klangk
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Klangk" class="md-nav__button md-logo" aria-label="Klangk" data-md-component="logo">
+      
+  <img src="../../assets/logo.svg" alt="Klangk">
+
+    </a>
+    Klangk
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mcdonc/klangk" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/klangk
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Home
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Getting Started
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../features/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Features
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Features
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/authentication/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Authentication
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/auth-modes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Auth Modes
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/authorization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Authorization
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/handles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Handles
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/admin-management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Admin Management
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/invitations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Invitations
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/workspaces/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspaces
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/terminal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Terminal
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/the-shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The Shell
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/service-command/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Service Command
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/auto-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Auto-Start
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/health-check/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Health Check
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/egress-filtering/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Egress Filtering
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/sandbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Sandbox
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/file-viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  File Viewer
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/ai-coding-harnesses/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  AI Coding Harnesses
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/features/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Feature Activation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/export-import/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Export & Import
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/hosted-apps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Hosted Apps
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  CLI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/ssh-agent-forwarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  SSH Agent Forwarding
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/github-authentication/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  GitHub HTTPS Authentication
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../gitea/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Gitea
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/debug-panel/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Debug Panel
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/logging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Logging
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/admission/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace Admission
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/crash-recovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Crash Recovery
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/server-scheduling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Server Scheduling
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/nix/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Nix
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../sandboxes/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Sandboxes
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Sandboxes
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../sandboxes/openclaw/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  OpenClaw
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../sandboxes/hermes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Hermes
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Deployment
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Deployment
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../docker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Running with Docker
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../packaged/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Packaged klangkd
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hosting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Hosting & Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../behind-a-proxy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Behind a Reverse Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../https-hosting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  HTTPS Hosting
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../airgapped/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Air-Gapped Deployment
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Customizing
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Customizing
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#runtime-customization" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Runtime Customization
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Runtime Customization">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#customization-directory" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Customization Directory
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#product-name" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Product Name
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#logo" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Logo
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#legal-support-links" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Legal &amp; Support Links
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#email-templating" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Email Templating
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Email Templating">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#template-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Template Variables
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#other-email-knobs" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Other Email Knobs
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Example
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#consent-banner" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Consent Banner
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#custom-ca-certificates" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Custom CA Certificates
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Custom CA Certificates">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#restricting-trusted-cas-to-an-approved-baseline" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Restricting trusted CAs to an approved baseline
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#oidc-login-hook" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        OIDC Login Hook
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#workspace-created-hook" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Workspace-Created Hook
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#oidc-authentication" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        OIDC Authentication
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deployment-profiles-auth-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Deployment profiles (auth modes)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#building-a-custom-image-features" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Building a Custom Image (Features)
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Building a Custom Image (Features)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#prerequisites" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Prerequisites
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fork-and-build-workflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Fork-and-build workflow
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Features
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-the-build-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        How the Build Works
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#build-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Build Options
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#build-variant" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Build Variant
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Running
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../fips/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  FIPS 140-3 Mode
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../signals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Process Signals
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../decommissioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Decommissioning
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../falco/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Falco Exec Audit
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/podman/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Podman
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/oidc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  OIDC
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/backup-restore/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Backup and Restore
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/audit-integrity/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Audit Record Integrity
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Reference
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Reference
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/acl/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  ACL System
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/api-endpoints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API Endpoints
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/klangkd-config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Configuration File
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/environment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Environment Variables
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../development/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Klangk Development
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7" id="__nav_7_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Klangk Development
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/ci/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  CI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/pre-commit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Pre-commit Hooks
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/schema-migrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Database Schema Changes
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/releasing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Releasing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/building-images/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Building Images
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/stable-branches/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Stable Branches
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/super-e2e/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Super-E2E
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Changelog
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../architecture/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Architecture
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_9" id="__nav_9_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Architecture
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/llm-proxy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LLM Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/browser-bridge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Browser Bridge
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/workspace-jwt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace JWT
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/egress-flow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Egress Request Flow
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#runtime-customization" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Runtime Customization
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Runtime Customization">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#customization-directory" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Customization Directory
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#product-name" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Product Name
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#logo" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Logo
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#legal-support-links" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Legal &amp; Support Links
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#email-templating" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Email Templating
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Email Templating">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#template-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Template Variables
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#other-email-knobs" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Other Email Knobs
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Example
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#consent-banner" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Consent Banner
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#custom-ca-certificates" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Custom CA Certificates
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Custom CA Certificates">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#restricting-trusted-cas-to-an-approved-baseline" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Restricting trusted CAs to an approved baseline
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#oidc-login-hook" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        OIDC Login Hook
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#workspace-created-hook" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Workspace-Created Hook
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#oidc-authentication" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        OIDC Authentication
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deployment-profiles-auth-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Deployment profiles (auth modes)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#building-a-custom-image-features" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Building a Custom Image (Features)
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Building a Custom Image (Features)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#prerequisites" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Prerequisites
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fork-and-build-workflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Fork-and-build workflow
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Features
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-the-build-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        How the Build Works
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#build-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Build Options
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#build-variant" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Build Variant
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Running
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+  <nav class="md-path" aria-label="Navigation" >
+    <ol class="md-path__list">
+      
+        
+  
+  
+    <li class="md-path__item">
+      <a href="../.." class="md-path__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-path__item">
+        <a href="../docker/" class="md-path__link">
+          
+  
+  <span class="md-ellipsis">
+    Deployment
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+  
+
+
+<h1 id="customizing-a-deployment">Customizing a Deployment<a class="headerlink" href="#customizing-a-deployment" title="Permanent link">&para;</a></h1>
+<p>Most Klangk customization is done at <strong>runtime</strong> via environment variables and bind mounts — no image rebuild required. The stock <a href="https://github.com/mcdonc/klangk/pkgs/container/klangk%2Fklangk-host"><code>klangk-host</code></a> image supports branding, legal links, email templates, CA certificates, and OIDC login hooks out of the box.</p>
+<p><strong>The only reason to build a custom host image is features</strong> (Dart UI features require a Flutter web rebuild; TypeScript workspace features require a workspace image rebuild). See <a href="#building-a-custom-image-features">Building a Custom Image (Features)</a> below.</p>
+<p>The <a href="https://github.com/mcdonc/klangk/tree/main/customize"><code>customize/</code></a> directory in the Klangk repo provides a working example: a <code>docker-compose.yml</code> showcasing runtime configuration, and example runtime-customization files under <code>custom/</code>. Copy it and adapt to your needs.</p>
+<h2 id="runtime-customization">Runtime Customization<a class="headerlink" href="#runtime-customization" title="Permanent link">&para;</a></h2>
+<h3 id="customization-directory">Customization Directory<a class="headerlink" href="#customization-directory" title="Permanent link">&para;</a></h3>
+<p>Set <code>KLANGKD_CUSTOMIZE_DIR</code> to a single directory containing all your customization files. Klangk looks for well-known subdirectories under this path:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>&lt;KLANGKD_CUSTOMIZE_DIR&gt;/
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>  certs/           ← CA .pem/.crt files (custom CA certificates)
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>  branding/        ← logos and other static assets served at /branding
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>  email-templates/ ← Jinja2 email template overrides
+</span></code></pre></div>
+<p>If a subdirectory doesn't exist, that subsystem simply isn't customized — no error, no special handling needed. Deployers only populate the subdirs they care about.</p>
+<p>Default: <code>&lt;config_dir&gt;/custom</code> (→ <code>~/.config/klangkd/custom</code>; <code>KLANGKD_CONFIG_DIR</code>
+relocates the whole tree). The published host container sets it to
+<code>/home/klangk/custom</code>.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>-v<span class="w"> </span>./my-customization:/home/klangk/custom:ro<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>-e<span class="w"> </span><span class="nv">KLANGKD_CUSTOMIZE_DIR</span><span class="o">=</span>/home/klangk/custom<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span>...
+</span></code></pre></div>
+<p>One env var and one <code>-v</code> mount replaces three. <code>KLANGKD_EMAIL_TEMPLATES_DIR</code> still works as an override but is <strong>deprecated</strong> — prefer the unified directory. <code>KLANGKD_BRANDING_DIR</code> and <code>KLANGKD_SSL_CERT_DIR</code> have been removed; branding resolves from <code>&lt;KLANGKD_CUSTOMIZE_DIR&gt;/branding/</code> (or <code>&lt;KLANGKD_DATA_DIR&gt;/branding/</code>) and custom CA certs from <code>&lt;KLANGKD_CUSTOMIZE_DIR&gt;/certs/</code>.</p>
+<h3 id="product-name">Product Name<a class="headerlink" href="#product-name" title="Permanent link">&para;</a></h3>
+<p>Set <code>KLANGKD_PRODUCT_NAME</code> to rename the product across the browser tab title, the app-bar logo wordmark, and all outgoing emails. Defaults to <code>Klangk</code>. Supports the <code>file:</code>/<code>cmd:</code> prefix.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>-e<span class="w"> </span><span class="nv">KLANGKD_PRODUCT_NAME</span><span class="o">=</span><span class="s2">"Acme Labs"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span>...
+</span></code></pre></div>
+<p>The value is published to the frontend through <code>GET /api/v1/config</code> (<code>product_name</code> field) and interpolated into email subjects and bodies server-side.</p>
+<h3 id="logo">Logo<a class="headerlink" href="#logo" title="Permanent link">&para;</a></h3>
+<p>Set <code>KLANGKD_LOGO_URL</code> to an absolute image URL. The value is published to the UI through the unauthenticated <code>/api/v1/config</code> endpoint (<code>logo_url</code>), so it renders on the login page before login. Supports <code>file:</code>/<code>cmd:</code> secret resolution.</p>
+<p>To serve a local file without a CDN, drop your logo into <code>&lt;KLANGKD_CUSTOMIZE_DIR&gt;/branding/</code> and set <code>KLANGKD_LOGO_URL=/branding/logo.png</code>. Both steps are needed: placing the file makes it servable (Klangk mounts the branding directory at <code>/branding/</code>), while <code>KLANGKD_LOGO_URL</code> tells the frontend which image to render — this could equally be an external CDN URL like <code>https://cdn.example.com/logo.png</code>. When <code>&lt;KLANGKD_CUSTOMIZE_DIR&gt;/branding/</code> doesn't exist, branding falls back to <code>&lt;KLANGKD_DATA_DIR&gt;/branding/</code>.</p>
+<p>When unset (or if the image fails to load), the default <code>KlangkLogo</code> widget is rendered. The logo also flows into email headers when emails are rendered through the templating system.</p>
+<h3 id="legal-support-links">Legal &amp; Support Links<a class="headerlink" href="#legal-support-links" title="Permanent link">&para;</a></h3>
+<p>These env vars add links to the login/registration screens and email footers. All are plain values (no <code>file:</code>/<code>cmd:</code> resolution — they are public, shown pre-auth). Empty hides them.</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>KLANGKD_TERMS_URL</code></td>
+<td>Terms of Service link</td>
+</tr>
+<tr>
+<td><code>KLANGKD_PRIVACY_URL</code></td>
+<td>Privacy Policy link</td>
+</tr>
+<tr>
+<td><code>KLANGKD_AUP_URL</code></td>
+<td>Acceptable Use Policy link</td>
+</tr>
+<tr>
+<td><code>KLANGKD_SUPPORT_URL</code></td>
+<td>Support/help link (app bar + auth screens)</td>
+</tr>
+<tr>
+<td><code>KLANGKD_SUPPORT_EMAIL</code></td>
+<td>Support email (<code>mailto:</code> fallback when <code>KLANGKD_SUPPORT_URL</code> is unset)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="email-templating">Email Templating<a class="headerlink" href="#email-templating" title="Permanent link">&para;</a></h3>
+<p>Outgoing auth emails (registration verification, password reset, invitation) are rendered from Jinja2 templates. Place your template overrides in <code>&lt;KLANGKD_CUSTOMIZE_DIR&gt;/email-templates/</code>.</p>
+<p>Two approaches:</p>
+<ul>
+<li><strong>Copy the whole tree, then edit.</strong> The built-in templates live at <code>src/klangk/klangk/email_templates/</code> in the source. Copy, delete <code>__init__.py</code>, edit, and mount.</li>
+<li><strong>Drop only the files you change.</strong> Absent files fall through to the built-ins.</li>
+</ul>
+<p>Overrides resolve per-file: a deployer file shadows the built-in at the same path, and <code>{% extends %}</code>/<code>{% include %}</code> resolve your overrides first. Override just <code>base.html</code> to re-brand all emails at once.</p>
+<blockquote>
+<p><strong>Keep the <code>.html</code> extension</strong> on HTML templates (not <code>.html.j2</code>). Klangk enables Jinja autoescaping by filename.</p>
+</blockquote>
+<h4 id="template-variables">Template Variables<a class="headerlink" href="#template-variables" title="Permanent link">&para;</a></h4>
+<p><strong>Global</strong> (every email): <code>product_name</code> (<code>KLANGKD_PRODUCT_NAME</code>), <code>logo_url</code> (<code>KLANGKD_LOGO_URL</code>), <code>brand_color</code> (<code>KLANGKD_BRAND_COLOR</code>, default <code>#E65100</code>).</p>
+<p><strong>Per-email</strong>: <code>link</code> (the verification/reset/invite URL), <code>expiry_hours</code> (real token TTL), and <code>invited_by</code> (invitation only).</p>
+<blockquote>
+<p><strong>Tokens never appear in the subject line</strong> — subjects receive only the global branding variables, never the link.</p>
+</blockquote>
+<h4 id="other-email-knobs">Other Email Knobs<a class="headerlink" href="#other-email-knobs" title="Permanent link">&para;</a></h4>
+<ul>
+<li><strong><code>KLANGKD_SMTP_REPLY_TO</code></strong> — adds a <code>Reply-To</code> header to every outgoing message. Unset means no header.</li>
+<li><strong>Footer / legal line</strong> — <code>base.html</code> exposes an empty <code>{% block legal %}</code> for a compliance footer.</li>
+</ul>
+<h4 id="example">Example<a class="headerlink" href="#example" title="Permanent link">&para;</a></h4>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>-e<span class="w"> </span><span class="nv">KLANGKD_PRODUCT_NAME</span><span class="o">=</span><span class="s2">"Acme Labs"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>-e<span class="w"> </span><span class="nv">KLANGKD_LOGO_URL</span><span class="o">=</span><span class="s2">"/branding/logo.png"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span>-e<span class="w"> </span><span class="nv">KLANGKD_SMTP_REPLY_TO</span><span class="o">=</span><span class="s2">"support@acme.example.com"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span>-e<span class="w"> </span><span class="nv">KLANGKD_CUSTOMIZE_DIR</span><span class="o">=</span>/home/klangk/custom<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">  </span>-v<span class="w"> </span>./my-customization:/home/klangk/custom:ro<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">  </span>...
+</span></code></pre></div>
+<blockquote>
+<p><strong>Deprecated:</strong> <code>KLANGKD_EMAIL_TEMPLATES_DIR</code> still works as an override but prefer using <code>&lt;KLANGKD_CUSTOMIZE_DIR&gt;/email-templates/</code> instead.</p>
+</blockquote>
+<h3 id="consent-banner">Consent Banner<a class="headerlink" href="#consent-banner" title="Permanent link">&para;</a></h3>
+<p>A login/consent banner lets you require acknowledgement of an acceptable-use
+notice (or any policy text) before a user can access the app.</p>
+<p>Set the banner text (and an optional title) via env vars or the
+<a href="../../reference/klangkd-config/">klangkd config file</a> branding keys:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span>-e<span class="w"> </span><span class="nv">KLANGKD_LOGIN_BANNER_TITLE</span><span class="o">=</span><span class="s2">"Notice"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span>-e<span class="w"> </span><span class="nv">KLANGKD_LOGIN_BANNER</span><span class="o">=</span><span class="s2">"You must accept the terms to continue."</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">  </span>...
+</span></code></pre></div>
+<p>When set, the banner blocks all access until the user clicks <strong>I Accept</strong>.</p>
+<p>By default the acceptance is <strong>cached permanently</strong> against the banner text
+hash — once accepted, the same banner text won't re-prompt the user (even on
+later visits). To change the wording, operators edit the banner text so the
+hash flips.</p>
+<p><strong>Require acceptance on every visit.</strong> For regulated deployments that need a
+per-session acknowledgement (e.g. a legal notice that must be re-accepted on
+each fresh app load / login), set:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span>-e<span class="w"> </span><span class="nv">KLANGKD_LOGIN_BANNER_EVERY_VISIT</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span>-e<span class="w"> </span><span class="nv">KLANGKD_LOGIN_BANNER</span><span class="o">=</span><span class="s2">"..."</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span>...
+</span></code></pre></div>
+<p>or in the config file:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">login_banner_every_visit</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span></code></pre></div>
+<p>When <code>true</code>, acceptance is held <strong>for the session only</strong> (in-memory) — the
+banner re-appears on every app restart / re-login until <strong>I Accept</strong> is
+clicked that session. It does <strong>not</strong> re-appear on in-app route changes within
+the same session. When <code>false</code> (default), behavior is unchanged (permanent
+hash-based acceptance).</p>
+<h3 id="custom-ca-certificates">Custom CA Certificates<a class="headerlink" href="#custom-ca-certificates" title="Permanent link">&para;</a></h3>
+<p>Place your <code>.pem</code>/<code>.crt</code> CA certificate files in <code>&lt;KLANGKD_CUSTOMIZE_DIR&gt;/certs/</code> and <strong>restart</strong> workspaces (or the backend). Klangk makes those CAs trusted at startup without rebuilding any image:</p>
+<ul>
+<li><strong>Workspace containers</strong> — the directory is bind-mounted read-only into each container, and the entrypoint builds a merged CA bundle (system CAs plus your custom certs) on the writable <code>/tmp</code> tmpfs. The toolchain trust env vars (<code>SSL_CERT_FILE</code>, <code>REQUESTS_CA_BUNDLE</code>, <code>CURL_CA_BUNDLE</code>, <code>NODE_EXTRA_CA_CERTS</code>) are set to point at it, so OpenSSL, Python, <code>curl</code>, and Node all honor your CAs. The bundle is merged with system CAs so public-internet TLS keeps working.</li>
+<li><strong>Backend process</strong> — at startup the backend concatenates your certs with its own system bundle into <code>&lt;KLANGKD_STATE_DIR&gt;/ssl/ca-bundle.crt</code> and sets the same trust env vars, so outbound TLS (OIDC discovery, SMTP relay, LLM proxy) trusts your private CAs too.</li>
+</ul>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1"># Using KLANGKD_CUSTOMIZE_DIR (recommended):</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span>-e<span class="w"> </span><span class="nv">KLANGKD_CUSTOMIZE_DIR</span><span class="o">=</span>/home/klangk/custom<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span>-v<span class="w"> </span>./my-customization:/home/klangk/custom:ro<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">  </span>...
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="c1"># Place your .pem/.crt files in my-customization/certs/</span>
+</span></code></pre></div>
+<p>Rotating a cert is just a file change plus a workspace/backend restart — no image rebuild.</p>
+<blockquote>
+<p><strong>Why a merged bundle?</strong> <code>SSL_CERT_FILE</code> / <code>REQUESTS_CA_BUNDLE</code> / <code>CURL_CA_BUNDLE</code> <em>replace</em> the default trust store rather than add to it. Klangk therefore prepends the system CAs before your custom certs. (<code>NODE_EXTRA_CA_CERTS</code> is additive, but pointing it at the same merged bundle is harmless.)</p>
+</blockquote>
+<h4 id="restricting-trusted-cas-to-an-approved-baseline">Restricting trusted CAs to an approved baseline<a class="headerlink" href="#restricting-trusted-cas-to-an-approved-baseline" title="Permanent link">&para;</a></h4>
+<p>Deployments that must trust only a defined CA set (e.g. a DoD-approved CA baseline) can enforce one with <code>KLANGKD_TRUSTED_CA_DIR</code> (#3198). Point it at an operator-managed directory holding the approved CA certs — those become the <strong>only</strong> custom CAs trusted:</p>
+<ul>
+<li>Only CAs whose SHA-256 fingerprint appears among the <code>.pem</code>/<code>.crt</code> certs in the directory are trusted — by the backend's outbound TLS <strong>and</strong> every workspace container. klangkd stages the approved certs (one canonical PEM per unique parseable cert) under <code>&lt;KLANGKD_STATE_DIR&gt;/ssl/approved</code>; the staged copy — not the raw directories — is what the backend bundle and the workspace-container mounts consume, so a file the strict certificate parser rejects is never trusted even if a lenient consumer might accept its raw bytes.</li>
+<li>Every cert dropped into <code>&lt;KLANGKD_CUSTOMIZE_DIR&gt;/certs</code> is audited against the baseline on each resolution: approved ones log at debug (subject/issuer), non-approved or unparseable ones are <strong>refused</strong> with a warning and never reach a trust bundle or a container.</li>
+<li>A missing, unreadable, or cert-less baseline directory fails <strong>closed</strong> — no custom CAs are trusted at all, and an error is logged. Backend trust applied earlier in the process is <strong>revoked</strong> on reload (the trust env vars klangkd set are cleared, the stale bundle and the staged cert dir are removed), so fail-closed holds across SIGHUP reloads, not just at boot. Already-running child processes that inherited the vars lose the bundle file and fail their outbound TLS — that is the fail-closed guarantee.</li>
+</ul>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span>-e<span class="w"> </span><span class="nv">KLANGKD_TRUSTED_CA_DIR</span><span class="o">=</span>/etc/klangk/approved-cas<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span>-v<span class="w"> </span>./dod-approved-cas:/etc/klangk/approved-cas:ro<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">  </span>...
+</span></code></pre></div>
+<p>With the setting unset (the default), behavior is unchanged: every cert in <code>&lt;KLANGKD_CUSTOMIZE_DIR&gt;/certs</code> is trusted. The setting is read live on every resolution — reloadable on SIGHUP (the backend re-applies — or revokes — its trust bundle; containers started after the change pick up the new baseline).</p>
+<h3 id="oidc-login-hook">OIDC Login Hook<a class="headerlink" href="#oidc-login-hook" title="Permanent link">&para;</a></h3>
+<p>The <code>customize/custom/oidc/</code> directory includes a sample <code>login_hook.py</code> that restricts OIDC logins to invited users. Bind-mount it anywhere in the container and point the env var at it:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span>-v<span class="w"> </span>./oidc/login_hook.py:/etc/klangk/login_hook.py:ro<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">  </span>-e<span class="w"> </span><span class="nv">KLANGKD_OIDC_LOGIN_HOOK</span><span class="o">=</span>/etc/klangk/login_hook.py<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">  </span>...
+</span></code></pre></div>
+<p>The file is loaded directly by path — it does not need to be on <code>PYTHONPATH</code>. No image rebuild is needed. To call a function other than the default <code>on_login</code>, append <code>:func_name</code> to the path.</p>
+<p>The example hook's logic:</p>
+<ul>
+<li>Most recent invitation is <strong>revoked</strong> → login is <strong>blocked</strong> (even with an existing account)</li>
+<li>Most recent invitation is <strong>pending</strong> or <strong>accepted</strong> → login is <strong>allowed</strong></li>
+<li><strong>No invitation</strong> but has an <strong>existing account</strong> → login is <strong>allowed</strong></li>
+<li><strong>No invitation and no account</strong> → login is <strong>blocked</strong></li>
+</ul>
+<p>Re-inviting after a revocation creates a new pending invitation that overrides the revocation.</p>
+<h3 id="workspace-created-hook">Workspace-Created Hook<a class="headerlink" href="#workspace-created-hook" title="Permanent link">&para;</a></h3>
+<p>A deployment-local Python callback that runs after every workspace is created — on all three creation paths: a fresh <code>POST /workspaces</code>, an <strong>import</strong>, and a <strong>duplicate</strong> — after the workspace row, the owner ACE, and the four role groups are committed, and before the create response is returned. It can mutate the new workspace and rewrite its ACL, which is the supported way to change the seeded permission posture without forking the model layer.</p>
+<p>The <code>customize/custom/hooks/</code> directory includes a sample <code>workspace_created.py</code>. Bind-mount it anywhere in the container and point the env var at it:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span>-v<span class="w"> </span>./hooks/workspace_created.py:/etc/klangk/workspace_created.py:ro<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">  </span>-e<span class="w"> </span><span class="nv">KLANGKD_WORKSPACE_CREATED_HOOK</span><span class="o">=</span>/etc/klangk/workspace_created.py<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="w">  </span>...
+</span></code></pre></div>
+<p>Like the login hook, the file is loaded directly by path (no <code>PYTHONPATH</code> entry, no image rebuild), supports <code>:func_name</code> (default <code>on_workspace_created</code>), and is re-loaded on SIGHUP reconfigure.</p>
+<p>The hook receives two arguments:</p>
+<ul>
+<li><code>workspace</code> — a deep copy of the new workspace's row <strong>dict</strong> (assign keys to mutate attributes: <code>workspace["egress_mode"] = "static"</code>; <code>name</code>, <code>image</code>, <code>mounts</code>, <code>env</code>, <code>allowed_domains</code>, <code>rejected_domains</code>, <code>settings</code>, <code>per_handle_home</code>, … all work; nested edits like <code>workspace["env"]["K"] = "v"</code> are detected too, and deleting a key clears the column). Edits are persisted after the hook returns, with the <strong>same validation the create API applies</strong> — the settings-bag schema, the image allowlist, the mount-spec policy, the domain-list grammar, and the <code>egress_mode</code> / <code>setup_state</code> / <code>per_handle_home</code> enums. An invalid edit is logged and dropped, the create still succeeds. It also carries two async ACL helpers:</li>
+<li><code>entries = await workspace.acl_entries()</code> — the workspace's ACL, resolved like <code>GET /api/v1/workspaces/{id}/acl</code> (each entry's <code>principal</code> is the group name, user email, or <code>Everyone</code>/<code>Authenticated</code>);</li>
+<li><code>await workspace.rewrite_acl(entries)</code> — replaces the ACL wholesale; filter/edit/extend the list from <code>acl_entries()</code> and hand it back. The <strong>list order becomes the ACL order</strong>, so add/remove/reorder are all the same operation. Keep an entry granting the owner access, or every new workspace starts fully locked out.</li>
+<li><code>actor</code> — the creating user's row dict (<code>actor["id"]</code>, <code>actor["email"]</code>, …).</li>
+</ul>
+<p>Both sync and async hook functions are supported. ACL rewrites require the <code>async def</code> form (calling the awaitable helpers from a sync hook raises a clear error — it never silently no-ops).</p>
+<p><strong>Failure semantics: log-and-continue.</strong> The hook is a mutation extension point, not a gate — if it raises, the workspace still exists and the create response is returned normally. Errors are logged as a WARNING with the hook source, workspace id, and the exception, so partial effects stay visible. A missing hook file or a missing/uncallable <code>on_workspace_created</code> export <em>is</em> a startup failure (same as a broken login hook).</p>
+<p>The sample hook's example: force every new workspace to <code>egress_mode: static</code>, and keep the coders/collaborators role groups' <code>files</code> grant while dropping <code>files-download</code> and <code>files-write</code> for a browse-only posture (listings and metadata stay visible; no file body can be read or downloaded). Adapt it to your deployment's stance.</p>
+<h3 id="oidc-authentication">OIDC Authentication<a class="headerlink" href="#oidc-authentication" title="Permanent link">&para;</a></h3>
+<p>To enable OIDC login, create an <code>oidc.yaml</code> and mount it at runtime. The <code>customize/custom/oidc/oidc.yaml</code> template has the schema and placeholder values:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">  </span>-v<span class="w"> </span>./oidc/oidc.yaml:/home/klangk/oidc/oidc.yaml:ro<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="w">  </span>-e<span class="w"> </span><span class="nv">KLANGKD_OIDC_CONFIG</span><span class="o">=</span>/home/klangk/oidc/oidc.yaml<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="w">  </span>-e<span class="w"> </span><span class="nv">KLANGKD_AUTH_MODES</span><span class="o">=</span>both<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="w">  </span>...
+</span></code></pre></div>
+<p>See the <a href="../../reference/oidc/">OIDC documentation</a> for the config file format.</p>
+<h3 id="deployment-profiles-auth-modes">Deployment profiles (auth modes)<a class="headerlink" href="#deployment-profiles-auth-modes" title="Permanent link">&para;</a></h3>
+<p><code>KLANGKD_AUTH_MODES</code> selects the deployment profile — same binary, different
+config. The published host image uses <strong><code>password</code></strong> as its supported mode
+(<code>oidc</code> and <code>both</code> are also supported). The <code>none</code> (no-login local-dev)
+profile is <strong>unsupported with the published Docker host image</strong> — see the
+note below.</p>
+<p>See <a href="../../features/auth-modes/">Auth Modes</a> for the full
+local-dev / customer-locked / team mapping.</p>
+<blockquote>
+<p><strong><code>none</code> mode is unsupported in the Docker host image.</strong> <code>none</code> is
+loopback-only by design (it freely issues an admin token with no
+password, so its security model is "only the operator's loopback can
+reach it"), and a <code>docker run -p</code> published port isn't loopback. The
+bind-safety gate refuses to boot <code>none</code> on a non-loopback bind, and even
+with <code>KLANGKD_ALLOW_INSECURE_NO_AUTH=1</code> the proxy <code>/auth/local</code> ACL still
+denies the port-forwarded request with <code>403</code> (the request appears at the
+container as the Docker bridge IP, not <code>127.0.0.1</code>). The image therefore
+runs <code>KLANGKD_AUTH_MODES=password</code> (or <code>oidc</code>/<code>both</code>) — set
+<code>KLANGKD_DEFAULT_PASSWORD</code> accordingly. For a no-login single-user
+experience, run klangk locally (devenv, or the bare binary on your own
+machine), where <code>none</code> works out of the box.</p>
+</blockquote>
+<h2 id="building-a-custom-image-features">Building a Custom Image (Features)<a class="headerlink" href="#building-a-custom-image-features" title="Permanent link">&para;</a></h2>
+<p>A custom image build is needed <strong>only for features</strong>. If you don't need features, use the stock <code>klangk-host</code> image with the runtime customization above.</p>
+<p>The feature declaration list is the checked-in <a href="https://github.com/mcdonc/klangk/blob/main/features.yaml"><code>features.yaml</code></a> at the repository root — the build-time source of truth. To ship a different feature set than stock, <strong>fork the repo and edit that file directly</strong> (the same model <code>package.json</code>/<code>Cargo.toml</code>/<code>go.mod</code> use). There is no separate overlay or build script to maintain.</p>
+<h3 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h3>
+<ul>
+<li><a href="https://nixos.org/download/">Nix</a> with <a href="https://devenv.sh/">devenv</a></li>
+<li>Docker</li>
+<li>SSH key with access to the git repos listed in <code>features.yaml</code></li>
+</ul>
+<h3 id="fork-and-build-workflow">Fork-and-build workflow<a class="headerlink" href="#fork-and-build-workflow" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="c1"># 1. Fork klangk on GitHub, clone your fork.</span>
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/&lt;your-org&gt;/klangk.git
+</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="nb">cd</span><span class="w"> </span>klangk
+</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>
+</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="c1"># 2. Add feature source trees under features/&lt;name&gt;/ (for local features) and</span>
+</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="c1">#    declare every feature you want compiled in via the checked-in features.yaml</span>
+</span><span id="__span-12-7"><a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="c1">#    at the repo root — same format (local `path:` or remote `git:`/`ref:`</span>
+</span><span id="__span-12-8"><a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="c1">#    entries).</span>
+</span><span id="__span-12-9"><a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="nv">$EDITOR</span><span class="w"> </span>features.yaml
+</span><span id="__span-12-10"><a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a>
+</span><span id="__span-12-11"><a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a><span class="c1"># 3. Build the host image from source (inside the devenv shell — the</span>
+</span><span id="__span-12-12"><a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a><span class="c1">#    wrapped `build-host-image` script is on PATH there).</span>
+</span><span id="__span-12-13"><a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a>devenv<span class="w"> </span>shell<span class="w"> </span>--<span class="w"> </span>build-host-image
+</span><span id="__span-12-14"><a id="__codelineno-12-14" name="__codelineno-12-14" href="#__codelineno-12-14"></a>
+</span><span id="__span-12-15"><a id="__codelineno-12-15" name="__codelineno-12-15" href="#__codelineno-12-15"></a><span class="c1"># Tag the build with a variant identity (surfaced in version.json + debug pane).</span>
+</span><span id="__span-12-16"><a id="__codelineno-12-16" name="__codelineno-12-16" href="#__codelineno-12-16"></a><span class="c1"># NOTE: KLANGKBUILD_VARIANT is captured at devenv-shell entry (generate-version.sh</span>
+</span><span id="__span-12-17"><a id="__codelineno-12-17" name="__codelineno-12-17" href="#__codelineno-12-17"></a><span class="c1"># runs in enterShell), so set it *before* `devenv shell`:</span>
+</span><span id="__span-12-18"><a id="__codelineno-12-18" name="__codelineno-12-18" href="#__codelineno-12-18"></a><span class="nv">KLANGKBUILD_VARIANT</span><span class="o">=</span><span class="s2">"Acme 1.0.0"</span><span class="w"> </span>devenv<span class="w"> </span>shell<span class="w"> </span>--<span class="w"> </span>build-host-image
+</span><span id="__span-12-19"><a id="__codelineno-12-19" name="__codelineno-12-19" href="#__codelineno-12-19"></a>
+</span><span id="__span-12-20"><a id="__codelineno-12-20" name="__codelineno-12-20" href="#__codelineno-12-20"></a><span class="c1"># Publish elsewhere than the default local tag (klangk-host):</span>
+</span><span id="__span-12-21"><a id="__codelineno-12-21" name="__codelineno-12-21" href="#__codelineno-12-21"></a><span class="nv">KLANGKBUILD_HOST_IMAGE</span><span class="o">=</span>ghcr.io/&lt;your-org&gt;/klangk-host<span class="w"> </span>devenv<span class="w"> </span>shell<span class="w"> </span>--<span class="w"> </span>build-host-image
+</span></code></pre></div>
+<p>To pull upstream klangk improvements into your custom build, <code>git pull upstream main</code> (or <code>origin main</code>, depending on how you cloned) from the fork — the feature declaration and feature trees merge like any other source file.</p>
+<h3 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h3>
+<p>Edit the checked-in <code>features.yaml</code> to add or remove features. The default build compiles in the built-in features declared there: celebrate, beep, bobdobbs, word-count, browser-fetch, boingball, git-credential, soliplex (<code>word-count</code>, <code>soliplex</code>, and <code>boingball</code> ship compiled-in but dormant — activate with <code>KLANGKD_FEATURES_ENABLE</code>).</p>
+<p>To add an external feature:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="nt">features</span><span class="p">:</span>
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my-feature</span>
+</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">    </span><span class="nt">git</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://github.com/myorg/my-klangk-feature.git</span>
+</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="w">    </span><span class="nt">ref</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">main</span>
+</span></code></pre></div>
+<h3 id="how-the-build-works">How the Build Works<a class="headerlink" href="#how-the-build-works" title="Permanent link">&para;</a></h3>
+<p><code>scripts/build-host-image.sh</code> is a single source build: it embeds the Flutter web build, the workspace tarball, <strong>and</strong> the feature directories declared in <code>features.yaml</code> — so one build produces the final image with features baked in. There is no separate overlay, <code>Dockerfile</code>, or base-image pass. Run it via the devenv-wrapped <code>build-host-image</code> script (<code>devenv shell -- build-host-image</code>); <code>KLANGKBUILD_VARIANT</code> is captured by <code>scripts/generate-version.sh</code> in devenv's <code>enterShell</code> hook, so set it (and <code>KLANGKBUILD_HOST_IMAGE</code>) <strong>before</strong> entering the shell, not on the build command.</p>
+<h3 id="build-options">Build Options<a class="headerlink" href="#build-options" title="Permanent link">&para;</a></h3>
+<p>The build reads these from the environment (<code>KLANGKBUILD_HOST_IMAGE</code> / <code>KLANGKBUILD_PLATFORM</code> by <code>scripts/build-host-image.sh</code>; <code>KLANGKBUILD_VARIANT</code> by <code>scripts/generate-version.sh</code> during the build):</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>KLANGKBUILD_HOST_IMAGE</code></td>
+<td><code>klangk-host</code></td>
+<td>Output image name — a local tag by default; override with a full registry path to publish</td>
+</tr>
+<tr>
+<td><code>KLANGKBUILD_VARIANT</code></td>
+<td><em>unset</em></td>
+<td>Build identity string written to <code>version.json</code> (see <a href="#build-variant">Build Variant</a>)</td>
+</tr>
+<tr>
+<td><code>KLANGKBUILD_PLATFORM</code></td>
+<td><code>linux/amd64</code></td>
+<td>Target platform</td>
+</tr>
+</tbody>
+</table>
+<h3 id="build-variant">Build Variant<a class="headerlink" href="#build-variant" title="Permanent link">&para;</a></h3>
+<p><code>KLANGKBUILD_VARIANT</code> stamps a <strong>product-identity string</strong> into the built image's
+<code>version.json</code>. It is surfaced in three places:</p>
+<ul>
+<li><strong><code>GET /api/v1/version</code></strong> — a <code>variant</code> field (between <code>version</code> and <code>commit</code>)</li>
+<li><strong>The debug pane</strong> — a "Variant" row (shown only when the field is present)</li>
+<li><strong><code>version.json</code></strong> on disk — the source of truth, written by
+  <code>scripts/generate-version.sh</code> at build time</li>
+</ul>
+<p>It is <strong>independent of the upstream klangk version</strong> — <code>version</code> always reports
+the klangk release (tag/branch/SHA), while <code>variant</code> names <em>this</em> downstream
+build. Set it to your product name and release, e.g. <code>"Acme 1.0.0"</code>:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="c1"># KLANGKBUILD_VARIANT is read at devenv-shell entry, so set it before `devenv shell`:</span>
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="nv">KLANGKBUILD_VARIANT</span><span class="o">=</span><span class="s2">"Acme 1.0.0"</span><span class="w"> </span>devenv<span class="w"> </span>shell<span class="w"> </span>--<span class="w"> </span>build-host-image
+</span></code></pre></div>
+<p>When empty (or unset), the <code>variant</code> field is <strong>omitted entirely</strong> from
+<code>version.json</code> and the API/debug output — so a fork that doesn't set it is
+byte-identical to upstream. Set it only if you want to distinguish your build.</p>
+<blockquote>
+<p>The variant is a single free-form string (e.g. <code>"Acme 1.0.0"</code>). A split into
+separate name + version fields is a non-goal for now — keep them together in
+one human-readable string.</p>
+</blockquote>
+<h2 id="running">Running<a class="headerlink" href="#running" title="Permanent link">&para;</a></h2>
+<p>Use the stock image with runtime customization (no features):</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="w">  </span>-p<span class="w"> </span><span class="m">8997</span>:8997<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="w">  </span>-v<span class="w"> </span>./data:/home/klangk/data<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="w">  </span>-v<span class="w"> </span>./mount:/home/klangk/mount<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="w">  </span>--cap-add<span class="w"> </span>SYS_ADMIN<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-15-6"><a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="w">  </span>--device<span class="w"> </span>/dev/fuse<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-15-7"><a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="w">  </span>--device<span class="w"> </span>/dev/net/tun<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-15-8"><a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a><span class="w">  </span>--security-opt<span class="w"> </span><span class="nv">seccomp</span><span class="o">=</span>unconfined<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-15-9"><a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a><span class="w">  </span>--security-opt<span class="w"> </span><span class="nv">systempaths</span><span class="o">=</span>unconfined<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-15-10"><a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a><span class="w">  </span>-e<span class="w"> </span><span class="nv">KLANGKD_EGRESS_PORT</span><span class="o">=</span><span class="m">8995</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-15-11"><a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a><span class="w">  </span>-e<span class="w"> </span><span class="nv">KLANGKD_PORT</span><span class="o">=</span><span class="m">8997</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-15-12"><a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a><span class="w">  </span>-e<span class="w"> </span><span class="nv">KLANGKD_DEFAULT_USER</span><span class="o">=</span>admin@example.com<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-15-13"><a id="__codelineno-15-13" name="__codelineno-15-13" href="#__codelineno-15-13"></a><span class="w">  </span>-e<span class="w"> </span><span class="nv">KLANGKD_DEFAULT_PASSWORD</span><span class="o">=</span>changeme<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-15-14"><a id="__codelineno-15-14" name="__codelineno-15-14" href="#__codelineno-15-14"></a><span class="w">  </span>-e<span class="w"> </span><span class="nv">KLANGKD_JWT_SECRET</span><span class="o">=</span>change-this-to-a-random-secret<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-15-15"><a id="__codelineno-15-15" name="__codelineno-15-15" href="#__codelineno-15-15"></a><span class="w">  </span>-e<span class="w"> </span><span class="nv">KLANGKD_PREVENT_INSECURE_JWT_SECRET</span><span class="o">=</span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-15-16"><a id="__codelineno-15-16" name="__codelineno-15-16" href="#__codelineno-15-16"></a><span class="w">  </span>-e<span class="w"> </span><span class="nv">KLANGKD_DATA_DIR</span><span class="o">=</span>/home/klangk/data<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-15-17"><a id="__codelineno-15-17" name="__codelineno-15-17" href="#__codelineno-15-17"></a><span class="w">  </span>-e<span class="w"> </span><span class="nv">KLANGKD_PRODUCT_NAME</span><span class="o">=</span><span class="s2">"Acme Labs"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-15-18"><a id="__codelineno-15-18" name="__codelineno-15-18" href="#__codelineno-15-18"></a><span class="w">  </span>-e<span class="w"> </span><span class="nv">KLANGKD_LOGO_URL</span><span class="o">=</span><span class="s2">"/branding/logo.png"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-15-19"><a id="__codelineno-15-19" name="__codelineno-15-19" href="#__codelineno-15-19"></a><span class="w">  </span>-e<span class="w"> </span><span class="nv">KLANGKD_LLM_MODELS</span><span class="o">=</span><span class="s2">"openai/gpt-4o::your-api-key"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-15-20"><a id="__codelineno-15-20" name="__codelineno-15-20" href="#__codelineno-15-20"></a><span class="w">  </span>ghcr.io/mcdonc/klangk/klangk-host:latest
+</span></code></pre></div>
+<p>Or use <code>docker-compose.yml</code> — see the example in <code>customize/docker-compose.yml</code>.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-circle-arrow-up" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m16 12-4-4-4 4M12 16V8"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../airgapped/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Air-Gapped Deployment">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Air-Gapped Deployment
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../fips/" class="md-footer__link md-footer__link--next" aria-label="Next: FIPS 140-3 Mode">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                FIPS 140-3 Mode
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 Chris McDonough
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["content.code.copy","content.code.select","navigation.footer","navigation.indexes","navigation.instant","navigation.instant.prefetch","navigation.path","navigation.sections","navigation.top","navigation.tracking","search.highlight"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"default":"latest","provider":"mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.88ee1349.min.js"></script>
+      
+    
+  </body>
+</html>

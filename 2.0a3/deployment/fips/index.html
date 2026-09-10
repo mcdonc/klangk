@@ -1,0 +1,3483 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Multi-User AI Sandboxing, Collaboration and Coding Platform">
+      
+      
+        <meta name="author" content="Chris McDonough">
+      
+      
+        <link rel="canonical" href="https://mcdonc.github.io/klangk/2.0a3/deployment/fips/">
+      
+      
+        <link rel="prev" href="../customizing/">
+      
+      
+        <link rel="next" href="../signals/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/favicon.png">
+      <meta name="generator" content="zensical-0.0.60">
+    
+    
+      
+        <title>FIPS 140-3 Mode - Klangk</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.ce62732f.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#fips-140-3-mode" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Klangk" class="md-header__button md-logo" aria-label="Klangk" data-md-component="logo">
+      
+  <img src="../../assets/logo.svg" alt="Klangk">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Klangk
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              FIPS 140-3 Mode
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="slate" data-md-color-primary="green" data-md-color-accent="green"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-moon" viewBox="0 0 24 24"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/mcdonc/klangk" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/klangk
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Klangk" class="md-nav__button md-logo" aria-label="Klangk" data-md-component="logo">
+      
+  <img src="../../assets/logo.svg" alt="Klangk">
+
+    </a>
+    Klangk
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mcdonc/klangk" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/klangk
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Home
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Getting Started
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../features/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Features
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Features
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/authentication/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Authentication
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/auth-modes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Auth Modes
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/authorization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Authorization
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/handles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Handles
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/admin-management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Admin Management
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/invitations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Invitations
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/workspaces/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspaces
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/terminal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Terminal
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/the-shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The Shell
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/service-command/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Service Command
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/auto-start/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Auto-Start
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/health-check/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Health Check
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/egress-filtering/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Egress Filtering
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/sandbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Sandbox
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/file-viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  File Viewer
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/ai-coding-harnesses/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  AI Coding Harnesses
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/features/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Feature Activation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/export-import/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Export & Import
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/hosted-apps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Hosted Apps
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  CLI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/ssh-agent-forwarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  SSH Agent Forwarding
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/github-authentication/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  GitHub HTTPS Authentication
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../gitea/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Gitea
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/debug-panel/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Debug Panel
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/logging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Logging
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/admission/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace Admission
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/crash-recovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Crash Recovery
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/server-scheduling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Server Scheduling
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/nix/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Nix
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../sandboxes/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Sandboxes
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Sandboxes
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../sandboxes/openclaw/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  OpenClaw
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../sandboxes/hermes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Hermes
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Deployment
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Deployment
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../docker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Running with Docker
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../packaged/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Packaged klangkd
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hosting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Hosting & Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../behind-a-proxy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Behind a Reverse Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../https-hosting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  HTTPS Hosting
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../airgapped/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Air-Gapped Deployment
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../customizing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Customizing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  FIPS 140-3 Mode
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  FIPS 140-3 Mode
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#background-what-fips-mode-means-here" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Background: what "FIPS mode" means here
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-the-fips-image-does" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What the FIPS image does
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#building" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Building
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-containerized-backend-fips-host-image" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The containerized backend (FIPS host image)
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-validation-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The validation boundary
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#runtime-verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Runtime verification
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#upgrading-the-module" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrading the module
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fips-posture-decision-v-222555" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        FIPS posture decision (V-222555)
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cryptographic-inventory" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Cryptographic inventory
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-the-container-meets-fips-requirements" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Why the container meets FIPS requirements
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#notes-for-auditors" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Notes for auditors
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../signals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Process Signals
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../decommissioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Decommissioning
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../falco/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Falco Exec Audit
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/podman/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Podman
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/oidc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  OIDC
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/backup-restore/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Backup and Restore
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/audit-integrity/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Audit Record Integrity
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Reference
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Reference
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/acl/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  ACL System
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/api-endpoints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API Endpoints
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/klangkd-config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Configuration File
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/environment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Environment Variables
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../development/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Klangk Development
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7" id="__nav_7_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Klangk Development
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/ci/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  CI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/pre-commit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Pre-commit Hooks
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/schema-migrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Database Schema Changes
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/releasing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Releasing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/building-images/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Building Images
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/stable-branches/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Stable Branches
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/super-e2e/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Super-E2E
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Changelog
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../architecture/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Architecture
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_9" id="__nav_9_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Architecture
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/llm-proxy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LLM Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/browser-bridge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Browser Bridge
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/workspace-jwt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace JWT
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/egress-flow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Egress Request Flow
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#background-what-fips-mode-means-here" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Background: what "FIPS mode" means here
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-the-fips-image-does" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What the FIPS image does
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#building" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Building
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-containerized-backend-fips-host-image" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The containerized backend (FIPS host image)
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-validation-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The validation boundary
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#runtime-verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Runtime verification
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#upgrading-the-module" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrading the module
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fips-posture-decision-v-222555" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        FIPS posture decision (V-222555)
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cryptographic-inventory" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Cryptographic inventory
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-the-container-meets-fips-requirements" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Why the container meets FIPS requirements
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#notes-for-auditors" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Notes for auditors
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+  <nav class="md-path" aria-label="Navigation" >
+    <ol class="md-path__list">
+      
+        
+  
+  
+    <li class="md-path__item">
+      <a href="../.." class="md-path__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-path__item">
+        <a href="../docker/" class="md-path__link">
+          
+  
+  <span class="md-ellipsis">
+    Deployment
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+  
+
+
+<h1 id="fips-140-3-mode">FIPS 140-3 mode<a class="headerlink" href="#fips-140-3-mode" title="Permanent link">&para;</a></h1>
+<p>Klangk can run its workspace containers with a <strong>FIPS 140-3 validated
+cryptographic module</strong> for deployments that must demonstrate use of
+validated cryptography (federal, defense, regulated industry). This
+chapter explains what is covered, what the validation boundary is, and
+how to build and use the FIPS workspace image — and, for the
+containerized-backend deployment, the FIPS host image.</p>
+<h2 id="background-what-fips-mode-means-here">Background: what "FIPS mode" means here<a class="headerlink" href="#background-what-fips-mode-means-here" title="Permanent link">&para;</a></h2>
+<p>FIPS 140-3 validation applies to a specific <strong>cryptographic module</strong> —
+for OpenSSL, the <em>FIPS provider</em> (<code>fips.so</code>) — not to an application or
+a container. The OpenSSL project's validated module is</p>
+<ul>
+<li><strong>OpenSSL 3.1.2 FIPS Provider, CMVP certificate #4985</strong>, FIPS 140-3
+  Level 1, active until 2030-03-10.</li>
+</ul>
+<p>That module is <strong>forward-compatible</strong>: per the validation announcement
+it may be hosted by "any version of OpenSSL 3.0, 3.1, 3.2, 3.3, 3.4 and
+future 3.5" libcrypto. Klangk's image uses this property — the module
+runs on top of the distribution's own libcrypto (Debian trixie ships
+3.5.x), so nothing in the base image needs to be replaced or rebuilt.</p>
+<p>An OpenSSL 3.5.4-based module is in CMVP review; when its certificate
+issues, the image can swap the module in place (see
+<a href="#upgrading-the-module">Upgrading the module</a>).</p>
+<h2 id="what-the-fips-image-does">What the FIPS image does<a class="headerlink" href="#what-the-fips-image-does" title="Permanent link">&para;</a></h2>
+<p><code>src/containers/workspace/Dockerfile.fips</code> builds on the regular
+workspace image and</p>
+<ol>
+<li>compiles OpenSSL 3.1.2 with <code>enable-fips</code> from a sha256-pinned
+   tarball (checksum verified against the OpenSSL project's published
+   value) and extracts <strong>only</strong> <code>fips.so</code>;</li>
+<li>installs it into the multiarch provider directory;</li>
+<li>runs <code>openssl fipsinstall</code> with the system CLI, which verifies the
+   module's self-tests and writes the module MAC data;</li>
+<li>writes an activation config that loads the <code>fips</code> and <code>base</code>
+   providers and <strong>not</strong> the <code>default</code> provider — so non-approved
+   algorithms (MD5, DES, …) are rejected rather than silently
+   available — and pins ambient fetches to <code>fips=yes</code>
+   (<code>default_properties</code> in the <code>alg_section</code>), the config-level form
+   of the countermeasure klangkd applies in its own process (#3350).
+   The pin also makes Node's <code>crypto.getFips()</code> report <code>1</code>, so
+   FIPS-aware libraries select approved algorithms — without it,
+   jiti (pi's TypeScript extension loader) computed its cache-key
+   hash with MD5 and every pi extension failed to load (#3359);</li>
+<li>exports <code>OPENSSL_CONF</code> (and <code>OPENSSL_MODULES</code>, needed by Node.js)
+   image-wide and in <code>/etc/profile.d/</code> so login shells reached through
+   <code>sudo -i</code> / <code>su</code> are covered too;</li>
+<li><strong>fails the build</strong> if the provider does not activate, if
+   <code>openssl md5</code> succeeds, or if Node.js can compute an MD5 digest.</li>
+</ol>
+<h2 id="building">Building<a class="headerlink" href="#building" title="Permanent link">&para;</a></h2>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># produce the regular workspace image first</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>devenv<span class="w"> </span>shell<span class="w"> </span>--<span class="w"> </span>bash<span class="w"> </span>scripts/build-workspace-image.sh
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># then the FIPS layer (default base is the locally built image)</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>devenv<span class="w"> </span>shell<span class="w"> </span>--<span class="w"> </span>podman<span class="w"> </span>build<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">  </span>-f<span class="w"> </span>src/containers/workspace/Dockerfile.fips<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">  </span>-t<span class="w"> </span>klangk-workspace-fips<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">  </span>src/containers/workspace
+</span></code></pre></div>
+<p>To build on a published image instead, override the base tag — the
+registry carries <code>&lt;calver&gt;-&lt;commit&gt;</code> tags plus the immutable <code>vX.Y.Z</code>
+release tags, never <code>:latest</code>:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>podman<span class="w"> </span>build<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>--build-arg<span class="w"> </span><span class="nv">WORKSPACE_IMAGE</span><span class="o">=</span>ghcr.io/mcdonc/klangk/klangk-workspace:2026.08.19-&lt;commit&gt;<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>-f<span class="w"> </span>src/containers/workspace/Dockerfile.fips<span class="w"> </span>-t<span class="w"> </span>klangk-workspace-fips<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span>src/containers/workspace
+</span></code></pre></div>
+<p>Point klangkd at the image with <code>KLANGKD_IMAGE_NAME=klangk-workspace-fips</code>.</p>
+<h2 id="the-containerized-backend-fips-host-image">The containerized backend (FIPS host image)<a class="headerlink" href="#the-containerized-backend-fips-host-image" title="Permanent link">&para;</a></h2>
+<p>When klangkd runs inside a container (the docker host-container
+deployment, <code>src/containers/host/Dockerfile</code>), its <strong>own</strong> OpenSSL is
+the crypto boundary for operations that no workspace gate covers:
+password hashing (<code>hashlib.pbkdf2_hmac</code>, auth.py), JWT HMAC-SHA256
+signing (python-jose), and outbound TLS (<code>ssl</code>/httpx to the LLM proxy,
+OIDC discovery, SMTP). A stock host image ships Debian OpenSSL with no
+provider activated — outside the validated boundary.</p>
+<p><code>src/containers/host/Dockerfile.fips</code> fixes that by layering
+the same validated module onto the host image, and swaps the embedded
+workspace tarball for the FIPS workspace image's — a FIPS host must
+ship a FIPS workspace, or every workspace start would fail the
+<code>KLANGKD_FIPS_MODE</code> gate:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># prerequisites: the stock host image and the FIPS workspace image</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>devenv<span class="w"> </span>shell<span class="w"> </span>--<span class="w"> </span>bash<span class="w"> </span>scripts/build-host-image.sh
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>devenv<span class="w"> </span>shell<span class="w"> </span>--<span class="w"> </span>bash<span class="w"> </span>scripts/build-fips-image.sh
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="c1"># then the FIPS host layer</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>devenv<span class="w"> </span>shell<span class="w"> </span>--<span class="w"> </span>bash<span class="w"> </span>scripts/build-fips-host-image.sh
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="c1"># → klangk-host-fips:latest (+ :&lt;version&gt;)</span>
+</span></code></pre></div>
+<p>Build-time proof mirrors the workspace variant and additionally proves
+what klangkd's runtime boot gate checks: the provider activates,
+CLI/python MD5 are rejected, and the real auth KDF
+(<code>hashlib.pbkdf2_hmac("sha512", …)</code>) still works.</p>
+<p>CI builds and publishes this image on every change to its inputs
+(<code>image-host-fips.yml</code>): <code>ghcr.io/mcdonc/klangk/klangk-host-fips</code>,
+tagged <code>:&lt;calver&gt;-&lt;commit&gt;</code> plus a floating <code>:latest</code>. A <code>v*</code> tag push
+publishes the same image — and the FIPS workspace image — under the
+immutable <code>vX.Y.Z</code> tag as well: <code>release.yml</code> calls the same image
+workflows, so a release pins an auditable host/workspace combination
+(#3140). The workflow's runtime spot-check runs klangkd's actual boot
+gate both ways — it must pass inside the FIPS image and refuse to boot
+inside the stock one.</p>
+<p><strong>Enforcement posture inside a container:</strong> with
+<code>KLANGKD_FIPS_MODE</code> on, klangkd detects it is containerized (the
+<code>/.dockerenv</code> / <code>/run/.containerenv</code> markers) and a failed process
+probe <strong>aborts the boot</strong> — inside an image we ship there is no "the
+control host is the operator's problem" excuse. On a control host
+(not containerized) the failed probe remains a logged warning and only
+workspace containers are gated. Boundary notes for this deployment:</p>
+<table>
+<thead>
+<tr>
+<th>Component in the host container</th>
+<th>Covered?</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>klangkd's python crypto (PBKDF2, JWT, outbound TLS)</td>
+<td><strong>Yes</strong></td>
+<td>python:3.14-slim's <code>_hashlib</code>/<code>_ssl</code> link the distro libcrypto, which loads the validated provider via <code>OPENSSL_CONF</code>.</td>
+</tr>
+<tr>
+<td>Embedded workspace + sidecar images</td>
+<td><strong>Yes</strong></td>
+<td>The workspace tar embedded by this variant IS the FIPS workspace image; the sidecar makes no crypto choices of its own.</td>
+</tr>
+<tr>
+<td>Caddy (reverse proxy)</td>
+<td><strong>No</strong></td>
+<td>Go binary with statically linked crypto — never routes through libcrypto. TLS termination at the proxy is already out of scope below.</td>
+</tr>
+<tr>
+<td>Podman / passt inside the container</td>
+<td><strong>No</strong></td>
+<td>Go/Rust static crypto (registry pulls over TLS). Pull integrity is governed by the signature policy, not the FIPS module.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="the-validation-boundary">The validation boundary<a class="headerlink" href="#the-validation-boundary" title="Permanent link">&para;</a></h2>
+<p>Inside the workspace container:</p>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Covered?</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>openssl</code> CLI, curl, git (https), distro python <code>_ssl</code>/<code>_hashlib</code></td>
+<td><strong>Yes</strong></td>
+<td>Dynamically link the distro <code>libcrypto.so.3</code>, which loads the FIPS provider via <code>OPENSSL_CONF</code>.</td>
+</tr>
+<tr>
+<td>Node.js <code>crypto</code>/<code>tls</code> (including the pi coding agent)</td>
+<td><strong>Yes</strong></td>
+<td>Node's bundled libcrypto reads the <code>nodejs_conf</code> config section (the image aliases it) and loads the validated <code>fips.so</code> via <code>OPENSSL_MODULES</code>. Verified: <code>createHash('md5')</code> is rejected, TLS and approved digests route through the provider, and the config-level fetch pin makes <code>crypto.getFips()</code> report <code>1</code> — jiti (pi's TS extension loader) relies on that to pick SHA-256 for its cache-key hash (#3359). No Node rebuild is involved — provider-based FIPS is a runtime configuration of the OpenSSL that Node already links.</td>
+</tr>
+<tr>
+<td>CPython's <code>hashlib.md5()</code></td>
+<td><strong>No — by design</strong></td>
+<td>CPython falls back to its built-in <code>_md5</code> module when the provider refuses; that code never touches OpenSSL and no provider can gate it. This is PEP 452's <code>usedforsecurity</code> behavior: legacy non-security MD5 (etags, cache keys) keeps working. Klangk itself does not call MD5 anywhere.</td>
+</tr>
+<tr>
+<td>Statically-linked crypto in third-party tooling users install</td>
+<td><strong>No</strong></td>
+<td>Outside the provider model entirely; such tools bring their own crypto.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Out of scope (the deploying organization's responsibility):</strong> TLS
+termination at the reverse proxy, kernel crypto (dm-crypt, IPsec), key
+management for database encryption, and the ATO decision itself.</p>
+<h2 id="runtime-verification">Runtime verification<a class="headerlink" href="#runtime-verification" title="Permanent link">&para;</a></h2>
+<p>To confirm FIPS is genuinely active, probe the <strong>provider path</strong>, not
+<code>hashlib.md5()</code> (see the table above):</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># CLI: fips + base active, default absent</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>openssl<span class="w"> </span>list<span class="w"> </span>-providers
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="c1"># Provider-aware python probe: must raise ValueError under FIPS</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>python3<span class="w"> </span>-c<span class="w"> </span><span class="s2">"import _hashlib; _hashlib.openssl_md5(b'x')"</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="c1"># -&gt; ValueError: [digital envelope routines] unsupported</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="c1"># Node.js probe</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>node<span class="w"> </span>-e<span class="w"> </span><span class="s2">"require('crypto').createHash('md5').update('x').digest('hex')"</span>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="c1"># -&gt; error:0308010C ... unsupported</span>
+</span></code></pre></div>
+<p><code>KLANGKD_FIPS_MODE=1</code> automates this at runtime: with
+the mode on, <strong>every workspace container is probed when klangkd starts
+or adopts it</strong> — fresh creates at the create choke point, and
+previously-running containers on the first reconnect after a klangkd
+restart — by the same distro-agnostic checks (a non-approved digest
+must be rejected on the OpenSSL fetch path, or <code>openssl
+list -digest-algorithms -propquery 'fips=yes'</code> shows a SHA-2-only
+approved set). A container that cannot prove enforcement is removed
+and its start refused. Neither a SIGHUP reload nor a klangkd restart
+leaves an unprobed container serving: SIGHUP's runtime restart stops
+all containers, and the startup reap removes any leftover before
+recreation. (The one residual window — a container whose startup reap
+<em>failed</em> on a best-effort error — is closed by the adoption probe at
+the next connect.) The klangkd process's own OpenSSL is probed once at
+startup: on a control host the result is logged for audit (warning on
+failure), while a <strong>containerized backend refuses to boot</strong> on a failed
+probe (see <a href="#the-containerized-backend-fips-host-image">the containerized backend</a>
+above); see the <a href="../../reference/environment/">environment
+reference</a> for the setting.
+The same startup verifies the JWT route (#3175): python-jose must bind
+its <code>cryptography</code> backend, and <code>cryptography</code> must be linked to the
+process's own provider-gated OpenSSL (identity + MD5 refusal — see the
+<a href="#cryptographic-inventory">cryptographic inventory</a>).
+The manual probes above remain the diagnostic equivalent.</p>
+<p>Caveat on the probe's meaning: it is a canary for <em>provider
+enforcement</em>, not a certificate validator. An OpenSSL built without
+MD5 at all (no FIPS provider involved) would also pass layer 1; the
+audit trail for "which validated module" comes from the image build
+(<code>Dockerfile.fips</code> pins the CMVP-certified tarball), not from the
+runtime probe.</p>
+<h2 id="upgrading-the-module">Upgrading the module<a class="headerlink" href="#upgrading-the-module" title="Permanent link">&para;</a></h2>
+<p>When a newer validated module becomes available (e.g. the OpenSSL
+3.5.4 module currently in CMVP review), the change is confined to the
+builder stages: bump <code>OPENSSL_FIPS_VERSION</code> and <code>OPENSSL_FIPS_SHA256</code>
+to the new tarball in <strong>both</strong> <code>src/containers/workspace/Dockerfile.fips</code>
+and <code>src/containers/host/Dockerfile.fips</code>. The activation steps are
+unchanged. Always re-run the build-time proof and the runtime probes
+above before rolling out.</p>
+<h2 id="fips-posture-decision-v-222555">FIPS posture decision (V-222555)<a class="headerlink" href="#fips-posture-decision-v-222555" title="Permanent link">&para;</a></h2>
+<p>STIG V-222555 requires cryptographic modules to be FIPS 140-2/3
+validated and used in FIPS mode. Klangk ships FIPS as an <strong>opt-in
+deployment posture</strong> — the operator enables it with
+<code>KLANGKD_FIPS_MODE=true</code> and uses the FIPS images — rather than
+making it the default. Rationale:</p>
+<ul>
+<li><strong>Not every deployment requires FIPS.</strong> Development, evaluation, and
+  non-federal deployments should not pay the operational overhead
+  (separate image, restricted algorithm set, provider enforcement) when
+  they have no compliance requirement.</li>
+<li><strong>Opt-in is explicit and auditable.</strong> The gate (<code>KLANGKD_FIPS_MODE</code>)
+  makes the posture a deliberate deployment decision, recorded in the
+  environment configuration — never an accident of image selection.
+  When the mode is on, enforcement is comprehensive: the boot gate
+  verifies the process's OpenSSL provider, every workspace container is
+  probed at start and adoption, and the JWT route is verified at
+  startup (backend binding plus cryptography's linkage to the
+  validated libcrypto).</li>
+<li><strong>Default-off does not weaken FIPS deployments.</strong> The FIPS images
+  carry the validated module and activate it unconditionally. The gate
+  adds runtime verification — it does not install the module. A FIPS
+  deployment uses the FIPS image <em>and</em> the gate; a non-FIPS deployment
+  uses the stock image with no gate.</li>
+</ul>
+<p>Organizations subject to V-222555 deploy with the FIPS host image
+(<code>klangk-host-fips</code>) and <code>KLANGKD_FIPS_MODE=true</code>. The STIG reviewer
+should confirm both are present in the deployment configuration.</p>
+<h2 id="cryptographic-inventory">Cryptographic inventory<a class="headerlink" href="#cryptographic-inventory" title="Permanent link">&para;</a></h2>
+<p>Complete list of cryptographic operations klangkd performs, the module
+each routes through, and the FIPS validation status under the FIPS
+image:</p>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Algorithm</th>
+<th>Code path</th>
+<th>Module</th>
+<th>FIPS-validated?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Password hashing</td>
+<td>PBKDF2-HMAC-SHA512 (600k iterations)</td>
+<td><code>hashlib.pbkdf2_hmac</code> (<code>auth.py</code>)</td>
+<td>OpenSSL <code>_hashlib</code> → libcrypto → FIPS provider</td>
+<td>Yes (CMVP #4985)</td>
+</tr>
+<tr>
+<td>JWT signing/verification</td>
+<td>HMAC-SHA256 (HS256)</td>
+<td><code>python-jose</code> → <code>cryptography</code> backend → <code>cryptography.hazmat.primitives.hmac.HMAC</code> (<code>auth.py</code>)</td>
+<td>distro libcrypto, via the FIPS image's <code>cryptography</code> relink (see below)</td>
+<td>Yes (CMVP #4985)</td>
+</tr>
+<tr>
+<td>DPoP proof verification</td>
+<td>ECDSA P-256 (ES256) + SHA-256</td>
+<td><code>cryptography</code> directly — <code>ec.EllipticCurvePublicNumbers.verify</code> + <code>hashlib.sha256</code> (<code>dpop.py</code>, #3218; deliberately not jose's EC route, which could bind to the pure-Python <code>ecdsa</code> package)</td>
+<td>distro libcrypto, via the FIPS image's <code>cryptography</code> relink (see below)</td>
+<td>Yes (CMVP #4985)</td>
+</tr>
+<tr>
+<td>Outbound TLS</td>
+<td>TLS 1.2/1.3</td>
+<td><code>ssl</code> module / <code>httpx</code> (LLM proxy, OIDC, SMTP)</td>
+<td>OpenSSL <code>_ssl</code> → libcrypto → FIPS provider</td>
+<td>Yes (CMVP #4985)</td>
+</tr>
+<tr>
+<td>CA fingerprinting (allowlist)</td>
+<td>SHA-256 (cert DER)</td>
+<td><code>cryptography</code> <code>Certificate.fingerprint</code> (<code>ssl_trust.py</code>, #3198)</td>
+<td>distro libcrypto, via the FIPS image's <code>cryptography</code> relink (see below)</td>
+<td>Yes (CMVP #4985)</td>
+</tr>
+<tr>
+<td>Password timing equalization</td>
+<td>HMAC comparison</td>
+<td><code>hmac.compare_digest</code> (<code>auth.py</code>)</td>
+<td>C-level constant-time compare (no crypto module)</td>
+<td>N/A (comparison only)</td>
+</tr>
+<tr>
+<td>Token identifiers</td>
+<td>UUID4</td>
+<td><code>uuid.uuid4</code> / <code>secrets.token_bytes</code></td>
+<td>OS <code>urandom</code></td>
+<td>N/A (randomness source, not a crypto algorithm)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>JWT module boundary (#3175):</strong> the JWT row above holds because the
+FIPS host image <strong>rebuilds <code>cryptography</code> from source against the
+distro libcrypto</strong> — a PyPI manylinux wheel statically links a
+<em>private</em> OpenSSL that never reads <code>OPENSSL_CONF</code> and cannot load the
+validated provider. This is the industry posture (Red Hat ships
+distro-linked <code>python3-cryptography</code>; Chainguard's FIPS images relink
+it; pyca's own docs direct FIPS users to <code>pip install --no-binary
+cryptography</code>). One wrinkle (#3350): <code>cryptography</code> unconditionally
+loads OpenSSL's <em>default</em> provider at import (its rust init calls
+<code>OSSL_PROVIDER_load(NULL, "default")</code>), so property-less fetches in
+any process that imported it — MD5 among them — are served from that
+unvalidated provider even under a fips-only activation config. The
+countermeasure is <code>EVP_default_properties_enable_fips</code> — the same
+call <code>cryptography</code>'s own <code>enable_fips</code> makes — which requires
+<code>fips=yes</code> on every subsequent fetch: MD5 is refused again while
+approved algorithms keep working through the fips provider. The FIPS
+images set the same pin config-wide since #3359
+(<code>default_properties = fips=yes</code> in the activation config), so every
+process in the container starts with ambient fetches already pinned;
+klangkd's runtime pin stays in place as the control-host path and is
+idempotent under the image pin. The
+relink and the pin are proven together: at image build time (each
+probe check prints a numbered marker; the cryptography checks pin
+fetches first — cryptography's OpenSSL version must equal the
+process's, MD5 through cryptography must be refused, and a jose HS256
+sign/verify round-trip must succeed under the active provider), and
+at klangkd startup under <code>KLANGKD_FIPS_MODE</code> — once the process
+posture probe confirms the fips provider is active, klangkd pins
+ambient fetches to <code>fips=yes</code> and then verifies that python-jose
+binds its <code>cryptography</code> backend (a silent fallback to another
+backend would be an unprovisioned, unverified route and aborts the
+boot) and that cryptography's OpenSSL is the process's own
+provider-gated library (identity check + MD5 refusal; a failed pin or
+mismatched linkage follows the same warn-on-host / abort-in-container
+posture as the process OpenSSL probe).</p>
+<p><strong>Outside the module:</strong> a <em>stock</em> host image (or any deployment using
+the PyPI <code>cryptography</code> wheel) signs JWTs on the wheel's private
+OpenSSL — outside every validated boundary, exactly like Caddy's
+statically linked Go crypto. FIPS-scoped deployments must use the
+FIPS host image; the startup gate makes the difference auditable.</p>
+<p><strong>Algorithms not used:</strong> bcrypt (removed in #2576, bundles non-FIPS
+crypto), MD5, DES, RC4, or any non-approved digest. The FIPS provider
+activation config disables the <code>default</code> OpenSSL provider, so
+non-approved algorithms fail closed even if called accidentally.</p>
+<h2 id="why-the-container-meets-fips-requirements">Why the container meets FIPS requirements<a class="headerlink" href="#why-the-container-meets-fips-requirements" title="Permanent link">&para;</a></h2>
+<p>The strongest form of the argument, in the order an assessor is likely
+to probe it:</p>
+<ol>
+<li><strong>The validated thing is the module, and we use that exact
+   module.</strong> FIPS 140-3 validates a specific cryptographic module
+   binary — here the OpenSSL 3.1.2 FIPS Provider, CMVP certificate
+   #4985. The image compiles that exact version from the official
+   tarball (sha256-pinned to the OpenSSL project's published checksum)
+   with the required <code>enable-fips</code> configuration. The provenance chain
+   is reproducible from the Dockerfile.</li>
+<li><strong>The hosting arrangement is the one the certificate's owner
+   documents.</strong> The OpenSSL validation announcement states the module
+   "is compatible with any version of OpenSSL 3.0, 3.1, 3.2, 3.3, 3.4
+   and future 3.5" — forward-compatibility across libcrypto cores is a
+   supported, endorsed deployment mode, not an ad-hoc stretch. Debian
+   trixie's 3.5.x libcrypto and Node.js's bundled 3.5.7 libcrypto both
+   host the module under that allowance. This is also how the OpenSSL
+   maintainers themselves direct distributors to combine a validated
+   FIPS provider with a current libcrypto.</li>
+<li><strong>The module operates in its approved mode.</strong> Validation applies
+   "when operated in approved mode": the activation config loads <code>fips</code>
+   (and the non-cryptographic <code>base</code> provider) and disables <code>default</code>,
+   so the module's power-on self-tests run (enforced by <code>fipsinstall</code>
+   at build time) and non-approved algorithms fail closed — verified
+   for the CLI, python's OpenSSL path, and Node.js, at <strong>build time</strong>
+   (the image refuses to build otherwise) and re-checkable at runtime
+   with the probes above.</li>
+<li><strong>Power-on self-test evidence is generated, not assumed.</strong>
+   <code>fipsinstall</code> executes the module's KAT/PCT suite and writes the
+   module-MAC configuration the provider verifies on every load. A
+   tampered module or config fails self-test and the provider enters
+   its error state — the failure mode is visible, not silent.</li>
+<li><strong>Platform portability is sanctioned.</strong> The module's own Security
+   Policy (the certificate #4985 entry in the CMVP registry) defines
+   its operational environment; the OpenSSL validation announcement
+   states the module "is compatible with any version of OpenSSL 3.0,
+   3.1, 3.2, 3.3, 3.4 and future 3.5". The container runs the
+   validated module binary unmodified on general-purpose compute
+   (Debian userspace on a Linux kernel) and does not alter the module
+   or its boundary.</li>
+<li><strong>What is claimed is scoped honestly.</strong> The claim is about the
+   workspace container's cryptographic services: TLS, hashing, KDFs,
+   signatures, and encryption performed via OpenSSL (system CLI,
+   dynamically-linked tools, python <code>_ssl</code>/<code>_hashlib</code>, Node.js
+   <code>crypto</code>/<code>tls</code>). The boundary table above states what is outside
+   (CPython's built-in <code>_md5</code> fallback, statically-linked crypto in
+   user-installed tooling) and the deploying organization's
+   responsibilities (proxy TLS, kernel crypto, key management, the
+   ATO). An assessor can verify each line of the table empirically
+   with the documented probes.</li>
+</ol>
+<p>The honest counterpoints an assessor may raise — and the answers — are
+in the <a href="#notes-for-auditors">Notes for auditors</a> section below; the
+strongest residual risk is the last item there (Node.js ships its own
+bundled OpenSSL core, a Node-maintained build of upstream OpenSSL —
+not the Debian package), which the module's forward-compatibility
+allowance addresses but a strict single-core reading may not accept.</p>
+<h2 id="notes-for-auditors">Notes for auditors<a class="headerlink" href="#notes-for-auditors" title="Permanent link">&para;</a></h2>
+<ul>
+<li>The validated module is the OpenSSL 3.1.2 FIPS Provider, certificate
+  #4985, overall Level 1. Hosted by Debian trixie's libcrypto 3.5.x
+  under the module's documented forward-compatibility ("any version of
+  OpenSSL 3.0 … future 3.5").</li>
+<li>Node.js's bundled libcrypto (3.5.x) hosts the same validated module;
+  the Node.js project documents that no rebuild is required for
+  provider-based FIPS.</li>
+<li>The image disables the <code>default</code> provider, so non-approved
+  algorithms fail closed rather than falling back.</li>
+<li>Organizations requiring a single-OpenSSL-core boundary can build
+  Node.js <code>--shared-openssl</code> against the distro libcrypto; klangk does
+  not ship such a build today (defense-in-depth refinement, not a
+  correctness requirement).</li>
+<li>One residual consideration: Node.js's bundled libcrypto is a
+  Node-maintained build of upstream OpenSSL (not the Debian package).
+  It loads the same validated <code>fips.so</code> under the same forward-
+  compatibility allowance; provider-based FIPS is a runtime
+  configuration of that OpenSSL (the <code>nodejs_conf</code> section and
+  <code>OPENSSL_CONF</code> mechanism Node documents), so no rebuild is involved.
+  A strict single-core reading can be satisfied with the
+  <code>--shared-openssl</code> build above.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-circle-arrow-up" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m16 12-4-4-4 4M12 16V8"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../customizing/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Customizing">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Customizing
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../signals/" class="md-footer__link md-footer__link--next" aria-label="Next: Process Signals">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Process Signals
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 Chris McDonough
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["content.code.copy","content.code.select","navigation.footer","navigation.indexes","navigation.instant","navigation.instant.prefetch","navigation.path","navigation.sections","navigation.top","navigation.tracking","search.highlight"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"default":"latest","provider":"mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.88ee1349.min.js"></script>
+      
+    
+  </body>
+</html>
