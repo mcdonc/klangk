@@ -683,9 +683,11 @@ def cdp_tabs() -> list[dict]:
 
 
 def cdp_app_tab() -> dict:
-    """The app tab — the one non-internal page Chrome has. When the SSO
-    chain is mid-flight the same tab sits at the backend or IdP origin;
-    it stays "the app tab" the whole way (#3242)."""
+    """The first non-internal page tab (Chrome lists targets newest-first,
+    so this is the most recently opened one). Correct for the single-tab
+    flows — the SSO chains navigate the tab in place; the git-auth
+    popup era needs identity-based selection instead
+    (:func:`cdp_main_app_tab`)."""
     tabs = cdp_tabs()
     if not tabs:
         raise FmtkError("no page tab in the driven chrome")
@@ -730,6 +732,56 @@ def cdp_eval_tab(tab: dict, js: str) -> object:
     if result.get("subtype") == "error":
         raise FmtkError(f"cdp_eval threw: {result.get('description')}")
     return result.get("value")
+
+
+def cdp_close_tab(tab: dict) -> None:
+    """Close one page tab over the CDP HTTP endpoint (best effort —
+    a tab that closed itself between the listing and the close is
+    fine)."""
+    try:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{cdp_port()}/json/close/{tab['id']}",
+            method="PUT",
+        )
+        urllib.request.urlopen(req, timeout=10)
+    except OSError:
+        pass  # already gone
+
+
+def cdp_main_app_tab() -> dict | None:
+    """The tab the fmtk eval pipe should drive once a multi-tab flow is
+    over: the one on the app origin that is not the git-auth popup.
+
+    Position cannot identify it — Chrome's ``/json/list`` ordering is
+    newest-first, so ``tabs[0]`` is the popup the moment one exists —
+    so the URL must: the app tab sits on the proxy origin at a normal
+    route, while the popup either sits on the provider's origin or
+    carries the flow's ``?code=`` landing / ``/git-auth-callback``
+    route. None when no tab qualifies (the caller must not close
+    anything then — closing the last tab takes the browser down)."""
+    for tab in cdp_tabs():
+        url = tab["url"]
+        if (
+            url.startswith(proxy_origin())
+            and "/git-auth-callback" not in url
+            and "?code=" not in url
+        ):
+            return tab
+    return None
+
+
+def cdp_close_extra_tabs(keep: dict) -> None:
+    """Close every driven-Chrome page tab except ``keep`` (by target
+    id — order-independent).
+
+    The git-auth authorize popup is a second app instance at the proxy
+    origin (#3385); one still open when the eval pipe is restored (a
+    failed flow) keeps a second Flutter isolate registered, and every
+    later fmtk exec then races the two for "the" isolate. Closing down
+    to exactly the kept tab makes the post-flow state deterministic."""
+    for tab in cdp_tabs():
+        if tab["id"] != keep["id"]:
+            cdp_close_tab(tab)
 
 
 def cdp_mouse_click(tab: dict, x: float, y: float) -> None:
@@ -837,13 +889,29 @@ def ensure_feature_manifest() -> None:
         # klangk_features at the stub — the app compiles with no
         # features and the bridge answers "Unknown action" for every
         # feature op until pub get rewrites it.
-        subprocess.run(
+        pub_get = subprocess.run(
             ["flutter", "pub", "get"],
             cwd=REPO_ROOT / "src" / "frontend",
-            check=True,
             capture_output=True,
+            text=True,
             timeout=600,
+            # Same guard as scripts/flutterbuildweb.sh: a transitive git
+            # dependency (ag-ui, via the pinned lock) carries git-LFS
+            # objects — a test fixture image its own e2e apps use, never
+            # needed to compile the Dart package — and unauthenticated
+            # CI cannot fetch it (#1691-class). Pointer files suffice.
+            env={**os.environ, "GIT_LFS_SKIP_SMUDGE": "1"},
         )
+        if pub_get.returncode != 0:
+            # check=True would raise a bare CalledProcessError that
+            # discards the captured output — the only place the cause
+            # lives on a headless CI runner (a 69 here has meant
+            # everything from a pub.dev outage to an unwritable pub
+            # cache; the stderr names which).
+            raise FmtkError(
+                f"flutter pub get failed (rc={pub_get.returncode}): "
+                f"{(pub_get.stdout + pub_get.stderr)[-2000:]}"
+            )
     emitted = REPO_ROOT / "src" / "frontend" / "build" / "web" / "features.json"
     if not emitted.is_file():
         subprocess.run(
@@ -1655,6 +1723,63 @@ class FmtkClient:
         load."""
         if not self.app_tab_at_origin():
             cdp_eval(f"location.href='{proxy_origin()}{path}'")
+
+    def restore_eval_pipe(self, timeout: float = 240) -> None:
+        """Deterministically re-attach the fmtk eval pipe (#3402).
+
+        The git-auth authorize popup boots a second app instance at
+        the proxy origin; its registration and teardown break the
+        flutter tool's dwds connection to the app tab — every later
+        fmtk exec then fails with "printed no JSON envelope" (a
+        different signature than the isolate wedge, so exec()'s
+        recovery does not fire) while the app tab itself keeps
+        working. The cure, in order: close every tab except the app
+        tab (identified by URL — Chrome lists targets newest-first, so
+        position would pick the popup), full-page load the app tab
+        back onto the app origin (a page load re-attaches the VM
+        service, #3242), and poll the toolkit until it answers — a
+        fixed sleep cannot cover a slow CI boot. A load that has not
+        re-attached by the deadline falls back to a fresh flutter run
+        (the permanent-wedge cure,
+        :meth:`FlutterRun.recover_from_wedge`), which waits for the
+        toolkit itself. A Chrome that died outright also lands in the
+        fallback: the whole CDP preamble is best-effort.
+        """
+        self.flutter.isolate_gone_since = None
+        try:
+            keep = cdp_main_app_tab()
+            if keep is not None:
+                cdp_close_extra_tabs(keep)
+            cdp_eval(f"location.href='{proxy_origin()}/'")
+        except (FmtkError, OSError, ValueError):
+            pass  # chrome/tab gone — the restart below boots a fresh one
+        if self.pipe_answers(timeout):
+            return
+        print(
+            "[fmtk] the eval pipe did not re-attach after the page load "
+            "— restarting the flutter run",
+            flush=True,
+        )
+        self.flutter.recover_from_wedge()
+
+    def pipe_answers(self, timeout: float) -> bool:
+        """Whether a fmtk exec answers within ``timeout``.
+
+        The same boot-wait shape as :meth:`FlutterRun.wait_toolkit`,
+        against the live client: ``get_app_errors`` only answers once
+        dwds has attached the app isolate AND the toolkit bootstrap
+        registered — success proves the whole eval pipe is back."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                # raw_exec, not exec: this poll IS the restore wait —
+                # exec()'s wedge recovery would restart the launch it
+                # waits for.
+                self.raw_exec("get_app_errors", {"count": 1})
+                return True
+            except (FmtkError, subprocess.TimeoutExpired):
+                time.sleep(2)
+        return False
 
     def parse_envelope(self, stdout: str, name: str, stderr: str) -> dict:
         try:

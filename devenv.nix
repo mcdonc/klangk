@@ -760,9 +760,19 @@ in
   # fmtk CLI, and swaps server config via SIGHUP/restart. The first run in
   # a cold worktree pays the flutter debug compile; the backend + proxy are
   # kept across runs (fmtk-down stops them). FMTK_E2E_FRESH=1 wipes first.
+  # Positional args (test paths / -k selectors) replace the default whole-
+  # directory run — the CI workflows split the modules across parallel
+  # stacks so each run fits the job timeout (#3402).
   scripts.test-fmtk-e2e.exec = ''
     cd $DEVENV_ROOT
-    exec ${venvPython} -m pytest src/frontend/e2e-tests/fmtk -v --no-cov "$@"
+    # Bare invocation runs the whole directory; explicit paths replace it
+    # (the CI module groups); bare flags (-k, --collect-only) keep the
+    # default directory — falling through to the repo-root testpaths would
+    # silently run the backend suites instead.
+    if [ $# -eq 0 ] || [ "''${1#-}" != "$1" ]; then
+      set -- src/frontend/e2e-tests/fmtk "$@"
+    fi
+    exec ${venvPython} -m pytest "$@" -v --no-cov
   '';
 
   scripts.serve-docs.exec = ''
