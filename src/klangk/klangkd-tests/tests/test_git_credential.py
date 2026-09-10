@@ -2009,19 +2009,22 @@ class TestAuthorizationCodeFlow:
         # No exchange happened: the mismatched code was discarded.
         assert _BridgeHandler.forms == []
 
-    def test_user_cancel_falls_back_to_pat_dialog(
+    def test_user_cancel_exits_1_without_pat_dialog(
         self, bridge_server, fake_browser_id
     ):
         base = self._setup(bridge_server)
         _BridgeHandler.op_handlers = {
             "auth_flow_start": lambda p: {"error": "cancelled"},
         }
-        _BridgeHandler.op_bodies["get"] = json.dumps(
-            {"username": "u", "password": "p"}
-        ).encode()
         result = self._run(bridge_server, fake_browser_id, base)
-        assert result.returncode == 0
-        assert "username=u" in result.stdout
+        # A declined authorization is a "no", not a prompt for a
+        # different credential form: exit 1 so git fails (or tries its
+        # next helper) instead of hanging on a PAT dialog nobody
+        # dismissed (#3385 follow-up — the cancel e2e leg pins this).
+        assert result.returncode == 1
+        assert result.stdout == ""
+        ops = [r["operation"] for r in _BridgeHandler.requests]
+        assert "get" not in ops
         assert _BridgeHandler.forms == []
 
 

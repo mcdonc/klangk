@@ -531,19 +531,47 @@ def assert_suite_files_present(suite_dir: Path) -> None:
 
 def test_e2e_suite_wiring():
     """The fmtk-driven e2e suite (#3232): devenv script, library, tests,
-    and CI workflow must all exist together."""
+    and the CI workflow split must all exist together."""
     nix = _DEVENV_NIX.read_text()
     assert "scripts.test-fmtk-e2e.exec" in nix, (
         "devenv.nix must define the test-fmtk-e2e script"
     )
     assert_suite_files_present(_REPO_ROOT / "src/frontend/e2e-tests/fmtk")
-    workflow = _REPO_ROOT / ".github/workflows/fmtk-e2e-tests.yml"
-    assert workflow.is_file(), "the fmtk e2e CI workflow is missing"
-    assert "test-fmtk-e2e" in workflow.read_text()
+    workflows = _fmtk_workflow_texts()
     # the suites start real containers (workspace + network sidecar, the
     # interactive-egress gate fail-closes without the sidecar image) — CI
     # must build both images, not run image-less smoke suites only
-    wf = workflow.read_text()
-    assert 'build-tasks: ""' not in wf, (
-        "the fmtk e2e workflow must build the workspace + sidecar images"
-    )
+    for name, text in workflows.items():
+        assert "test-fmtk-e2e" in text, f"{name} must run the suite script"
+        assert 'build-tasks: ""' not in text, (
+            f"{name} must build the workspace + sidecar images"
+        )
+
+
+def test_every_fmtk_module_rides_exactly_one_workflow():
+    """The suite is split across the workflows so each run fits the job
+    timeout (#3402) — a module no workflow lists would silently drop out
+    of CI, and one listed twice would double its runtime."""
+    workflows = _fmtk_workflow_texts()
+    listed = "\n".join(workflows.values())
+    suite_dir = _REPO_ROOT / "src/frontend/e2e-tests/fmtk"
+    modules = sorted(path.name for path in suite_dir.glob("test_*.py"))
+    for module in modules:
+        count = listed.count(f"fmtk/{module}")
+        assert count == 1, (
+            f"{module} must ride exactly one fmtk workflow (found {count})"
+        )
+
+
+def _fmtk_workflow_texts() -> dict[str, str]:
+    """The three fmtk e2e workflow files (#3402 split), name -> text."""
+    texts: dict[str, str] = {}
+    for name in (
+        "fmtk-e2e-core.yml",
+        "fmtk-e2e-workspaces.yml",
+        "fmtk-e2e-flows.yml",
+    ):
+        path = _REPO_ROOT / ".github/workflows" / name
+        assert path.is_file(), f"the fmtk e2e CI workflow {name} is missing"
+        texts[name] = path.read_text()
+    return texts

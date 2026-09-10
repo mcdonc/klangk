@@ -113,8 +113,9 @@ expires (Gitea's default access-token lifetime is one hour), so the
 authorization window appears once per tab session. The cache lives in
 the tab's memory: closing or reloading the tab clears it, and the next
 clone opens the authorization window again. Cancelling the dialog, or
-denying the application on Gitea's approval page, falls back to the
-manual token dialog.
+denying the application on Gitea's approval page, fails the git
+operation: git tries any other configured credential helper, then
+reports a fatal authentication error.
 
 ## What happens under the hood
 

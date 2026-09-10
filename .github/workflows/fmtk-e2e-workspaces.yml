@@ -1,0 +1,62 @@
+name: "E2E: fmtk Frontend Tests (workspaces)"
+
+on:
+  schedule:
+    # Daily at 05:31 UTC — off the 06:00–06:43 UTC cluster, staggered
+    # behind the fmtk core group so the three sibling workflows do not
+    # stampede the queue. Scheduled runs use stock runners (#3300).
+    - cron: "31 5 * * *"
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: "Runner kind: stock (ubuntu-latest) or the self-hosted nix VM"
+        type: choice
+        options: [stock, nix]
+        default: stock
+  # No pull_request/push triggers and no path gating (#3300) — the daily
+  # schedule carries the regression signal; validate a PR branch by
+  # dispatching this workflow on it. Suite split rationale: #3402.
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  # fmtk-driven browser e2e (#3232/#3231) — the workspace-container group:
+  # files, terminals, sharing, and the workspace lifecycle itself (start,
+  # stop, import, idle auto-stop). CI builds the workspace image and the
+  # network sidecar (interactive egress fail-closes without the sidecar)
+  # before running them.
+  test-fmtk-e2e:
+    runs-on: ${{ inputs.runner == 'nix' && 'nix' || 'ubuntu-latest' }}
+    timeout-minutes: 60
+    env:
+      FMTK_E2E_FRESH: "1"
+    steps:
+      - uses: actions/checkout@v7
+
+      # Stock runners only (see backend-e2e-tests.yml).
+      - uses: ./.github/actions/devenv-setup
+        if: inputs.runner != 'nix'
+
+      - uses: ./.github/actions/e2e-suite
+        with:
+          run: "true"
+          suite: >-
+            test-fmtk-e2e
+            src/frontend/e2e-tests/fmtk/test_files.py
+            src/frontend/e2e-tests/fmtk/test_terminals.py
+            src/frontend/e2e-tests/fmtk/test_sharing.py
+            src/frontend/e2e-tests/fmtk/test_workspaces.py
+          suite-name: fmtk-workspaces
+
+      - name: Upload harness logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fmtk-e2e-workspaces-logs
+          retention-days: 7
+          path: |
+            .devenv/state/fmtk/klangkd.log
+            .devenv/state/fmtk/caddy.log
+            .devenv/state/fmtk/flutter-e2e.log
