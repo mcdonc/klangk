@@ -34,8 +34,24 @@ def gone_error() -> FmtkError:
     )
 
 
-def test_isolate_wedge_recovery(harness, app):
+def at_login(harness, app) -> None:
+    """Land on the usable login form from any prior state — the core
+    suite runs the smoke scenario first and it ends logged in (#3413) —
+    then dismiss any leftover login-banner dialog."""
+    app.ensure_tab_at_app()
+    app.navigate("/login")
+    if not app.has_text("Log In", 5000):
+        try:
+            app.dart_logout()
+        except FmtkError:
+            harness.restart_app()
     app.wait_for_login_page()
+    app.dismiss_login_banner()
+    app.wait_for_text("Email or handle")
+
+
+def test_isolate_wedge_recovery(harness, app):
+    at_login(harness, app)
 
     # the tab is on the app origin with the isolate attached: a gone
     # sighting arms the marker and keeps declining inside the window
