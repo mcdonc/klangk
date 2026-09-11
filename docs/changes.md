@@ -34,6 +34,16 @@ operators or integrators to act when upgrading.
 ## \[Unreleased]
 
 ### Fixed
+- **Opening a second workspace no longer corrupts the app or strands git
+  authentication (#3406).** Closing a workspace page disposed the app-wide
+  feature plugins, so the next workspace opened in the same session
+  threw "A `<Feature>` was used after being disposed" while building
+  the app bar and left the page unrenderable for the rest of the
+  session; in release builds the git-credential feature's message
+  listener stayed cancelled, so every later browser-based git
+  authorization in the session waited forever. The workspace page now
+  releases only per-workspace feature-tab resources on close; the
+  plugin registry owns the features' lifetime.
 
 - **Workspace page no longer throws during teardown under a live config
   reload (#3402).** A `workspacesChanged` push arriving while the
