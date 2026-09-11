@@ -8,6 +8,27 @@ import random
 import httpx
 
 
+def server_start_budget() -> float:
+    """Wall clock a fuzz harness allots for klangkd boot.
+
+    ``prewarm_podman()`` runs its first ``podman create`` under
+    ``podman.bringup_timeout()`` (120 s local, 240 s on CI, #3064), and
+    ``Podman._run_create`` retries once on timeout, so the prewarm worst
+    case is two full create budgets; the prewarm teardown (``podman stop``
+    then ``rm -f`` via ``remove_container``, 30 s each at the ``run()``
+    default) adds up to 60 s more; 30 s covers uvicorn boot, migrations,
+    seeding, and the startup reaps. The fixed budgets that preceded this
+    (30 s, then 120 s, #3368) sat below the server's own give-up point,
+    so a slow-but-legitimate create aborted the fuzz session with 0
+    requests sent (#3412).
+    """
+    # Lazy so --check-style entry points that never start a server need
+    # no backend import.
+    from klangk.podman import bringup_timeout
+
+    return 30 + 2 * bringup_timeout() + 60
+
+
 def configure_logging() -> None:
     """The fuzz-log posture: INFO root, per-request httpx noise suppressed."""
     logging.basicConfig(
