@@ -17,7 +17,9 @@ concurrency:
 jobs:
   fuzz:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 40 min headroom: worst case ~570 s server-start wait (#3412) + a
+    # 10 min fuzz run + ~5 min of devenv/image setup, all inside the job.
+    timeout-minutes: 40
     env:
       # Use system podman on Ubuntu runners (nix podman lacks SUID newuidmap)
       KLANGKD_PODMAN_BIN: /usr/bin/podman

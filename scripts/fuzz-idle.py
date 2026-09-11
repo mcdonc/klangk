@@ -69,7 +69,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
-from fuzzlib import configure_logging, draw_seed
+from fuzzlib import configure_logging, draw_seed, server_start_budget
 import websockets
 
 logger = logging.getLogger("fuzz-idle")
@@ -217,8 +217,15 @@ class Server:
         except httpx.HTTPError:
             return False
 
-    def _wait_ready(self, timeout: float = 90) -> None:
-        deadline = time.monotonic() + timeout
+    def _resolve_ready_timeout(self, timeout: float | None) -> float:
+        """Effective ready budget: caller-pinned, else the shared derived
+        startup budget (#3412 — a fixed 90 s sat below the server's
+        prewarm give-up point on slow hosts)."""
+        return timeout if timeout is not None else server_start_budget()
+
+    def _wait_ready(self, timeout: float | None = None) -> None:
+        budget = self._resolve_ready_timeout(timeout)
+        deadline = time.monotonic() + budget
         with httpx.Client(base_url=self.url, timeout=2) as client:
             while time.monotonic() < deadline:
                 if self.proc is not None and self.proc.poll() is not None:
@@ -229,7 +236,7 @@ class Server:
                     return
                 time.sleep(0.5)
         raise RuntimeError(
-            f"klangkd not healthy within {timeout}s:\n{self._read_log()[-4000:]}"
+            f"klangkd not healthy within {budget}s:\n{self._read_log()[-4000:]}"
         )
 
     def _read_log(self) -> str:
