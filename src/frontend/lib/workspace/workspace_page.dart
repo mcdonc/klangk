@@ -165,9 +165,11 @@ class _WorkspacePageState extends State<WorkspacePage> {
     _featureRegistry = ToolPluginRegistry();
     // Features are registered once in main() — reuse them here.
     _features = _featureRegistry.plugins.toList();
-    // Feature-contributed workspace tabs are likewise registered once in
-    // main() (active-filtered) — reuse the singleton registry (#1975).
-    _featureTabs = WorkspaceTabRegistry().tabs;
+    // Feature-contributed workspace tabs are filtered once in main()
+    // (active-set) into the singleton registry — but as FACTORIES. Each
+    // workspace page creates its own fresh tab instances from them and
+    // owns them for the page's lifetime (#1975, #3409).
+    _featureTabs = WorkspaceTabRegistry().createTabs();
     _fileRenderers = buildFileRendererRegistry(_features);
     _fetchWorkspaceName();
     // #2768: re-resolve the effective marking when the workspace row
@@ -596,12 +598,13 @@ class _WorkspacePageState extends State<WorkspacePage> {
     // the session (#3406). Tool plugins hold no per-workspace resources; the
     // registry owns their lifetime.
     //
-    // Feature tabs do hold per-workspace resources, so they are released on
-    // workspace close (#1975). The tab registry is likewise a singleton, so
-    // this calls per-tab dispose() — not disposeAll() — and the next
-    // workspace page reuses the same instances: a tab plugin with real
-    // resources must tolerate being reused after dispose — re-arm them
-    // lazily in build().
+    // Feature tabs hold per-workspace resources, so they ARE released on
+    // workspace close (#1975) — safely, because tab instances are
+    // per-workspace-page (#3409): initState created this page's set via
+    // WorkspaceTabRegistry().createTabs(), this dispose releases exactly
+    // that set, and the next workspace page builds from its own fresh
+    // instances. dispose() is therefore terminal — a tab may mix in
+    // ChangeNotifier — and reuse-after-dispose can never happen.
     for (final tab in _featureTabs) {
       tab.dispose();
     }

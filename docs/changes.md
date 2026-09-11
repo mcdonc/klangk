@@ -33,7 +33,19 @@ operators or integrators to act when upgrading.
 
 ## \[Unreleased]
 
+### Added
+
+- **Workspace-tab plugins are re-created per workspace page (#3409).** The
+  tab registry holds factories registered once at boot from the
+  active-feature set; each workspace page creates, owns, and disposes its
+  own tab set, so `dispose()` is terminal and a tab may mix in
+  `ChangeNotifier`. Per-workspace state belongs on the tab instance (each
+  page starts from zero), never in statics. Requires `klangk-plugin-api`
+  v0.6.0 (`register` takes a factory; `tabs`/`disposeAll` became
+  `createTabs`/`clear`); boingball (dormant) carries the first tab.
+
 ### Fixed
+
 - **Opening a second workspace no longer corrupts the app or strands git
   authentication (#3406).** Closing a workspace page disposed the app-wide
   feature plugins, so the next workspace opened in the same session

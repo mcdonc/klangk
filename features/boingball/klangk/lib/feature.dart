@@ -4,6 +4,7 @@ import 'dart:math';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
@@ -42,6 +43,54 @@ class BoingBallFeature extends ToolPlugin with ChangeNotifier {
   @override
   Widget? buildOverlay(BuildContext context) {
     return _BoingOverlay(feature: this);
+  }
+}
+
+/// Feature-contributed workspace tab (#3409 fixture): a tab with real
+/// disposable state — a `ChangeNotifier` mixin plus a live badge
+/// `ValueNotifier` — pinning the per-page tab contract end to end. Tab
+/// instances are per-workspace-page: each workspace page constructs a
+/// fresh `BoingTab` (the registry holds the factory), and this instance's
+/// [dispose] is terminal when the page closes, so the ChangeNotifier mixin
+/// is safe. The bounce counter therefore starts at zero on every workspace
+/// open — per-page state on the instance, not in statics.
+class BoingTab extends WorkspaceTabPlugin with ChangeNotifier {
+  final ValueNotifier<TabBadge?> _badge = ValueNotifier<TabBadge?>(null);
+  int _boings = 0;
+
+  @override
+  String get title => 'Boing';
+
+  @override
+  IconData get icon => Icons.sports_baseball;
+
+  @override
+  ValueListenable<TabBadge?>? get badge => _badge;
+
+  void boing() {
+    _boings++;
+    notifyListeners();
+    _badge.value = TabBadge(count: _boings);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text('Boing bounces: $_boings'),
+          const SizedBox(height: 12),
+          FilledButton(onPressed: boing, child: const Text('Do a boing')),
+        ],
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _badge.dispose();
+    super.dispose(); // ChangeNotifier.dispose — terminal (#3409).
   }
 }
 

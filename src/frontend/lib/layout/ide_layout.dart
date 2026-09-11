@@ -46,8 +46,10 @@ class IdeLayout extends StatefulWidget {
 
   /// Feature-contributed workspace tabs (#1975). Each entry contributes a
   /// tab (title + icon + builder) to the strip; only active features' tabs
-  /// are passed in (the active-set filter lives in main.dart, which registers
-  /// into WorkspaceTabRegistry). Defaults to none.
+  /// are passed in (the active-set filter lives in main.dart, which
+  /// registers factories into WorkspaceTabRegistry — the workspace page
+  /// creates its own per-page instance set from them, #3409). Defaults to
+  /// none.
   final List<WorkspaceTabPlugin> featureTabs;
   final GlobalKey<GhosttyTerminalState>? terminalKey;
   final GlobalKey<FileViewerPanelState>? fileViewerKey;
@@ -82,8 +84,9 @@ class IdeLayout extends StatefulWidget {
 
 class IdeLayoutState extends State<IdeLayout> {
   // The selected tab's logical key: a [_TabKey] for built-in tabs, or the
-  // [WorkspaceTabPlugin] instance for a feature tab (identity-stable from
-  // the registry). Key-based selection is what makes mid-session pane
+  // [WorkspaceTabPlugin] instance for a feature tab (identity-stable for the
+  // page's lifetime — created once in the workspace page's initState,
+  // #3409). Key-based selection is what makes mid-session pane
   // mount/unmount index-free (#2886, #2975).
   Object _selected = _TabKey.terminal;
   double _debugHeight = 0; // collapsed by default
@@ -97,8 +100,8 @@ class IdeLayoutState extends State<IdeLayout> {
 
   // Feature-tab badge subscriptions (#1976): a feature tab may expose a live
   // badge (unread count) via WorkspaceTabPlugin.badge. We listen and rebuild
-  // the strip on change. Map key is the tab (identity-stable from the
-  // registry); value is the listener we add/remove.
+  // the strip on change. Map key is the tab (identity-stable for the page's
+  // lifetime, #3409); value is the listener we add/remove.
   final Map<WorkspaceTabPlugin, VoidCallback> _badgeListeners = {};
 
   static const _dividerHeight = 6.0;
@@ -129,10 +132,10 @@ class IdeLayoutState extends State<IdeLayout> {
     }
     // Re-subscribe only when the featureTabs LIST identity changes. This
     // holds because workspace_page captures _featureTabs once in initState
-    // (WorkspaceTabRegistry().tabs) and reuses that same list instance on
-    // every rebuild. If a future change recomputes featureTabs per build,
-    // switch to a content-based comparison — re-subscribing every frame
-    // would churn (#1976 review nit).
+    // (WorkspaceTabRegistry().createTabs()) and reuses that same list
+    // instance on every rebuild. If a future change recomputes featureTabs
+    // per build, switch to a content-based comparison — re-subscribing every
+    // frame would churn (#1976 review nit).
     if (!identical(widget.featureTabs, oldWidget.featureTabs)) {
       _subscribeFeatureBadges();
     }

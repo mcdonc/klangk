@@ -62,9 +62,10 @@ Future<void> main() async {
   // Feature-contributed workspace tabs (#1975): the same active-set filter
   // as tool plugins — a feature's tab mounts only when the feature is
   // active. A feature may contribute a tab with no tool handlers
-  // (tab-only), or both a tab and tool handlers. The filter lives in
-  // [registerActiveWorkspaceTabs] (a top-level helper) so it is unit-testable
-  // — the tool-plugin filter is the same shape but inlined.
+  // (tab-only), or both a tab and tool handlers. The filter registers tab
+  // FACTORIES (instances are per-workspace-page, #3409). The filter lives
+  // in [registerActiveWorkspaceTabs] (a top-level helper) so it is
+  // unit-testable — the tool-plugin filter is the same shape but inlined.
   registerActiveWorkspaceTabs(
     createAllNamedWorkspaceTabs(),
     activeFeatureNames,
