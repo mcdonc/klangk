@@ -526,9 +526,18 @@ def gitea() -> Gitea:
 
 @pytest.fixture(scope="module")
 def provider_workspace(harness, gitea):
-    """Swap the OAuth provider map into the scratch config (SIGHUP —
+    """Swap the OAuth provider config into the scratch config (SIGHUP —
     the container env bridge reads it at workspace create), create the
-    scratch workspace in permit-egress mode, and tear both down."""
+    scratch workspace in permit-egress mode, and tear both down.
+
+    This stays a provider-map entry rather than the
+    KLANGKWS_FEATURE_GITEA_OAUTH_CLIENT_ID shorthand (#3405) on
+    purpose: the shorthand derives the authorize and token URLs from
+    the clone host, but this topology reaches Gitea by two names —
+    127.0.0.1 for the driven Chrome's authorize popup,
+    host.containers.internal for the container-side token exchange —
+    exactly the split the map exists for (unit tests cover the
+    shorthand's own expansion, precedence, and fallback)."""
     entry = {
         "host": GIT_HOST.rsplit(":", 1)[0],
         "flow": "authorization_code_pkce",

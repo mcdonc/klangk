@@ -35,6 +35,14 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **`KLANGKWS_FEATURE_GITEA_OAUTH_CLIENT_ID` (#3405).** With
+  `KLANGKWS_FEATURE_GITEA_OAUTH_REDIRECT_URI` (the klangk origin
+  registered as the OAuth redirect in the Gitea application), a bare
+  client ID runs the browser authorization flow for any Gitea host a
+  workspace clones — no `KLANGKWS_FEATURE_OAUTH_PROVIDERS` entry
+  needed. Explicit provider entries keep winning over the shorthand.
+  See [Gitea](gitea.md).
+
 - **Workspace-tab plugins are re-created per workspace page (#3409).** The
   tab registry holds factories registered once at boot from the
   active-feature set; each workspace page creates, owns, and disposes its

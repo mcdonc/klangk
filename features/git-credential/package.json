@@ -12,6 +12,14 @@
         "description": "GitLab OAuth application client ID for device-flow authentication (GitLab 17.1+, flow enabled on the app); shorthand for a KLANGKWS_FEATURE_OAUTH_PROVIDERS entry with host gitlab.com",
         "scope": "container"
       },
+      "KLANGKWS_FEATURE_GITEA_OAUTH_CLIENT_ID": {
+        "description": "Gitea/Forgejo OAuth application client ID (public PKCE client); with KLANGKWS_FEATURE_GITEA_OAUTH_REDIRECT_URI, a shorthand that runs the browser authorization flow for any Gitea host the clone targets -- no KLANGKWS_FEATURE_OAUTH_PROVIDERS entry needed",
+        "scope": "container"
+      },
+      "KLANGKWS_FEATURE_GITEA_OAUTH_REDIRECT_URI": {
+        "description": "The klangk origin registered as the OAuth redirect URI in the Gitea application (e.g. https://klangk.example.com/); required by the KLANGKWS_FEATURE_GITEA_OAUTH_CLIENT_ID shorthand -- without it the shorthand is ignored",
+        "scope": "container"
+      },
       "KLANGKWS_FEATURE_OAUTH_PROVIDERS": {
         "description": "JSON list of OAuth providers: [{host, flow, client_id, token_url, scope, username}]. flow is device_code (default; requires device_code_url) or authorization_code_pkce (requires authorize_url + redirect_uri; PKCE S256 public client, for hosts like Gitea that implement no device flow). Activates the matching flow for any git host (GitLab, Gitea, self-hosted)",
         "scope": "container"
