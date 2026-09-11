@@ -3529,7 +3529,10 @@ class TestMainEntryCallback2910:
 
     @pytest.mark.parametrize(
         "env_key",
-        ["KLANGKD_SOCKET", "KLANGKD_CADDY_ADMIN_SOCKET"],
+        [
+            "KLANGKD_SOCKET",
+            "KLANGKD_CADDY_ADMIN_SOCKET",
+        ],
     )
     def test_warn_non_reloadable_covers_bound_sockets(
         self, app_state, caplog, env_key
@@ -3543,6 +3546,30 @@ class TestMainEntryCallback2910:
         with caplog.at_level("WARNING"):
             lc._warn_non_reloadable(old, new)
         assert env_key.removeprefix("KLANGKD_").lower() in caplog.text
+        assert "full process restart" in caplog.text
+
+    @pytest.mark.parametrize(
+        "env_key",
+        [
+            "KLANGKD_LOGFIRE_TOKEN",
+            "KLANGKD_LOGFIRE_BASE_URL",
+            "KLANGKD_LOGFIRE_ENVIRONMENT",
+        ],
+    )
+    def test_warn_non_reloadable_covers_logfire(
+        self, app_state, caplog, env_key
+    ):
+        """logfire.configure() runs once at process start; a SIGHUP change
+        to the logfire fields must warn instead of passing silently
+        (#3411)."""
+        app_state = _make_app_state()
+        lc = app_state.state.lifecycle
+        old = app_state.state.settings
+        new = make_settings({env_key: "changed"})
+        with caplog.at_level("WARNING"):
+            lc._warn_non_reloadable(old, new)
+        assert env_key.removeprefix("KLANGKD_").lower() in caplog.text
+        assert "logfire.configure()" in caplog.text
         assert "full process restart" in caplog.text
 
     async def test_apply_pending_reseed_noop_without_flag(self, app_state):
@@ -4024,11 +4051,22 @@ class TestSetupLogfire:
 
     def test_no_token_returns_false(self, monkeypatch):
         # A legacy ambient LOGFIRE_TOKEN no longer arms instrumentation,
-        # and the logfire package is never imported on this path.
+        # and nothing is configured on the no-token path.
         monkeypatch.setenv("LOGFIRE_TOKEN", "legacy-token")
         mock_logfire = MagicMock()
         with patch.dict("sys.modules", {"logfire": mock_logfire}):
             assert main.setup_logfire(self._app({})) is False
+        mock_logfire.configure.assert_not_called()
+
+    def test_empty_token_string_stays_off(self):
+        # An empty token (e.g. docker-compose interpolation of an unset
+        # host var) is falsy: instrumentation stays off.
+        mock_logfire = MagicMock()
+        with patch.dict("sys.modules", {"logfire": mock_logfire}):
+            result = main.setup_logfire(
+                self._app({"KLANGKD_LOGFIRE_TOKEN": ""})
+            )
+        assert result is False
         mock_logfire.configure.assert_not_called()
 
     def test_project_link_print_suppressed_at_source(self):

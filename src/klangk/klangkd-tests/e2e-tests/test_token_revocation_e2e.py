@@ -56,7 +56,7 @@ def server():
         KLANGKD_DEFAULT_PASSWORD="adminpass",
         KLANGKD_TEST_MODE="1",
         KLANGKD_IDLE_TIMEOUT_SECONDS="300",
-        LOGFIRE_TOKEN="",
+        KLANGKD_LOGFIRE_TOKEN="",
     )
     yield server
     stop_server(server)
@@ -78,7 +78,7 @@ def short_server():
         KLANGKD_TEST_MODE="1",
         KLANGKD_IDLE_TIMEOUT_SECONDS="300",
         KLANGKD_ACCESS_TOKEN_HOURS=SHORT_TOKEN_HOURS,
-        LOGFIRE_TOKEN="",
+        KLANGKD_LOGFIRE_TOKEN="",
     )
     yield server
     stop_server(server)

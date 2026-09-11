@@ -58,7 +58,7 @@ def server(fake_llm):
         KLANGKD_DEFAULT_PASSWORD="testpass",
         KLANGKD_TEST_MODE="1",
         KLANGKD_IDLE_TIMEOUT_SECONDS="300",
-        LOGFIRE_TOKEN="",
+        KLANGKD_LOGFIRE_TOKEN="",
         KLANGKD_LLM_MODELS=model_entry,
     )
     yield srv

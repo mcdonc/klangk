@@ -47,7 +47,7 @@ def server(fake_llm):
         KLANGKD_DEFAULT_PASSWORD="testpass",
         KLANGKD_TEST_MODE="1",
         KLANGKD_IDLE_TIMEOUT_SECONDS="300",
-        LOGFIRE_TOKEN="",
+        KLANGKD_LOGFIRE_TOKEN="",
         KLANGKD_LLM_MODELS=model_entry,
     )
     yield srv
@@ -127,7 +127,7 @@ class TestLLMProxyE2E:
             KLANGKD_DEFAULT_PASSWORD="testpass",
             KLANGKD_TEST_MODE="1",
             KLANGKD_IDLE_TIMEOUT_SECONDS="300",
-            LOGFIRE_TOKEN="",
+            KLANGKD_LOGFIRE_TOKEN="",
         )
         try:
             resp = srv["client"].get(
@@ -165,7 +165,7 @@ class TestLLMProxyPassthroughE2E:
             KLANGKD_DEFAULT_PASSWORD="testpass",
             KLANGKD_TEST_MODE="1",
             KLANGKD_IDLE_TIMEOUT_SECONDS="300",
-            LOGFIRE_TOKEN="",
+            KLANGKD_LOGFIRE_TOKEN="",
         )
         yield srv
         stop_server(srv)
@@ -229,7 +229,7 @@ class TestLLMProxyEgressHopE2E:
             KLANGKD_DEFAULT_PASSWORD="testpass",
             KLANGKD_TEST_MODE="1",
             KLANGKD_IDLE_TIMEOUT_SECONDS="300",
-            LOGFIRE_TOKEN="",
+            KLANGKD_LOGFIRE_TOKEN="",
             KLANGKD_LLM_MODELS=model_entry,
             KLANGKD_EGRESS_PORT=str(egress_port),
             KLANGKD_CONTAINER_SUBNETS="127.0.0.1",

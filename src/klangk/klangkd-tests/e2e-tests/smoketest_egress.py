@@ -353,7 +353,7 @@ def _container_inspect(container: str) -> dict | None:
     try:
         arr = json.loads(r.stdout or "[]")
         return arr[0] if arr else None
-    except (ValueError, IndexError):
+    except ValueError, IndexError:
         return None
 
 
@@ -682,7 +682,7 @@ class RawDecider:
             self._ping_task.cancel()
             try:
                 await self._ping_task
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError, Exception:
                 pass
             self._ping_task = None
         try:
@@ -1271,7 +1271,7 @@ class SmokeTest:
             # ContainerManager.start_network_sidecar; captured to
             # /tmp/smoke_sidecar_*.log by _capture_sidecar_logs at teardown.
             KLANGKNETWORK_EGRESS_DEBUG_RST="1",
-            LOGFIRE_TOKEN="",
+            KLANGKD_LOGFIRE_TOKEN="",
         )
         # Point the real sidecar's upstream at the controlled-DNS fixture
         # (#2424): when --controlled-dns is on, every workspace the smoketest
@@ -5948,7 +5948,7 @@ def _run_cleanup() -> int:
             timeout=30,
         )
         names = [n for n in res.stdout.split() if n.startswith("klangk-net-")]
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except FileNotFoundError, subprocess.TimeoutExpired:
         pass
 
     dead_sidecars: list[str] = []
@@ -5967,7 +5967,7 @@ def _run_cleanup() -> int:
                 text=True,
                 timeout=30,
             )
-        except (FileNotFoundError, subprocess.TimeoutExpired):
+        except FileNotFoundError, subprocess.TimeoutExpired:
             continue
         pid = r.stdout.strip()
         try:
@@ -5987,7 +5987,7 @@ def _run_cleanup() -> int:
                 timeout=30,
             )
             print(f"removed dead-owner sidecar: {name}")
-        except (FileNotFoundError, subprocess.TimeoutExpired):
+        except FileNotFoundError, subprocess.TimeoutExpired:
             break
 
     if legacy_sidecars:

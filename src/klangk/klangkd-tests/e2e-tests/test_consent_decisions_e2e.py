@@ -59,7 +59,7 @@ def server():
         KLANGKD_ALLOW_AUTOSTART="1",
         KLANGKD_IDLE_TIMEOUT_SECONDS="300",
         KLANGKD_EGRESS_CONSENT_TIMEOUT=str(_CONSENT_TIMEOUT),
-        LOGFIRE_TOKEN="",
+        KLANGKD_LOGFIRE_TOKEN="",
     )
     yield server
     stop_server(server)

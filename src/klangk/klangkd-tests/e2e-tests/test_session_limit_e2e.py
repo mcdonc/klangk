@@ -26,7 +26,7 @@ def server():
         KLANGKD_TEST_MODE="1",
         KLANGKD_MAX_SESSIONS_PER_USER=str(CAP),
         KLANGKD_IDLE_TIMEOUT_SECONDS="300",
-        LOGFIRE_TOKEN="",
+        KLANGKD_LOGFIRE_TOKEN="",
     )
     yield server
     stop_server(server)

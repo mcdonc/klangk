@@ -54,7 +54,7 @@ def server():
         KLANGKD_TEST_MODE="1",
         KLANGKD_IDLE_TIMEOUT_SECONDS="300",
         KLANGKD_ALLOW_AUTOSTART="1",
-        LOGFIRE_TOKEN="",
+        KLANGKD_LOGFIRE_TOKEN="",
     )
     yield server
     stop_server(server)
@@ -149,7 +149,7 @@ async def test_websocket_closed_with_1012_and_reconnects(server, auth):
                 raw = await asyncio.wait_for(ws.recv(), timeout=60)
                 try:
                     msg = json.loads(raw)
-                except (TypeError, ValueError):
+                except TypeError, ValueError:
                     continue
                 if msg.get("type") == "server_recycle":
                     phases.append(msg.get("phase"))
@@ -296,7 +296,7 @@ async def _connect_until_ready(server, auth, workspace_id, timeout=90):
                     break  # nothing more coming on this attempt
                 try:
                     msg = json.loads(raw)
-                except (TypeError, ValueError):
+                except TypeError, ValueError:
                     continue
                 last = msg
                 if msg.get("type") == "container_ready":
@@ -411,7 +411,7 @@ async def test_sigterm_graceful_shutdown(server, auth):
         KLANGKD_DEFAULT_PASSWORD="testpass",
         KLANGKD_TEST_MODE="1",
         KLANGKD_IDLE_TIMEOUT_SECONDS="300",
-        LOGFIRE_TOKEN="",
+        KLANGKD_LOGFIRE_TOKEN="",
     )
     try:
         client = own["client"]
@@ -505,7 +505,7 @@ def test_config_reload_via_sighup():
         KLANGKD_DEFAULT_PASSWORD="testpass",
         KLANGKD_TEST_MODE="1",
         KLANGKD_IDLE_TIMEOUT_SECONDS="300",
-        LOGFIRE_TOKEN="",
+        KLANGKD_LOGFIRE_TOKEN="",
     )
     client = server["client"]
     try:

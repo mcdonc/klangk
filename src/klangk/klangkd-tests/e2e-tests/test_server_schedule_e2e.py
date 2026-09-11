@@ -34,7 +34,7 @@ def _own_server(tag: str):
         KLANGKD_DEFAULT_PASSWORD="testpass",
         KLANGKD_TEST_MODE="1",
         KLANGKD_IDLE_TIMEOUT_SECONDS="300",
-        LOGFIRE_TOKEN="",
+        KLANGKD_LOGFIRE_TOKEN="",
         # The UDS path leaves KLANGKD_EGRESS_PORT at its default (8995),
         # which collides with a dev klangkd on the same host — draw a
         # fresh one so the suite runs against a live dev server too.
@@ -197,7 +197,7 @@ async def test_past_due_stop_fires_on_boot():
         KLANGKD_DEFAULT_PASSWORD="testpass",
         KLANGKD_TEST_MODE="1",
         KLANGKD_IDLE_TIMEOUT_SECONDS="300",
-        LOGFIRE_TOKEN="",
+        KLANGKD_LOGFIRE_TOKEN="",
         KLANGKD_EGRESS_PORT=str(free_port()),
         state_dir=own["state_dir"],
         data_dir=own["data_dir"],

@@ -107,6 +107,18 @@ _NON_RELOADABLE_SETTINGS: tuple[tuple[str, str], ...] = (
     ("caddy_admin_socket", "the Caddy admin UDS is already bound"),
     ("data_dir", "the DB engine is already open"),
     ("state_dir", "instance state is already on disk"),
+    (
+        "logfire_token",
+        "logfire.configure() runs once at process start (#3411)",
+    ),
+    (
+        "logfire_base_url",
+        "logfire.configure() runs once at process start (#3411)",
+    ),
+    (
+        "logfire_environment",
+        "logfire.configure() runs once at process start (#3411)",
+    ),
 )
 
 
