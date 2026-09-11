@@ -1,8 +1,9 @@
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
-/// Registers a feature's workspace tab into the [WorkspaceTabRegistry] only
-/// when the feature is in [activeFeatureNames] — the tab analogue of the
-/// tool-plugin active-set filter inlined in `main()` (#1975).
+/// Registers a feature's workspace-tab FACTORY into the
+/// [WorkspaceTabRegistry] only when the feature is in [activeFeatureNames]
+/// — the tab analogue of the tool-plugin active-set filter inlined in
+/// `main()` (#1975).
 ///
 /// Lives in its own module (not `main.dart`) so it is unit-testable in
 /// isolation: importing `main.dart` from a test pulls the entire app graph
@@ -12,16 +13,20 @@ import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 /// API, so its transitive closure is tiny and fully coverable. `main()`
 /// passes the generated `createAllNamedWorkspaceTabs()` aggregator output.
 ///
+/// The registry holds factories, not instances (#3409): each workspace page
+/// creates its own fresh tab set from the registered factories and disposes
+/// it on close, so `WorkspaceTabPlugin.dispose()` is terminal.
+///
 /// `activeFeatureNames` is a [Set], so [Set.contains] is exact-name equality
 /// (not substring) — "git" does not activate "git-credential", same as tools.
 void registerActiveWorkspaceTabs(
-  Iterable<({String name, WorkspaceTabPlugin tab})> allTabs,
+  Iterable<({String name, WorkspaceTabPlugin Function() create})> allTabs,
   Set<String> activeFeatureNames,
 ) {
   final tabRegistry = WorkspaceTabRegistry();
   for (final entry in allTabs) {
     if (activeFeatureNames.contains(entry.name)) {
-      tabRegistry.register(entry.tab);
+      tabRegistry.register(entry.create);
     }
   }
 }
