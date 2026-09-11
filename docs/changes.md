@@ -851,6 +851,15 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **Workspace-tab plugins are re-created per workspace page (#3409).** The
+  tab registry holds factories registered once at boot from the
+  active-feature set; each workspace page creates, owns, and disposes its
+  own tab set, so `dispose()` is terminal and a tab may mix in
+  `ChangeNotifier`. Per-workspace state belongs on the tab instance (each
+  page starts from zero), never in statics. Requires `klangk-plugin-api`
+  v0.6.0 (`register` takes a factory; `tabs`/`disposeAll` became
+  `createTabs`/`clear`); boingball (dormant) carries the first tab.
+
 - **Git authentication via the browser for Gitea hosts (#3385).** A
   `KLANGKWS_FEATURE_OAUTH_PROVIDERS` entry with
   `flow: authorization_code_pkce` runs the OAuth authorization-code

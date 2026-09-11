@@ -74,9 +74,12 @@ EXPECTED_DART_FEATURES = {
     "soliplex": "SoliplexFeature",
 }
 
-# Dart features that declare ONLY a WorkspaceTabPlugin (no ToolPlugin) → the
-# tab class emitted into createAllNamedWorkspaceTabs (#1976).
-EXPECTED_DART_TAB_FEATURES: dict[str, str] = {}
+# Dart features that declare a WorkspaceTabPlugin (tab-only, or both a
+# tab and a ToolPlugin) → the tab class emitted as a FACTORY into
+# createAllNamedWorkspaceTabs (#1976; factories per #3409).
+EXPECTED_DART_TAB_FEATURES = {
+    "boingball": "BoingTab",
+}
 
 # All features with a klangk/ Dart package (tool or tab) — used to tell Dart
 # features from TS-only ones (word-count, browser-fetch have no klangk/).
@@ -191,9 +194,11 @@ def assert_not_imported(source: str, name: str) -> None:
 
 
 def assert_tab_emitted(source: str, name: str, cls: str) -> None:
-    """The feature's tab class is emitted into the tab aggregator."""
-    assert f"(name: '{name}', tab: {cls}())," in source, (
-        f"{cls}() not instantiated in createAllNamedWorkspaceTabs"
+    """The feature's tab class is emitted as a factory (constructor
+    tear-off) into the tab aggregator — instances are per-workspace-page
+    (#3409), so the aggregator must not instantiate."""
+    assert f"(name: '{name}', create: {cls}.new)," in source, (
+        f"{cls}.new factory not emitted into createAllNamedWorkspaceTabs"
     )
 
 
@@ -244,7 +249,8 @@ class TestPipelineRuns:
 
         # The workspace-tab aggregator (#1975) is always emitted.
         assert_tab_aggregator_present(source)
-        # Tab-only features (#1976) land in the tab aggregator.
+        # Features declaring a tab (#1976) land in the tab aggregator as
+        # factories (#3409) — boingball is the checked-in both-shape case.
         for name, cls in EXPECTED_DART_TAB_FEATURES.items():
             assert_tab_emitted(source, name, cls)
 
@@ -294,11 +300,12 @@ def assert_single_feature(
 
 
 def assert_tab_only_dart(dart: str, name: str, cls: str) -> None:
-    """The tab-only feature's class appears in the tab aggregator exactly
-    once — never leaked into createAllFeatures / createAllNamedFeatures."""
+    """The tab-only feature's class appears in the generated Dart exactly
+    once (as a factory, #3409) — never leaked into createAllFeatures /
+    createAllNamedFeatures."""
     assert "createAllNamedWorkspaceTabs()" in dart
-    assert f"(name: '{name}', tab: {cls}())," in dart
-    assert dart.count(f"{cls}()") == 1, "tab class leaked into a tool aggregator"
+    assert f"(name: '{name}', create: {cls}.new)," in dart
+    assert dart.count(cls) == 1, "tab class leaked into a tool aggregator"
 
 
 class TestWorkspaceTabAggregator:
@@ -352,7 +359,7 @@ class TestWorkspaceTabAggregator:
 
         dart = import_dart_features.generate_dart(features)
         assert "(name: 'chat', feature: ChatFeature())," in dart
-        assert "(name: 'chat', tab: ChatTab())," in dart
+        assert "(name: 'chat', create: ChatTab.new)," in dart
 
     def test_neither_component_is_skipped(self, tmp_path):
         """A feature declaring neither ToolPlugin nor WorkspaceTabPlugin is
