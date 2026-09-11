@@ -81,7 +81,15 @@ KLANGKWS_FEATURE_GITEA_OAUTH_REDIRECT_URI="https://klangk.example.com/"
 
 The redirect is set separately from the client ID because it names the
 klangk origin — the address the browser returns the authorization popup
-to — which no Gitea-side value carries. With both keys set, the first
+to — which no Gitea-side value carries. Gitea checks the value against
+the Redirect URI registered on the application twice, once in the
+authorization request and once in the code exchange, and rejects the
+request when they differ. The GitHub and GitLab shorthands need only a
+client ID because their device flow has the user read a code in the
+terminal and type it into a page themselves; a browser round-trip, and
+with it a return address, exists only in this flow.
+
+With both keys set, the first
 clone from your Gitea runs the browser flow below; the authorize and
 token endpoints are derived from the host being cloned (Gitea serves
 them at `/login/oauth/authorize` and `/login/oauth/access_token`). The
