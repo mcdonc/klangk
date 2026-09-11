@@ -42,7 +42,7 @@ import uuid
 
 import httpx
 
-from fuzzlib import configure_logging, draw_seed, uds_login
+from fuzzlib import configure_logging, draw_seed, server_start_budget, uds_login
 
 logger = logging.getLogger("fuzz")
 
@@ -728,15 +728,16 @@ def start_server(data_dir: str) -> tuple[subprocess.Popen, TeeReader, str]:
     return proc, tee, uds_path
 
 
-def wait_for_server(uds_path: str, timeout: float = 120) -> None:
+def wait_for_server(uds_path: str, timeout: float | None = None) -> None:
     """Poll /health until the server is up (over the UDS).
 
-    The 120 s budget covers a cold CI runner: uvicorn boot (~8 s),
-    migrations + seeding (~3 s), then ``prewarm_podman()`` (its first
-    ``podman create`` alone can take ~20–30 s). Good days land at
-    ~23 s total; the old 30 s deadline failed whenever the runner
-    booted slower than that (#3368).
+    ``timeout`` defaults to :func:`fuzzlib.server_start_budget`, so the
+    wait always outlasts the server's own podman give-up point on any
+    host; the fixed wall clocks that preceded it (#3368) crossed it on
+    slow CI runner days.
     """
+    if timeout is None:
+        timeout = server_start_budget()
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
@@ -750,7 +751,7 @@ def wait_for_server(uds_path: str, timeout: float = 120) -> None:
         except (httpx.ConnectError, httpx.HTTPError):
             pass
         time.sleep(0.3)
-    raise TimeoutError("Server did not start in time")
+    raise TimeoutError(f"Server did not start in time (budget {timeout:.0f}s)")
 
 
 # ---------------------------------------------------------------------------
