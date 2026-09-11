@@ -81,6 +81,8 @@ The device flow only activates when all of these are true:
   `KLANGKWS_FEATURE_OAUTH_PROVIDERS` entry whose `host` matches, or one
   of the shorthands: `KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID` for
   GitHub, `KLANGKWS_FEATURE_GITLAB_OAUTH_CLIENT_ID` for gitlab.com
+  (the Gitea shorthand pair activates the browser flow instead — see
+  [Gitea](../gitea.md))
 - The git host matches the provider's `host` — any spelling counts:
   case (`GitHub.com`), explicit port (`github.com:443`), a trailing dot
   (`github.com.`), and a `www.` prefix all match
@@ -272,7 +274,9 @@ Each entry:
   `x-access-token`.
 
 An entry for `github.com` or `gitlab.com` may live in the map too — it
-wins over the corresponding shorthand when both are set. The same three
+wins over the corresponding shorthand when both are set; the same
+precedence holds for a Gitea host over the Gitea shorthand pair. The
+same three
 levels apply as for the client IDs (deploy-wide via the server env or
 the `features_config:` block as `oauth_providers`, per workspace via the
 workspace `env` map, ad hoc via a shell `export`), and the rest of the
