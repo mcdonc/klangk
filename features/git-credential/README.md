@@ -2,10 +2,11 @@
 
 Browser-delegated git credential helper for Klangk workspaces. When git
 needs HTTPS credentials (e.g. `git push`), the helper either runs an
-OAuth device flow (GitHub via the shorthand client ID, or any RFC 8628
-provider — GitLab, Gitea, self-hosted — via `KLANGKWS_FEATURE_OAUTH_PROVIDERS`)
-or shows a PAT dialog in the user's browser tab. Credentials are cached
-in memory for the browser session.
+OAuth flow — the GitHub/GitLab device flow via a shorthand client ID,
+the Gitea browser flow via the `KLANGKWS_FEATURE_GITEA_OAUTH_CLIENT_ID`
+shorthand pair, or any provider via `KLANGKWS_FEATURE_OAUTH_PROVIDERS`
+— or shows a PAT dialog in the user's browser tab. Credentials are
+cached in memory for the browser session.
 
 ## Components
 
@@ -18,13 +19,16 @@ because the same hook sets `git config --system credential.helper klangk`.
 
 Git invokes the helper with one of three operations:
 
-- **`get`** — git needs credentials. If an OAuth device-flow provider is
+- **`get`** — git needs credentials. If an OAuth provider is
   configured for the host — a `KLANGKWS_FEATURE_OAUTH_PROVIDERS` entry,
-  or `KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID` for `github.com` — the
-  helper runs that provider's device flow: it requests a code from the
-  provider, sends it to the browser for display, and polls the provider
-  for the token. If the device flow is not available or fails, the helper
-  falls back to the bridge-based PAT dialog.
+  `KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID` for `github.com`, or the
+  Gitea shorthand pair for a Gitea host — the helper runs that
+  provider's flow: the device flow requests a code from the provider,
+  sends it to the browser for display, and polls the provider for the
+  token; the authorization-code flow relays the authorize URL to the
+  browser and exchanges the returned code container-side. If the flow
+  is not available or fails, the helper falls back to the bridge-based
+  PAT dialog.
 - **`store`** — git confirms that credentials worked. The helper
   forwards to the bridge so the browser feature can cache them.
 - **`erase`** — git reports that credentials were rejected. The helper
@@ -114,7 +118,7 @@ feature removes any cached credentials for that host.
 
 ## Configuration
 
-The feature declares three config variables in `package.json` (all
+The feature declares five config variables in `package.json` (all
 `container` scope):
 
 - **`KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID`** — GitHub OAuth App client
@@ -127,8 +131,26 @@ The feature declares three config variables in `package.json` (all
   and `https://gitlab.com/oauth/token`, scope
   `read_repository write_repository`, username `oauth2`). Needs GitLab
   17.1+ with the device flow enabled on the OAuth application.
+- **`KLANGKWS_FEATURE_GITEA_OAUTH_CLIENT_ID`** and
+  **`KLANGKWS_FEATURE_GITEA_OAUTH_REDIRECT_URI`** — the Gitea/Forgejo
+  shorthand. Unlike the device-flow shorthands it is not pinned to a
+  public instance: Gitea's endpoints live at standard paths, so the
+  entry it expands (flow `authorization_code_pkce`, username `oauth2`,
+  endpoints `<clone-target>/login/oauth/authorize` and
+  `<clone-target>/login/oauth/access_token`) serves the host the clone
+  targets. The client ID names the OAuth application registered on that
+  instance; the redirect URI is the klangk origin the application was
+  registered with (the browser returns the popup to it — the bridge URL
+  reaches the backend, not the public frontend origin, so it cannot
+  carry it). The shorthand serves one Gitea: cloning from several
+  instances, or one the browser and the containers reach by different
+  names, uses the provider map below. A host whose authentication
+  challenge names other software (git 2.46+ relays it) keeps the PAT
+  dialog, so a mixed deployment answers non-Gitea hosts as before. A
+  client ID without the redirect is an incomplete shorthand — skipped
+  with a debug note, the PAT dialog answers.
 - **`KLANGKWS_FEATURE_OAUTH_PROVIDERS`** — JSON list of provider entries
-  that activates the device flow for any host — self-hosted GitLab,
+  that activates a flow for any host — self-hosted GitLab,
   other RFC 8628 providers, or overrides of the stock entries. Each
   entry:
 
@@ -158,9 +180,10 @@ The feature declares three config variables in `package.json` (all
   shorthand and a map entry both define a provider for the same host,
   the `KLANGKWS_FEATURE_OAUTH_PROVIDERS` entry wins.
 
-All three may be set deploy-wide (server env or the `features_config:`
+All five may be set deploy-wide (server env or the `features_config:`
 block of `klangkd.yaml`, short keys `github_oauth_client_id` /
-`gitlab_oauth_client_id` / `oauth_providers`), per workspace (the
+`gitlab_oauth_client_id` / `gitea_oauth_client_id` /
+`gitea_oauth_redirect_uri` / `oauth_providers`), per workspace (the
 workspace `env` map), or ad hoc in a shell. See the docs site's
 [GitHub Authentication](../../docs/features/github-authentication.md)
 page for the walkthrough.
@@ -168,9 +191,12 @@ page for the walkthrough.
 Providers known to support RFC 8628 device flow: GitHub (OAuth Apps only,
 not GitHub Apps) and GitLab (17.1+, with the device flow enabled on the
 OAuth application). Gitea has no device flow in any release yet
-(go-gitea/gitea#27309); Atlassian/Bitbucket has no public device
-authorization endpoint. When those change, extend `STOCK_PROVIDERS` in
-`tools/git-credential-klangk` — until then such hosts use the PAT dialog.
+(go-gitea/gitea#27309) — its PKCE shorthand covers any clone target
+host, and a Gitea behind a path prefix or reachable by different names
+from the browser and the containers uses the provider map.
+Atlassian/Bitbucket has no public device authorization endpoint. When
+those change, extend `STOCK_PROVIDERS` in `tools/git-credential-klangk`
+— until then such hosts use the PAT dialog.
 
 ## Credential cache
 
