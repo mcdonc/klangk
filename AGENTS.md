@@ -255,12 +255,15 @@ Every function, method, and block in `src/klangk/klangk/**/*.py`,
 `src/klangksidecar/klangksidecar/**/*.py`, and
 `scripts/**/*.py` must be xenon rank **A or better** (cyclomatic complexity
 ≤ 5), and the per-module and codebase **averages** must also stay rank A
-(≤ 5). The gate runs as the `xenon` pre-commit hook defined in `devenv.nix`
-(`--max-absolute A --max-modules A --max-average A`); on every commit that
-stages a graded `.py` file it grades the **full tree** (`pass_filenames =
-false` — a staged subset's average can exceed 5 while the whole tree
-passes, so partial grading would flap). Nothing in CI enforces it yet —
-the hook is the only gate, so do not bypass it with `--no-verify`.
+(≤ 5). The gate runs as the `xenon` pre-commit hook (devenv.nix), which
+like the `klangk:xenon` task delegates to `scripts/xenon-gate.sh` — the
+single definition of the thresholds (`--max-absolute A --max-modules A
+--max-average A`) and the graded file set; on every commit that stages a
+graded `.py` file it grades the **full tree** (`pass_filenames = false` —
+a staged subset's average can exceed 5 while the whole tree passes, so
+partial grading would flap), and it fails when xenon silently skips a
+file it cannot parse (#3415). CI re-runs the gate in the `scripts/tests`
+step (backend-tests.yml), so do not bypass the hook with `--no-verify`.
 
 Check locally before committing:
 

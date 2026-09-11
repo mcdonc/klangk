@@ -2270,6 +2270,15 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
 
 ### Changed
 
+- **Strict xenon complexity gate (#3415).** The complexity gate now runs
+  through `scripts/xenon-gate.sh` — also the `klangk:xenon` devenv task —
+  which fails when its parser cannot read a graded file instead of
+  silently skipping it: xenon exits 0 on parse failures, so a skipped
+  file used to leave the gate with no signal anywhere. The
+  `scripts/tests` suite re-runs the gate over the graded tree in CI, and
+  the `test` extra now pins `xenon==0.9.3` so that guard runs on stock
+  runners.
+
 - **`dart format` pre-commit hook verifies instead of rewriting
   (#3376).** The hook now runs `dart format --output=none
 --set-exit-if-changed` via `scripts/dart-format-verify.sh` and fails

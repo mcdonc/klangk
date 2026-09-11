@@ -270,13 +270,14 @@ in
       after = [ "devenv:python:virtualenv" ];
       before = [ "devenv:enterShell" ];
     };
-    # The complexity gate as a one-word task (#2828): the exact hook
-    # invocation over the exact hook file set, so `devenv shell -- xenon`
-    # (ad hoc) and `pre-commit run xenon` (staged) can't drift. At rank A
-    # (#3052) the hook grades the full tree (pass_filenames=false), so
-    # the two invocations are identical.
+    # The complexity gate as a one-word task (#2828): delegates to
+    # scripts/xenon-gate.sh, the single definition of the invocation
+    # (thresholds + graded file set) that the pre-commit hook also runs,
+    # so `devenv shell` (ad hoc) and `pre-commit run xenon` (staged)
+    # can't drift. The wrapper also fails when xenon silently skips a
+    # file it cannot parse (#3415).
     "klangk:xenon" = {
-      exec = "xenon --max-absolute A --max-modules A --max-average A $(git ls-files 'src/klangk/klangk/*.py' 'src/klangksidecar/klangksidecar/*.py' 'scripts/*.py')";
+      exec = ''exec bash "$DEVENV_ROOT/scripts/xenon-gate.sh"'';
     };
     # Token-clone scan of the backend (#2904): the same invocation the
     # consolidation issues used (--min-tokens 70). Advisory only — the
@@ -820,14 +821,16 @@ in
     # average over only the staged files), but with every block <= 10 no
     # subset's average could exceed 10, so B-level flapping was impossible.
     # At rank A (#3052) that returns: a staged subset's average can exceed 5
-    # while the whole tree passes, so the hook now grades the full tree —
-    # pass_filenames = false, the entry enumerates the same git ls-files set
-    # the klangk:xenon task uses, and `files` stays as the run trigger (only
-    # complexity-relevant commits pay the scan).
+    # while the whole tree passes, so the hook grades the full tree —
+    # pass_filenames = false, the entry delegates to scripts/xenon-gate.sh
+    # (the single definition of thresholds + graded file set, shared with
+    # the klangk:xenon task, which also fails loudly when xenon skips a
+    # file it cannot parse, #3415), and `files` stays as the run trigger
+    # (only complexity-relevant commits pay the scan).
     xenon = {
       enable = true;
       name = "xenon";
-      entry = "bash -c 'xenon --max-absolute A --max-modules A --max-average A $(git ls-files \"src/klangk/klangk/*.py\" \"src/klangksidecar/klangksidecar/*.py\" \"scripts/*.py\")'";
+      entry = "scripts/xenon-gate.sh";
       files = "^src/klangk/klangk/.*\\.py$|^src/klangksidecar/klangksidecar/.*\\.py$|^scripts/.*\\.py$";
       language = "system";
       pass_filenames = false;
