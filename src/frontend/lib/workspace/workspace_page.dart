@@ -587,15 +587,21 @@ class _WorkspacePageState extends State<WorkspacePage> {
   void dispose() {
     _markingSub?.cancel();
     _consent?.dispose();
-    for (final feature in _features) {
-      feature.dispose();
-    }
-    // Mirror tool plugins: release feature-tab resources on workspace close
-    // (#1975). The registry is a singleton populated once in main(), so this
-    // calls per-tab dispose() — not disposeAll() — to avoid clearing tabs
-    // that the next workspace page (same app session) will reuse. Tab plugins
-    // with real resources must
-    // tolerate being re-registered, same as tool plugins already do.
+    // Tool plugins are app-boot singletons: the registry is populated once
+    // in main() and every workspace page in the session reuses the same
+    // instances. Calling dispose() here would hard-dispose the ChangeNotifier
+    // most features mix in — ChangeNotifier.dispose is terminal, so the next
+    // workspace open throws "A <Feature> was used after being disposed" while
+    // building its app-bar icon, corrupting the widget tree for the rest of
+    // the session (#3406). Tool plugins hold no per-workspace resources; the
+    // registry owns their lifetime.
+    //
+    // Feature tabs do hold per-workspace resources, so they are released on
+    // workspace close (#1975). The tab registry is likewise a singleton, so
+    // this calls per-tab dispose() — not disposeAll() — and the next
+    // workspace page reuses the same instances: a tab plugin with real
+    // resources must tolerate being reused after dispose — re-arm them
+    // lazily in build().
     for (final tab in _featureTabs) {
       tab.dispose();
     }
