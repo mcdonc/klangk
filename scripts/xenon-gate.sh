@@ -27,8 +27,12 @@ if [ "$#" -gt 0 ]; then
   set -- "${thresholds[@]}" "$@"
 else
   # Graded set (#2828): the klangk package (server + CLI), the network
-  # sidecar, and the build scripts.
-  mapfile -t files < <(git ls-files \
+  # sidecar, and the build scripts. bash 3.2 compatible (no mapfile):
+  # the macOS CI runner still ships bash 3.2 as /bin/bash.
+  files=()
+  while IFS= read -r f; do
+    files+=("$f")
+  done < <(git ls-files \
     'src/klangk/klangk/*.py' \
     'src/klangksidecar/klangksidecar/*.py' \
     'scripts/*.py')

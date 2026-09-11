@@ -277,7 +277,7 @@ in
     # can't drift. The wrapper also fails when xenon silently skips a
     # file it cannot parse (#3415).
     "klangk:xenon" = {
-      exec = ''exec bash "$DEVENV_ROOT/scripts/xenon-gate.sh"'';
+      exec = ''exec bash "$DEVENV_ROOT/scripts/xenon-gate.sh" "$@"'';
     };
     # Token-clone scan of the backend (#2904): the same invocation the
     # consolidation issues used (--min-tokens 70). Advisory only — the

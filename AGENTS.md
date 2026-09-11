@@ -262,8 +262,9 @@ single definition of the thresholds (`--max-absolute A --max-modules A
 graded `.py` file it grades the **full tree** (`pass_filenames = false` —
 a staged subset's average can exceed 5 while the whole tree passes, so
 partial grading would flap), and it fails when xenon silently skips a
-file it cannot parse (#3415). CI re-runs the gate in the `scripts/tests`
-step (backend-tests.yml), so do not bypass the hook with `--no-verify`.
+file it cannot parse (#3415). The CI workflows that run the scripts/tests
+suite (backend-tests.yml, macos-smoke.yml) re-run the gate there, so do not
+bypass the hook with `--no-verify`.
 
 Check locally before committing:
 
