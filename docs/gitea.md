@@ -97,10 +97,21 @@ container, and the shorthand derives both from the clone host), needs a
 provider entry per host instead — the form below also stays available
 for a Gitea served under a path prefix or behind nonstandard endpoints.
 An explicit `KLANGKWS_FEATURE_OAUTH_PROVIDERS` entry whose `host`
-matches the remote always wins over the shorthand. A client ID set
-without the redirect leaves the shorthand inactive: the terminal falls
-back to the PAT dialog, and `GIT_CREDENTIAL_KLANGK_DEBUG=1` in the
-workspace prints a line naming the missing pair.
+matches the remote always wins over the shorthand.
+
+Other hosts keep their existing behavior while the pair is set: git
+2.46 and newer relay the server's authentication challenge to the
+helper, so a host naming itself something other than Gitea or Forgejo
+answers with the PAT dialog, exactly as before. With an older git — no
+challenge relayed — a non-Gitea host shows an authorization window
+that cannot succeed, and cancelling it fails the git operation; keep
+the shorthand unset in that deployment and give those hosts provider
+entries instead.
+
+A client ID set without the redirect leaves the shorthand inactive:
+the terminal falls back to the PAT dialog, and
+`GIT_CREDENTIAL_KLANGK_DEBUG=1` in the workspace prints a line naming
+the missing pair.
 
 ### The provider entry form
 

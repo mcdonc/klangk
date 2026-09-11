@@ -144,9 +144,11 @@ The feature declares five config variables in `package.json` (all
   reaches the backend, not the public frontend origin, so it cannot
   carry it). The shorthand serves one Gitea: cloning from several
   instances, or one the browser and the containers reach by different
-  names, uses the provider map below. A client ID without the redirect
-  is an incomplete shorthand — skipped with a debug note, the PAT
-  dialog answers.
+  names, uses the provider map below. A host whose authentication
+  challenge names other software (git 2.46+ relays it) keeps the PAT
+  dialog, so a mixed deployment answers non-Gitea hosts as before. A
+  client ID without the redirect is an incomplete shorthand — skipped
+  with a debug note, the PAT dialog answers.
 - **`KLANGKWS_FEATURE_OAUTH_PROVIDERS`** — JSON list of provider entries
   that activates a flow for any host — self-hosted GitLab,
   other RFC 8628 providers, or overrides of the stock entries. Each

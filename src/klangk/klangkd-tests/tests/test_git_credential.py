@@ -1131,7 +1131,8 @@ class TestGiteaShorthand:
     def test_shorthand_expands_pkce_entry(self, monkeypatch):
         """The env pair expands to an authorization_code_pkce entry with
         Gitea's standard endpoint paths on the clone target host (port
-        kept in the URLs, stripped for matching)."""
+        kept in the URLs, stripped for matching; an empty protocol
+        derives https)."""
         for key, value in self.GITEA_ENV.items():
             monkeypatch.setenv(key, value)
         provider = helper.provider_for_host("git.example.com:3000")
@@ -1150,6 +1151,12 @@ class TestGiteaShorthand:
         assert provider["redirect_uri"] == "https://klangk.example.com/"
         assert provider["username"] == "oauth2"
         assert provider["scope"] == ""
+        # A credential without a protocol (older git) derives https.
+        bare = helper.provider_for_host("Git.Example.COM.", protocol="")
+        assert (
+            bare["token_url"]
+            == "https://git.example.com/login/oauth/access_token"
+        )
         # The shorthand is not a stock table entry (it has no fixed
         # host): it lives outside _stock_providers.
         assert "git.example.com" not in helper._stock_providers()
@@ -1286,6 +1293,50 @@ class TestGiteaShorthand:
         assert provider is not None
         assert provider["flow"] == helper.FLOW_DEVICE_CODE
         assert provider["client_id"] == "gh-id"
+
+    def test_foreign_realm_falls_back_to_pat(
+        self, bridge_server, fake_browser_id
+    ):
+        """A host whose authentication challenge names other software
+        (git >= 2.46 relays it) does not get the shorthand's doomed
+        popup: the PAT dialog answers, with a debug note."""
+        server, port = bridge_server
+        base = f"http://127.0.0.1:{port}"
+        _BridgeHandler.op_bodies = {
+            "get": json.dumps({"username": "u", "password": "p"}).encode(),
+        }
+        result = run_helper(
+            "get",
+            "protocol=https\nhost=gitlab.example.com\n"
+            'wwwauth[]=Basic realm="GitLab"\n\n',
+            env_override={
+                "KLANGKWS_BRIDGE_URL": base,
+                "GIT_CREDENTIAL_KLANGK_DEBUG": "1",
+                **self.GITEA_ENV,
+            },
+            extra_path=str(fake_browser_id),
+        )
+
+        assert result.returncode == 0
+        assert "password=p" in result.stdout
+        ops = [r["operation"] for r in _BridgeHandler.requests]
+        assert ops == ["get"]
+        assert "not Gitea/Forgejo, ignoring the shorthand" in result.stderr
+
+    def test_gitea_realm_still_fires(self, monkeypatch):
+        """A challenge naming Gitea (or Forgejo) confirms the shorthand:
+        the realm gate suppresses only other software."""
+        for key, value in self.GITEA_ENV.items():
+            monkeypatch.setenv(key, value)
+        provider = helper.provider_for_host(
+            "git.example.com", realms=["gitea"]
+        )
+        assert provider is not None
+        assert provider["flow"] == helper.FLOW_AUTH_CODE_PKCE
+        forgejo = helper.provider_for_host(
+            "git.example.com", realms=["forgejo"]
+        )
+        assert forgejo is not None
 
     def test_missing_redirect_uri_skips_with_debug_note(
         self, bridge_server, fake_browser_id

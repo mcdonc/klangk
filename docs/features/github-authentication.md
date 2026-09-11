@@ -80,9 +80,9 @@ The device flow only activates when all of these are true:
 - A provider is configured for the host — a
   `KLANGKWS_FEATURE_OAUTH_PROVIDERS` entry whose `host` matches, or one
   of the shorthands: `KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID` for
-  GitHub, `KLANGKWS_FEATURE_GITLAB_OAUTH_CLIENT_ID` for gitlab.com,
-  or the `KLANGKWS_FEATURE_GITEA_OAUTH_CLIENT_ID` pair for a Gitea
-  host (see [Gitea](../gitea.md))
+  GitHub, `KLANGKWS_FEATURE_GITLAB_OAUTH_CLIENT_ID` for gitlab.com
+  (the Gitea shorthand pair activates the browser flow instead — see
+  [Gitea](../gitea.md))
 - The git host matches the provider's `host` — any spelling counts:
   case (`GitHub.com`), explicit port (`github.com:443`), a trailing dot
   (`github.com.`), and a `www.` prefix all match
