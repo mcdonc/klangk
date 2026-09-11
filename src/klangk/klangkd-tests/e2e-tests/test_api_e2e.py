@@ -28,7 +28,7 @@ def _stop_server(proc, data_dir):
     try:
         proc.kill()
         proc.wait(timeout=5)
-    except (ProcessLookupError, subprocess.TimeoutExpired):
+    except ProcessLookupError, subprocess.TimeoutExpired:
         pass
     # The instance ID lives in ``<data_dir>/instance-id`` (written by klangkd
     # at startup, #1553); read it directly rather than shelling out to a
@@ -64,7 +64,7 @@ def server():
         KLANGKD_DEFAULT_PASSWORD="adminpass",
         KLANGKD_TEST_MODE="1",
         KLANGKD_IDLE_TIMEOUT_SECONDS="300",
-        LOGFIRE_TOKEN="",
+        KLANGKD_LOGFIRE_TOKEN="",
     )
     yield server
     stop_server(server)
@@ -1029,7 +1029,7 @@ class TestAutoStartWithServiceCommand:
             KLANGKD_TEST_MODE="1",
             KLANGKD_IDLE_TIMEOUT_SECONDS="300",
             KLANGKD_ALLOW_AUTOSTART="1",
-            LOGFIRE_TOKEN="",
+            KLANGKD_LOGFIRE_TOKEN="",
         )
         request.cls._server = server
         yield

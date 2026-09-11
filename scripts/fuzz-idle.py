@@ -190,7 +190,7 @@ class Server:
             # when timeouts are single-digit seconds (forwarded by
             # ContainerManager.start_network_sidecar).
             KLANGKNETWORK_EGRESS_ACTIVITY_GATE="1",
-            LOGFIRE_TOKEN="",
+            KLANGKD_LOGFIRE_TOKEN="",
             **env_overrides,
         )
         env.pop("KLANGKD_FRONTEND_DIR", None)

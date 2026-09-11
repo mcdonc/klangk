@@ -54,7 +54,7 @@ def _port_listening(port):
         s.connect(("127.0.0.1", int(port)))
         s.close()
         return True
-    except (ConnectionRefusedError, OSError):
+    except ConnectionRefusedError, OSError:
         return False
 
 
@@ -78,7 +78,7 @@ def _start_klangkd():
         KLANGKD_IDLE_TIMEOUT_SECONDS="300",
         KLANGKD_PORT_RANGE_START=str(free_port()),
         _KLANGKD_DISABLE_PROXY="",
-        LOGFIRE_TOKEN="",
+        KLANGKD_LOGFIRE_TOKEN="",
     )
 
     proc = subprocess.Popen(
@@ -128,7 +128,7 @@ def _drain_output(proc, timeout=30):
                 if not data:
                     break
                 chunks.append(data)
-        except (OSError, ValueError):
+        except OSError, ValueError:
             pass
         return b"".join(chunks)
 

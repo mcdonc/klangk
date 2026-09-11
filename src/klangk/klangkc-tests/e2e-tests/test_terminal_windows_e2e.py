@@ -65,7 +65,7 @@ def _start_server(data_dir):
         KLANGKD_DEFAULT_PASSWORD="testpass",
         KLANGKD_TEST_MODE="1",
         KLANGKD_IDLE_TIMEOUT_SECONDS="300",
-        LOGFIRE_TOKEN="",
+        KLANGKD_LOGFIRE_TOKEN="",
         log_path=log_path,
     )
     return server, server["url"]
@@ -431,7 +431,7 @@ class _WebSession:
                 msg = json.loads(raw)
                 if msg.get("type") == "terminal_windows":
                     self.windows = msg.get("windows", [])
-        except (asyncio.TimeoutError, TimeoutError):
+        except asyncio.TimeoutError, TimeoutError:
             pass
 
     async def create_window(self, name):

@@ -29,7 +29,7 @@ def proxy_server():
         KLANGKD_DEFAULT_USER="admin@example.com",
         KLANGKD_DEFAULT_PASSWORD="adminpass",
         KLANGKD_API_RATE_LIMIT="3",
-        LOGFIRE_TOKEN="",
+        KLANGKD_LOGFIRE_TOKEN="",
     )
     yield server
     stop_server(server)
@@ -44,7 +44,7 @@ def uds_server():
         KLANGKD_DEFAULT_USER="admin@example.com",
         KLANGKD_DEFAULT_PASSWORD="adminpass",
         KLANGKD_API_RATE_LIMIT="2",
-        LOGFIRE_TOKEN="",
+        KLANGKD_LOGFIRE_TOKEN="",
     )
     yield server
     stop_server(server)

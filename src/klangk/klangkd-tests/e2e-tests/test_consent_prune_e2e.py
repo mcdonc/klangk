@@ -42,7 +42,7 @@ _BASE_ENV = dict(
     KLANGKD_DEFAULT_PASSWORD="prunepass",
     KLANGKD_TEST_MODE="1",
     KLANGKD_IDLE_TIMEOUT_SECONDS="3600",
-    LOGFIRE_TOKEN="",
+    KLANGKD_LOGFIRE_TOKEN="",
 )
 
 _BRINGUP_TIMEOUT = 120  # container create+start+sidecar on a loaded runner
@@ -234,7 +234,7 @@ def _kill(server: dict) -> None:
     try:
         proc.kill()
         proc.wait(timeout=5)
-    except (ProcessLookupError, subprocess.TimeoutExpired):
+    except ProcessLookupError, subprocess.TimeoutExpired:
         pass
     close_popen_pipes(proc)
     try:

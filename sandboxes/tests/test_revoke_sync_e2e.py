@@ -70,7 +70,7 @@ class TestRevokeSyncBlocksExec:
             "KLANGKD_AUTH_MODES": "password",
             "KLANGKD_TEST_MODE": "1",
             "KLANGKD_IDLE_TIMEOUT_SECONDS": "300",
-            "LOGFIRE_TOKEN": "",
+            "KLANGKD_LOGFIRE_TOKEN": "",
             "log_path": log_path,
         }
         server = start_server(uds=False, data_dir=data_dir, **overrides)
