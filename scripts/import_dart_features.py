@@ -57,7 +57,7 @@ FEATURE_API_DEP = {
     "klangk_plugin_api": {
         "git": {
             "url": "https://github.com/mcdonc/klangk-plugin-api.git",
-            "ref": "v0.5.1",
+            "ref": "v0.6.0",
         }
     }
 }
@@ -341,6 +341,17 @@ def named_constructor_lines(features: list, classes_key: str, label: str) -> lis
     return lines
 
 
+def named_factory_lines(features: list, classes_key: str, label: str) -> list[str]:
+    """The ``    (name: ..., label: Cls.new),`` lines for one named-record
+    factory aggregator — constructor tear-offs, so each consumer creates a
+    fresh instance per workspace page (#3409)."""
+    lines = []
+    for p in features:
+        for cls in p[classes_key]:
+            lines.append(f"    (name: {p['name']!r}, {label}: {cls}.new),")
+    return lines
+
+
 def generate_dart(features):
     """Generate klangk_features.dart source as a string."""
     lines = [
@@ -369,17 +380,17 @@ def generate_dart(features):
     lines.append("}")
     lines.append("")
     lines.append(
-        "// ({name, tab}) records for the workspace-tab active-set filter (#1975): "
+        "// ({name, create}) records for the workspace-tab active-set filter"
+        " (#1975): a feature's tab mounts only when the feature is active. "
+        "Entries are FACTORIES, not instances: tab instances are"
+        " per-workspace-page — each page creates and owns a fresh set (#3409)."
     )
     lines.append(
-        "// a feature's tab mounts only when the feature is active. A feature may "
-    )
-    lines.append("// contribute a tab with no ToolPlugin (tab-only), or both.")
-    lines.append(
-        "List<({String name, WorkspaceTabPlugin tab})> createAllNamedWorkspaceTabs() {"
+        "List<({String name, WorkspaceTabPlugin Function() create})> "
+        "createAllNamedWorkspaceTabs() {"
     )
     lines.append("  return [")
-    lines.extend(named_constructor_lines(features, "tab_classes", "tab"))
+    lines.extend(named_factory_lines(features, "tab_classes", "create"))
     lines.append("  ];")
     lines.append("}")
     lines.append("")

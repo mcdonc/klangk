@@ -43,7 +43,7 @@ dependencies:
   klangk_plugin_api:
     git:
       url: https://github.com/mcdonc/klangk-plugin-api.git
-      ref: v0.5.1
+      ref: v0.6.0
 EOF
 
 cat >"$STUB_DIR/lib/klangk_features.dart" <<'EOF'
@@ -55,8 +55,9 @@ List<ToolPlugin> createAllFeatures() => [];
 List<({String name, ToolPlugin feature})> createAllNamedFeatures() => [];
 // Empty named-workspace-tabs list — the active-set filter in main.dart
 // iterates this (createAllNamedWorkspaceTabs) and mounts no feature tabs
-// (#1975).
-List<({String name, WorkspaceTabPlugin tab})> createAllNamedWorkspaceTabs() => [];
+// (#1975). Entries are factories (#3409): tab instances are created fresh
+// per workspace page by the page itself.
+List<({String name, WorkspaceTabPlugin Function() create})> createAllNamedWorkspaceTabs() => [];
 EOF
 
 # Write overrides file and symlink into frontend

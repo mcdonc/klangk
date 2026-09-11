@@ -137,3 +137,51 @@ def test_features_enable_app_boots_with_custom_set(harness, app):
     finally:
         _clear_features_enable(harness)
         harness.restart_app()
+
+
+def test_feature_tab_recreated_across_workspace_close_reopen(harness, app):
+    """#3409: feature-tab instances are per-workspace-page.
+
+    Boingball (dormant by default) carries ``BoingTab`` — a
+    ``WorkspaceTabPlugin`` mixing in ``ChangeNotifier`` (disposable
+    state). Enable it, then within ONE app session: open the fixture
+    workspace, exercise the tab (notifyListeners + live badge), close
+    the workspace (the page disposes its tab set — terminal), and open
+    the workspace again. The reopened page must build a FRESH tab
+    instance (the per-page bounce counter reset to zero proves it), and
+    no used-after-being-disposed error may escape (the post-test error
+    drain fails the run if one does)."""
+    try:
+        harness.backend.swap_settings(
+            {"features_enable": "beep,boingball"},
+            apply="restart",
+            verify=False,
+        )
+        harness.restart_app()
+        at_login(harness, app)
+        app.login(ADMIN_EMAIL, FIXTURE_PASSWORD, expect_text="fmtk-verify")
+
+        # --- first open: fresh tab instance, disposable state exercised ---
+        app.navigate("/workspaces")
+        app.wait_for_text("fmtk-verify")
+        app.tap_button_exact("fmtk-verify")
+        app.wait_for_text("Terminal", 30000)
+        app.tap_labeled_exact("Boing")
+        app.wait_for_text("Boing bounces: 0")
+        app.tap_label("Do a boing")
+        app.wait_for_text("Boing bounces: 1")
+
+        # --- close the workspace page: its tab set is disposed (terminal) ---
+        app.navigate("/workspaces")
+        app.wait_for_text("fmtk-verify")
+
+        # --- second open in the same session: a FRESH instance serves the
+        # page (counter back to zero) — reuse of the disposed tab would
+        # either keep the counter or throw used-after-being-disposed. ---
+        app.tap_button_exact("fmtk-verify")
+        app.wait_for_text("Terminal", 30000)
+        app.tap_labeled_exact("Boing")
+        app.wait_for_text("Boing bounces: 0")
+    finally:
+        _clear_features_enable(harness)
+        harness.restart_app()
