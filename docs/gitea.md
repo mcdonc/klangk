@@ -61,7 +61,50 @@ same applications, but you do not need it to create one.
 
 ## Configure klangk
 
-Add a provider entry for your Gitea host. Deploy-wide via the YAML
+The shorthand covers a deployment that clones from one Gitea: set a
+bare client ID plus the klangk origin you registered as the redirect.
+Deploy-wide via the YAML config — the `features_config` block maps the
+feature's environment keys to plain strings:
+
+```yaml
+features_config:
+  KLANGKWS_FEATURE_GITEA_OAUTH_CLIENT_ID: "<the Client ID from the step above>"
+  KLANGKWS_FEATURE_GITEA_OAUTH_REDIRECT_URI: "https://klangk.example.com/"
+```
+
+Or as environment variables on the server:
+
+```sh
+KLANGKWS_FEATURE_GITEA_OAUTH_CLIENT_ID="<the Client ID>"
+KLANGKWS_FEATURE_GITEA_OAUTH_REDIRECT_URI="https://klangk.example.com/"
+```
+
+The redirect is set separately from the client ID because it names the
+klangk origin — the address the browser returns the authorization popup
+to — which no Gitea-side value carries. With both keys set, the first
+clone from your Gitea runs the browser flow below; the authorize and
+token endpoints are derived from the host being cloned (Gitea serves
+them at `/login/oauth/authorize` and `/login/oauth/access_token`). The
+block keys can also be the stripped, lowercased short forms
+(`gitea_oauth_client_id:` / `gitea_oauth_redirect_uri:`); env wins per
+key.
+
+The shorthand serves one Gitea — the instance the client ID was
+registered on. Cloning from several instances, or from a Gitea the
+browser and the workspace containers reach by different names (the
+authorize URL opens in the browser, the token exchange runs in the
+container, and the shorthand derives both from the clone host), needs a
+provider entry per host instead — the form below also stays available
+for a Gitea served under a path prefix or behind nonstandard endpoints.
+An explicit `KLANGKWS_FEATURE_OAUTH_PROVIDERS` entry whose `host`
+matches the remote always wins over the shorthand. A client ID set
+without the redirect leaves the shorthand inactive: the terminal falls
+back to the PAT dialog, and `GIT_CREDENTIAL_KLANGK_DEBUG=1` in the
+workspace prints a line naming the missing pair.
+
+### The provider entry form
+
+A provider entry spells every field out. Deploy-wide via the YAML
 config — the `features_config` block maps the feature's environment
 key to the JSON list, kept as one string:
 

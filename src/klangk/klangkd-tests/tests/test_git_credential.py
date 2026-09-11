@@ -1112,6 +1112,216 @@ class TestStockShorthands:
         assert _BridgeHandler.forms[0]["client_id"] == "map-id"
 
 
+class TestGiteaShorthand:
+    """The Gitea PKCE shorthand (#3405): a client ID plus the klangk
+    redirect origin expand to a browser-flow provider for the host the
+    clone targets -- any host an explicit entry or a stock shorthand
+    did not already claim. Unlike the device-flow shorthands it is not
+    pinned to one public instance; Gitea's endpoints live at standard
+    paths, so both URLs derive from the credential's protocol + host.
+    """
+
+    GITEA_ENV = {
+        "KLANGKWS_FEATURE_GITEA_OAUTH_CLIENT_ID": "gitea-id",
+        "KLANGKWS_FEATURE_GITEA_OAUTH_REDIRECT_URI": (
+            "https://klangk.example.com/"
+        ),
+    }
+
+    def test_shorthand_expands_pkce_entry(self, monkeypatch):
+        """The env pair expands to an authorization_code_pkce entry with
+        Gitea's standard endpoint paths on the clone target host (port
+        kept in the URLs, stripped for matching)."""
+        for key, value in self.GITEA_ENV.items():
+            monkeypatch.setenv(key, value)
+        provider = helper.provider_for_host("git.example.com:3000")
+        assert provider is not None
+        assert provider["host"] == "git.example.com"
+        assert provider["flow"] == helper.FLOW_AUTH_CODE_PKCE
+        assert provider["client_id"] == "gitea-id"
+        assert (
+            provider["authorize_url"]
+            == "https://git.example.com:3000/login/oauth/authorize"
+        )
+        assert (
+            provider["token_url"]
+            == "https://git.example.com:3000/login/oauth/access_token"
+        )
+        assert provider["redirect_uri"] == "https://klangk.example.com/"
+        assert provider["username"] == "oauth2"
+        assert provider["scope"] == ""
+        # The shorthand is not a stock table entry (it has no fixed
+        # host): it lives outside _stock_providers.
+        assert "git.example.com" not in helper._stock_providers()
+
+    def test_shorthand_serves_www_spelling(self, monkeypatch):
+        """www.git.example.com derives its endpoints on the same www host
+        (the shorthand serves any host, unlike the pinned stock
+        shorthands)."""
+        for key, value in self.GITEA_ENV.items():
+            monkeypatch.setenv(key, value)
+        provider = helper.provider_for_host("www.git.example.com")
+        assert provider is not None
+        assert (
+            provider["authorize_url"]
+            == "https://www.git.example.com/login/oauth/authorize"
+        )
+
+    def test_shorthand_runs_browser_flow(self, bridge_server, fake_browser_id):
+        """A clone from a host with only the shorthand set runs the full
+        browser flow: derived authorize URL relayed, code exchanged
+        container-side at the derived token URL."""
+        server, port = bridge_server
+        base = f"http://127.0.0.1:{port}"
+        _BridgeHandler.op_bodies = {
+            "peek": json.dumps({"error": "miss"}).encode(),
+        }
+        _BridgeHandler.op_handlers = {
+            "auth_flow_start": lambda p: {
+                "code": "the-code",
+                "state": p["state"],
+            },
+        }
+        _BridgeHandler.routes = {
+            "/.well-known/openid-configuration": _auth_code_discovery(
+                base, token_endpoint=f"{base}/login/oauth/access_token"
+            ),
+            "/login/oauth/access_token": json.dumps(
+                {"access_token": "tok-live", "refresh_token": "rt-live"}
+            ).encode(),
+        }
+        result = run_helper(
+            "get",
+            f"protocol=http\nhost=127.0.0.1:{port}\n\n",
+            env_override={"KLANGKWS_BRIDGE_URL": base, **self.GITEA_ENV},
+            extra_path=str(fake_browser_id),
+        )
+
+        assert result.returncode == 0
+        assert "username=oauth2" in result.stdout
+        assert "password=tok-live" in result.stdout
+        start = next(
+            r
+            for r in _BridgeHandler.requests
+            if r["operation"] == "auth_flow_start"
+        )
+        # The authorize URL was derived from the clone target.
+        assert start["authorize_url"].startswith(
+            f"{base}/login/oauth/authorize?"
+        )
+        # The registered redirect rode the env var, not derivation.
+        assert (
+            "redirect_uri=https%3A%2F%2Fklangk.example.com%2F"
+            in start["authorize_url"]
+        )
+        # The exchange posted to the derived token URL container-side.
+        exchange = _BridgeHandler.forms[0]
+        assert exchange["grant_type"] == "authorization_code"
+        assert exchange["client_id"] == "gitea-id"
+        assert exchange["redirect_uri"] == "https://klangk.example.com/"
+
+    def test_map_entry_wins_over_shorthand(
+        self, bridge_server, fake_browser_id
+    ):
+        """An explicit provider-map entry for the host overrides the
+        shorthand (same precedence as the GitHub/GitLab shorthands)."""
+        server, port = bridge_server
+        base = f"http://127.0.0.1:{port}"
+        _BridgeHandler.op_bodies = {
+            "peek": json.dumps({"error": "miss"}).encode(),
+        }
+        _BridgeHandler.op_handlers = {
+            "auth_flow_start": lambda p: {
+                "code": "the-code",
+                "state": p["state"],
+            },
+        }
+        _BridgeHandler.routes = {
+            "/.well-known/openid-configuration": _auth_code_discovery(
+                base, token_endpoint=f"{base}/custom/token"
+            ),
+            "/custom/token": json.dumps({"access_token": "tok-map"}).encode(),
+        }
+        providers = json.dumps(
+            [
+                {
+                    "host": "git.example.com",
+                    "flow": "authorization_code_pkce",
+                    "client_id": "map-id",
+                    "authorize_url": f"{base}/custom/authorize",
+                    "token_url": f"{base}/custom/token",
+                    "redirect_uri": "https://klangk.example.com/",
+                }
+            ]
+        )
+        result = run_helper(
+            "get",
+            "protocol=https\nhost=git.example.com\n\n",
+            env_override={
+                "KLANGKWS_BRIDGE_URL": base,
+                "KLANGKWS_FEATURE_OAUTH_PROVIDERS": providers,
+                **self.GITEA_ENV,
+            },
+            extra_path=str(fake_browser_id),
+        )
+
+        assert result.returncode == 0
+        assert "password=tok-map" in result.stdout
+        start = next(
+            r
+            for r in _BridgeHandler.requests
+            if r["operation"] == "auth_flow_start"
+        )
+        assert start["authorize_url"].startswith(f"{base}/custom/authorize?")
+        assert _BridgeHandler.forms[0]["client_id"] == "map-id"
+
+    def test_stock_shorthand_wins_over_gitea(self, monkeypatch):
+        """github.com with both the GitHub and Gitea shorthands set stays
+        a GitHub device-flow provider -- the Gitea shorthand only serves
+        hosts nothing else claimed."""
+        monkeypatch.setenv("KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID", "gh-id")
+        for key, value in self.GITEA_ENV.items():
+            monkeypatch.setenv(key, value)
+        provider = helper.provider_for_host("github.com")
+        assert provider is not None
+        assert provider["flow"] == helper.FLOW_DEVICE_CODE
+        assert provider["client_id"] == "gh-id"
+
+    def test_missing_redirect_uri_skips_with_debug_note(
+        self, bridge_server, fake_browser_id
+    ):
+        """A client ID without the redirect origin is an incomplete
+        shorthand: skipped with a debug note, PAT dialog answers -- the
+        same semantics as an incomplete provider-map entry."""
+        server, port = bridge_server
+        base = f"http://127.0.0.1:{port}"
+        _BridgeHandler.op_bodies = {
+            "peek": json.dumps({"error": "miss"}).encode(),
+            "get": json.dumps({"username": "u", "password": "p"}).encode(),
+        }
+        result = run_helper(
+            "get",
+            "protocol=https\nhost=git.example.com\n\n",
+            env_override={
+                "KLANGKWS_BRIDGE_URL": base,
+                "KLANGKWS_FEATURE_GITEA_OAUTH_CLIENT_ID": "gitea-id",
+                "GIT_CREDENTIAL_KLANGK_DEBUG": "1",
+            },
+            extra_path=str(fake_browser_id),
+        )
+
+        assert result.returncode == 0
+        assert "password=p" in result.stdout
+        ops = [r["operation"] for r in _BridgeHandler.requests]
+        # No provider resolved, so no cache peek either: straight to
+        # the PAT dialog.
+        assert ops == ["get"]
+        assert (
+            "KLANGKWS_FEATURE_GITEA_OAUTH_CLIENT_ID is set but "
+            "KLANGKWS_FEATURE_GITEA_OAUTH_REDIRECT_URI is not" in result.stderr
+        )
+
+
 class TestProviderResponseHardening:
     """A malformed provider response must never crash the helper mid-flow
     (leaving the browser dialog stuck) -- it falls back to the PAT path,
