@@ -112,7 +112,7 @@ async function globalSetup() {
         // write to the always-present shared /home/klangk and are
         // layout-agnostic.
         KLANGKD_PER_HANDLE_HOME: "1",
-        LOGFIRE_TOKEN: "", // Disable Logfire tracing during E2E tests
+        KLANGKD_LOGFIRE_TOKEN: "", // Disable Logfire tracing during E2E tests
         KLANGKD_LOGIN_BANNER_TITLE: "", // No consent banner in E2E tests
         KLANGKD_LOGIN_BANNER: "",
         KLANGKD_OIDC_CONFIG: "", // Disable OIDC providers in E2E tests

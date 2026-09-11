@@ -162,7 +162,7 @@ env -u KLANGKD_FRONTEND_DIR \
   KLANGKD_DEFAULT_PASSWORD='Admin123!' \
   KLANGKD_JWT_SECRET=smoke-test-secret \
   KLANGKD_TEST_MODE=1 \
-  LOGFIRE_TOKEN='' \
+  KLANGKD_LOGFIRE_TOKEN='' \
   "$VENV_DIR/bin/klangkd" --config=none >"$LOG_PATH" 2>&1 &
 KLANGKD_PID=$!
 echo "klangkd pid=$KLANGKD_PID, log=$LOG_PATH"
@@ -331,7 +331,7 @@ DOCKERFILE
       KLANGKD_DEFAULT_USER=admin@example.com \
       KLANGKD_JWT_SECRET=smoke-test-secret \
       KLANGKD_LLM_MODELS="openai/test:http://localhost:11434/v1:test" \
-      LOGFIRE_TOKEN='' \
+      KLANGKD_LOGFIRE_TOKEN='' \
       "$VENV_DIR/bin/klangkd" --config=none >"$LOG_PATH" 2>&1 &
     KLANGKD_PID=$!
     echo "klangkd restarted pid=$KLANGKD_PID (none-auth + podman)"

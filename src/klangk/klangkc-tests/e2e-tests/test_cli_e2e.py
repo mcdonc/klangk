@@ -63,7 +63,7 @@ def _start_server(data_dir, port=None, extra_env=None):
         # bind mounts (and the sandbox recipes' workspaces) live under
         # /tmp, so allow that root.
         "KLANGKD_ALLOWED_MOUNT_ROOTS": "/tmp",
-        "LOGFIRE_TOKEN": "",
+        "KLANGKD_LOGFIRE_TOKEN": "",
     }
     if port is not None:
         overrides["KLANGKD_PORT"] = port

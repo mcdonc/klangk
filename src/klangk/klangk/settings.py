@@ -1126,6 +1126,22 @@ class KlangkSettings(BaseSettings):
     # rotation trigger fires (oldest deleted first). ``0`` discards the
     # rotated file outright. Only meaningful with a trigger set.
     log_file_backup_count: int = 3
+    # logfire_token: Pydantic Logfire write token — opt-in instrumentation
+    # for the klangkd backend (#3411). While unset (the default),
+    # instrumentation stays off: ``setup_logfire`` (lifecycle.py) imports
+    # the logfire package only when a token is configured, and
+    # ``logfire.configure()`` runs once at process start, so a config
+    # change applies on the next start (no SIGHUP reconfiguration).
+    # Supports ``file:``/``cmd:`` indirection like every secret field.
+    logfire_token: str | None = None
+    # logfire_base_url: Logfire API base URL for self-hosted instances.
+    # None (the default) = the Logfire SDK default
+    # (https://logfire-api.pydantic.dev). Read once at process start.
+    logfire_base_url: str | None = None
+    # logfire_environment: environment tag (e.g. ``production``,
+    # ``staging``) — filters traces in the Logfire dashboard. None (the
+    # default) = no tag sent. Read once at process start.
+    logfire_environment: str | None = None
 
     # --- Server / network ---
     # listen: the proxy's **browser** interface/address (e.g. ``127.0.0.1``,

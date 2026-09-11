@@ -621,7 +621,7 @@ test.describe("Klangk E2E", () => {
               KLANGKD_DEFAULT_PASSWORD: ADMIN_PASSWORD,
               KLANGKD_TEST_MODE: "1",
               KLANGKD_PORT_RANGE_START: "19200",
-              LOGFIRE_TOKEN: "",
+              KLANGKD_LOGFIRE_TOKEN: "",
               KLANGKD_LOGIN_BANNER_TITLE: "",
               KLANGKD_LOGIN_BANNER: "",
               KLANGKD_OIDC_CONFIG: "",

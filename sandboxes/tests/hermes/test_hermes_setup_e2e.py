@@ -140,7 +140,7 @@ def _start_server(data_dir, extra_env=None):
         # Provide a dummy model so the LLM router is active and containers
         # get KLANGKWS_LLM_PROXY_URL (#2070).
         "KLANGKD_LLM_MODELS": "openai/default:http://127.0.0.1:1:dummy",
-        "LOGFIRE_TOKEN": "",
+        "KLANGKD_LOGFIRE_TOKEN": "",
         "log_path": log_path,
     }
     # Runner/devenv infra clean_env would otherwise strip (#1526): system

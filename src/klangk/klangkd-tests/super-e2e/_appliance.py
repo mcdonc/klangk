@@ -151,7 +151,7 @@ class Appliance:
             "KLANGKD_HEALTH_CHECK_STARTUP_GRACE": "0.1",
             # Bounded consent hold so a missed verdict can't stall a test.
             "KLANGKD_EGRESS_CONSENT_TIMEOUT": "12",
-            "LOGFIRE_TOKEN": "",
+            "KLANGKD_LOGFIRE_TOKEN": "",
         }
 
     # --- clients -------------------------------------------------------

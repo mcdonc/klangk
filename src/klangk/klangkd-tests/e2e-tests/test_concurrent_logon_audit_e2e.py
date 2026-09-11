@@ -29,7 +29,7 @@ def server(tmp_path_factory):
         KLANGKD_DEFAULT_PASSWORD="adminpass",
         KLANGKD_TEST_MODE="1",
         KLANGKD_IDLE_TIMEOUT_SECONDS="300",
-        LOGFIRE_TOKEN="",
+        KLANGKD_LOGFIRE_TOKEN="",
         log_path=str(log_path),
     )
     server["audit_log"] = str(log_path)
