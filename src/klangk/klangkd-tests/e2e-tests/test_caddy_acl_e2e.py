@@ -210,7 +210,7 @@ def _wait_for_caddy(port, timeout=15):
         try:
             httpx.get(f"http://127.0.0.1:{port}/", timeout=2)
             return True
-        except (httpx.ConnectError, httpx.ReadError):
+        except httpx.ConnectError, httpx.ReadError:
             pass
         time.sleep(0.3)
     return False
@@ -224,7 +224,7 @@ def _wait_for_caddy_health(port, timeout=15):
             r = httpx.get(f"http://127.0.0.1:{port}/health", timeout=2)
             if r.status_code == 200:
                 return True
-        except (httpx.ConnectError, httpx.ReadError):
+        except httpx.ConnectError, httpx.ReadError:
             pass
         time.sleep(0.3)
     return False
@@ -467,7 +467,7 @@ class TestCaddyDenyByDefault:
             KLANGKD_DEFAULT_PASSWORD="testpass",
             KLANGKD_TEST_MODE="1",
             KLANGKD_IDLE_TIMEOUT_SECONDS="300",
-            LOGFIRE_TOKEN="",
+            KLANGKD_LOGFIRE_TOKEN="",
         )
         uds_path = server["uds_path"]
 
@@ -577,7 +577,7 @@ class TestCaddyAuthLocalAcl:
             KLANGKD_AUTH_MODES="none",
             KLANGKD_TEST_MODE="1",
             KLANGKD_IDLE_TIMEOUT_SECONDS="300",
-            LOGFIRE_TOKEN="",
+            KLANGKD_LOGFIRE_TOKEN="",
         )
         uds_path = server["uds_path"]
 
@@ -1013,7 +1013,7 @@ class TestCaddySecretNotOnDisk:
             KLANGKD_PORT_RANGE_START=str(free_port()),
             KLANGKD_LLM_API_KEY=llm_key,
             _KLANGKD_DISABLE_PROXY="",
-            LOGFIRE_TOKEN="",
+            KLANGKD_LOGFIRE_TOKEN="",
         )
         # Resolve Caddy's autosave path the way Caddy does: XDG_CONFIG_HOME
         # (or ~/.config) + /caddy/autosave.json. Capture before launch so a
@@ -1121,7 +1121,7 @@ class TestCaddySecretNotOnDisk:
                 try:
                     sock.connect(("127.0.0.1", 2019))
                     open_2019 = True
-                except (ConnectionRefusedError, OSError):
+                except ConnectionRefusedError, OSError:
                     open_2019 = False
                 finally:
                     sock.close()

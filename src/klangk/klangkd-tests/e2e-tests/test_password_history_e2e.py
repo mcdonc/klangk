@@ -27,7 +27,7 @@ def server():
         KLANGKD_PASSWORD_HISTORY_COUNT="3",
         KLANGKD_TEST_MODE="1",
         KLANGKD_IDLE_TIMEOUT_SECONDS="300",
-        LOGFIRE_TOKEN="",
+        KLANGKD_LOGFIRE_TOKEN="",
     )
     yield server
     stop_server(server)

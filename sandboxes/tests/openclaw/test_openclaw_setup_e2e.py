@@ -183,7 +183,7 @@ def _start_server(data_dir, extra_env=None):
         # have already finished asserting by the time polling starts.
         "KLANGKD_HEALTH_CHECK_INTERVAL": "3",
         "KLANGKD_ALLOW_AUTOSTART": "1",
-        "LOGFIRE_TOKEN": "",
+        "KLANGKD_LOGFIRE_TOKEN": "",
         "log_path": log_path,
     }
     # Runner/devenv infra clean_env would otherwise strip (#1526): system

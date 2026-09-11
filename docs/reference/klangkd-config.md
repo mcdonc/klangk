@@ -198,6 +198,13 @@ admin_notification_webhook_url: https://hooks.example.com/klangk
 # audit_forward_header: "Authorization: Bearer hec-token"
 # audit_forward_syslog: tls://siem.example.com:6514
 
+# --- Logfire (#3411) ---
+# Opt-in Pydantic Logfire instrumentation. Omit the keys (or leave
+# logfire_token unset) and instrumentation stays off.
+# logfire_token: "file:/run/secrets/logfire-token"
+# logfire_base_url: https://logfire.example.com
+# logfire_environment: production
+
 # --- Branding ---
 product_name: "My Platform"
 brand_color: "#1565C0"
@@ -453,6 +460,34 @@ both are set). See [Customizing a Deployment](../deployment/customizing.md#custo
 | ------------- | ------- | --------------------- | ---------------------------------------------------------- |
 | `llm-api-key` |         | `KLANGKD_LLM_API_KEY` | Default API key for models without their own               |
 | `llm-models`  |         | `KLANGKD_LLM_MODELS`  | Model list (see [LLM proxy](../architecture/llm-proxy.md)) |
+
+### Logfire
+
+| Key                   | Default | Env var                       |
+| --------------------- | ------- | ----------------------------- |
+| `logfire_token`       |         | `KLANGKD_LOGFIRE_TOKEN`       |
+| `logfire_base_url`    |         | `KLANGKD_LOGFIRE_BASE_URL`    |
+| `logfire_environment` |         | `KLANGKD_LOGFIRE_ENVIRONMENT` |
+
+Opt-in [Pydantic Logfire](https://logfire.pydantic.dev) instrumentation for
+the klangkd backend. `logfire_token` holds the Logfire write token;
+instrumentation stays off while it is unset (the logfire package is not even
+imported, and no Logfire API is probed). It supports the `file:`/`cmd:`
+secret indirection forms like every secret setting. `logfire_base_url`
+points at a self-hosted Logfire instance (unset, the Logfire SDK default
+`https://logfire-api.pydantic.dev` applies). `logfire_environment` tags
+traces in the dashboard (e.g. `production`, `staging`). The token is passed
+to `logfire.configure()` explicitly, so ambient `LOGFIRE_TOKEN` env vars and
+credentials files play no part. Configuration is read once at process
+start.
+
+Example:
+
+```yaml
+logfire_token: "file:/run/secrets/logfire-token"
+logfire_base_url: https://logfire.example.com
+logfire_environment: production
+```
 
 ### OIDC
 

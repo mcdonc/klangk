@@ -191,7 +191,16 @@ in
       sqlite.bin
       rsync
       twine
-      xenon # cyclomatic-complexity gate tool (#2828): same pinned build as the hook
+      # cyclomatic-complexity gate tool (#2828): same pinned build as the
+      # hook. Built against python3.14 (#3411): nixpkgs' top-level xenon
+      # runs on python3.13, whose parser rejects PEP 758
+      # (``except OSError, ValueError:``) — the form ruff format writes
+      # for the py3.14 codebase — so the gate silently skipped (exit 0,
+      # parse warning) every graded file containing it. The python3.14
+      # build parses the same syntax as the toolchain.
+      (pkgs.callPackage (pkgs.path + "/pkgs/by-name/xe/xenon/package.nix") {
+        python3 = pkgs.python314;
+      })
       (python314Packages.radon) # complexity introspection (radon cc) for xenon ratchet work (#2845)
       zensical
     ]

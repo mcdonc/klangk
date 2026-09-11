@@ -87,10 +87,12 @@ services:
       KLANGKD_LLM_MODELS: "${KLANGKD_LLM_MODELS}"
       KLANGKD_LLM_API_KEY: "${KLANGKD_LLM_API_KEY}"
 
-      # --- Observability ---
-      LOGFIRE_BASE_URL: "${LOGFIRE_BASE_URL}"
-      LOGFIRE_TOKEN: "${LOGFIRE_TOKEN}"
-      LOGFIRE_ENVIRONMENT: "${LOGFIRE_ENVIRONMENT}"
+      # --- Observability (opt-in Logfire instrumentation, #3411) ---
+      # See docs/reference/klangkd-config.md#logfire — also settable as the
+      # logfire_* keys in a mounted klangkd.yaml.
+      KLANGKD_LOGFIRE_BASE_URL: "${KLANGKD_LOGFIRE_BASE_URL}"
+      KLANGKD_LOGFIRE_TOKEN: "${KLANGKD_LOGFIRE_TOKEN}"
+      KLANGKD_LOGFIRE_ENVIRONMENT: "${KLANGKD_LOGFIRE_ENVIRONMENT}"
 
       # --- Other ---
       # KLANGKD_DISABLE_REGISTRATION: "1"

@@ -226,7 +226,7 @@ async function globalSetup() {
       KLANGKD_OIDC_LOGIN_HOOK: "",
       KLANGKD_DISABLE_REGISTRATION: "",
       KLANGKD_DISABLE_INVITES: "",
-      LOGFIRE_TOKEN: "",
+      KLANGKD_LOGFIRE_TOKEN: "",
     }),
   });
   process.env.KLANGKBUILD_SUBPATH_BACKEND_PID = String(backend.pid);

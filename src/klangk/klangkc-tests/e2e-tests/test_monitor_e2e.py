@@ -69,7 +69,7 @@ def _start_server(data_dir, health_interval="2"):
         KLANGKD_TEST_MODE="1",
         KLANGKD_IDLE_TIMEOUT_SECONDS="300",
         KLANGKD_HEALTH_CHECK_INTERVAL=health_interval,
-        LOGFIRE_TOKEN="",
+        KLANGKD_LOGFIRE_TOKEN="",
         log_path=log_path,
     )
     return server, server["url"]
@@ -350,13 +350,13 @@ class TestMonitorDetectsHealthFlips:
                     drain_task.cancel()
                     try:
                         await drain_task
-                    except (asyncio.CancelledError, Exception):
+                    except asyncio.CancelledError, Exception:
                         pass
             finally:
                 reader_task.cancel()
                 try:
                     await reader_task
-                except (asyncio.CancelledError, Exception):
+                except asyncio.CancelledError, Exception:
                     pass
                 try:
                     await ws.close()
