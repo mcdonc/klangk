@@ -65,6 +65,12 @@ test = [
     # documented way (`-n auto`, full coverage); this powers the local
     # `--testmon` scoped loop (#2288).
     "pytest-testmon>=2.0.0",
+    # The complexity-gate tool (rank A, #2794). The scripts/tests guard
+    # drives the real gate over the graded tree, and CI stock runners
+    # install only this extra — so the gate ships with the test
+    # toolchain. Pinned to the same 0.9.3 the devenv builds against
+    # python3.14 (#3415); on the py3.14 venv it parses PEP 758 forms.
+    "xenon==0.9.3",
 ]
 
 [project.scripts]
