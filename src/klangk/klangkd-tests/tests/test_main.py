@@ -4009,24 +4009,39 @@ class TestSetupStaticFiles:
 
 
 class TestSetupLogfire:
-    def test_no_token_returns_false(self, monkeypatch):
-        monkeypatch.delenv("LOGFIRE_TOKEN", raising=False)
-        app = FastAPI()
-        assert main.setup_logfire(app) is False
+    """setup_logfire reads the ``logfire_*`` settings (#3411).
 
-    def test_project_link_print_suppressed_at_source(self, monkeypatch):
+    The legacy unprefixed ``LOGFIRE_*`` env vars no longer arm or configure
+    instrumentation — only the ``logfire_*`` config keys (or the
+    ``KLANGKD_LOGFIRE_*`` env vars) do.
+    """
+
+    @staticmethod
+    def _app(env):
+        app = FastAPI()
+        app.state.settings = make_settings(env)
+        return app
+
+    def test_no_token_returns_false(self, monkeypatch):
+        # A legacy ambient LOGFIRE_TOKEN no longer arms instrumentation,
+        # and the logfire package is never imported on this path.
+        monkeypatch.setenv("LOGFIRE_TOKEN", "legacy-token")
+        mock_logfire = MagicMock()
+        with patch.dict("sys.modules", {"logfire": mock_logfire}):
+            assert main.setup_logfire(self._app({})) is False
+        mock_logfire.configure.assert_not_called()
+
+    def test_project_link_print_suppressed_at_source(self):
         """The real SDK (4.37) prints "Logfire project URL: ..." to stderr
         via rich — from a background token-validation thread when no creds
         file exists — so a stdout redirect can't catch it. setup_logfire must
         suppress the print at the source: ``console=ConsoleOptions(
         show_project_link=False)`` gates both print sites (#3156)."""
-        monkeypatch.setenv("LOGFIRE_TOKEN", "test-token")
-        monkeypatch.delenv("LOGFIRE_BASE_URL", raising=False)
-        monkeypatch.delenv("LOGFIRE_ENVIRONMENT", raising=False)
         mock_logfire = MagicMock()
         with patch.dict("sys.modules", {"logfire": mock_logfire}):
-            app = FastAPI()
-            result = main.setup_logfire(app)
+            result = main.setup_logfire(
+                self._app({"KLANGKD_LOGFIRE_TOKEN": "test-token"})
+            )
         assert result is True
         mock_logfire.ConsoleOptions.assert_called_once_with(
             show_project_link=False
@@ -4037,28 +4052,31 @@ class TestSetupLogfire:
             is mock_logfire.ConsoleOptions.return_value
         )
 
-    def test_with_token_instruments_app(self, monkeypatch):
-        monkeypatch.setenv("LOGFIRE_TOKEN", "test-token")
-        monkeypatch.delenv("LOGFIRE_BASE_URL", raising=False)
-        monkeypatch.delenv("LOGFIRE_ENVIRONMENT", raising=False)
+    def test_with_token_instruments_app(self):
         mock_logfire = MagicMock()
         with patch.dict("sys.modules", {"logfire": mock_logfire}):
-            app = FastAPI()
+            app = self._app({"KLANGKD_LOGFIRE_TOKEN": "test-token"})
             result = main.setup_logfire(app)
         assert result is True
-        mock_logfire.configure.assert_called_once()
+        configure_kwargs = mock_logfire.configure.call_args.kwargs
+        # The token is passed explicitly — no ambient env/creds lookup.
+        assert configure_kwargs["token"] == "test-token"
         mock_logfire.instrument_fastapi.assert_called_once_with(app)
 
-    def test_base_url_passed_via_advanced_options(self, monkeypatch):
-        # LOGFIRE_BASE_URL must be passed as advanced=AdvancedOptions(base_url=...),
-        # not as the deprecated top-level base_url= argument (#1410).
-        monkeypatch.setenv("LOGFIRE_TOKEN", "test-token")
-        monkeypatch.setenv("LOGFIRE_BASE_URL", "https://logfire.example.com")
-        monkeypatch.delenv("LOGFIRE_ENVIRONMENT", raising=False)
+    def test_base_url_passed_via_advanced_options(self):
+        # logfire_base_url must be passed as
+        # advanced=AdvancedOptions(base_url=...), not as the deprecated
+        # top-level base_url= argument (#1410).
         mock_logfire = MagicMock()
         with patch.dict("sys.modules", {"logfire": mock_logfire}):
-            app = FastAPI()
-            result = main.setup_logfire(app)
+            result = main.setup_logfire(
+                self._app(
+                    {
+                        "KLANGKD_LOGFIRE_TOKEN": "test-token",
+                        "KLANGKD_LOGFIRE_BASE_URL": "https://logfire.example.com",
+                    }
+                )
+            )
         assert result is True
         mock_logfire.AdvancedOptions.assert_called_once_with(
             base_url="https://logfire.example.com"
@@ -4072,26 +4090,31 @@ class TestSetupLogfire:
         )
         assert "base_url" not in configure_kwargs
 
-
-class TestCorsOrigins:
-    """Moved to test_util.py (Util.cors_origins, #1503)."""
-
-    def test_with_base_url_and_environment(self, monkeypatch):
-        monkeypatch.setenv("LOGFIRE_TOKEN", "test-token")
-        monkeypatch.setenv("LOGFIRE_BASE_URL", "https://custom.logfire")
-        monkeypatch.setenv("LOGFIRE_ENVIRONMENT", "staging")
+    def test_with_base_url_and_environment(self):
         mock_logfire = MagicMock()
         with patch.dict("sys.modules", {"logfire": mock_logfire}):
-            app = FastAPI()
-            main.setup_logfire(app)
+            main.setup_logfire(
+                self._app(
+                    {
+                        "KLANGKD_LOGFIRE_TOKEN": "test-token",
+                        "KLANGKD_LOGFIRE_BASE_URL": "https://custom.logfire",
+                        "KLANGKD_LOGFIRE_ENVIRONMENT": "staging",
+                    }
+                )
+            )
         mock_logfire.AdvancedOptions.assert_called_once_with(
             base_url="https://custom.logfire"
         )
         mock_logfire.configure.assert_called_once_with(
+            token="test-token",
             console=mock_logfire.ConsoleOptions.return_value,
             advanced=mock_logfire.AdvancedOptions.return_value,
             environment="staging",
         )
+
+
+class TestCorsOrigins:
+    """Moved to test_util.py (Util.cors_origins, #1503)."""
 
 
 # --- PID file helpers ---

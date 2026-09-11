@@ -35,6 +35,17 @@ operators or integrators to act when upgrading.
 
 ### Breaking
 
+- **Logfire settings moved into `klangkd.yaml` (#3411).** The
+  `LOGFIRE_TOKEN`, `LOGFIRE_BASE_URL`, and `LOGFIRE_ENVIRONMENT` env
+  vars no longer configure the backend's opt-in Logfire instrumentation;
+  they are read from the new `logfire_token` / `logfire_base_url` /
+  `logfire_environment` config keys (or the equivalent
+  `KLANGKD_LOGFIRE_TOKEN` / `KLANGKD_LOGFIRE_BASE_URL` /
+  `KLANGKD_LOGFIRE_ENVIRONMENT` env vars) instead.
+  **Migration:** move any `LOGFIRE_*` values into the config file (or
+  rename the env vars); instrumentation stays off until a token is
+  configured. See [Logfire](reference/klangkd-config.md#logfire).
+
 - **`KLANGKD_LISTEN` / `KLANGKD_EGRESS_LISTEN` values are validated
   (#3275).** Both settings now fail startup (and deny a SIGHUP reload)
   with the setting named unless the value is a bare bind address — an

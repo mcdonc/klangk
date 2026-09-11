@@ -2064,6 +2064,62 @@ class TestNixSeedConfig:
         assert s.nix_seed.type == "fuse-overlayfs"  # the default
 
 
+class TestLogfireConfig:
+    """logfire_token / logfire_base_url / logfire_environment — opt-in
+    Logfire instrumentation settings (#3411)."""
+
+    def test_disabled_when_omitted(self):
+        """Omitting the logfire keys -> instrumentation stays off."""
+        s = make_settings({})
+        assert s.logfire_token is None
+        assert s.logfire_base_url is None
+        assert s.logfire_environment is None
+
+    def test_env_form(self):
+        """The KLANGKD_LOGFIRE_* env vars reach the fields."""
+        s = make_settings(
+            {
+                "KLANGKD_LOGFIRE_TOKEN": "tok",
+                "KLANGKD_LOGFIRE_BASE_URL": "https://lf.example.com",
+                "KLANGKD_LOGFIRE_ENVIRONMENT": "production",
+            }
+        )
+        assert s.logfire_token == "tok"
+        assert s.logfire_base_url == "https://lf.example.com"
+        assert s.logfire_environment == "production"
+
+    def test_yaml_flat_form(self, tmp_path):
+        """The flat YAML keys parse (snake and kebab forms)."""
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            "logfire_token: tok\n"
+            "logfire_base_url: https://lf.example.com\n"
+            "logfire-environment: staging\n"
+        )
+        s = make_settings({}, config_file=str(cfg))
+        assert s.logfire_token == "tok"
+        assert s.logfire_base_url == "https://lf.example.com"
+        assert s.logfire_environment == "staging"
+
+    def test_env_overrides_config_file(self, tmp_path):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("logfire_token: yaml-token\n")
+        s = make_settings(
+            {"KLANGKD_LOGFIRE_TOKEN": "env-token"}, config_file=str(cfg)
+        )
+        assert s.logfire_token == "env-token"
+
+    def test_token_file_indirection_resolves(self, tmp_path):
+        """logfire_token supports the file: secret form (top-level str
+        field — resolved fail-fast like every other secret)."""
+        secret = tmp_path / "logfire-token"
+        secret.write_text("tok-from-file\n")
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(f"logfire_token: file:{secret}\n")
+        s = make_settings({}, config_file=str(cfg))
+        assert s.logfire_token == "tok-from-file"
+
+
 class TestNixEnabled:
     """nix_enabled: the per-workspace /nix master switch (#2560)."""
 

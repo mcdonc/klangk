@@ -116,7 +116,7 @@ def _read_version_file(path: str) -> dict | None:
     try:
         with open(path) as f:
             info = json.load(f)
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return None
     return info if isinstance(info, dict) else None
 
@@ -1280,14 +1280,22 @@ class Lifecycle:
 
 
 def setup_logfire(app: FastAPI) -> bool:
-    """Enable Logfire instrumentation if LOGFIRE_TOKEN is set."""
-    if not os.environ.get("LOGFIRE_TOKEN"):
+    """Enable Logfire instrumentation if a logfire token is configured.
+
+    Reads the ``logfire_token`` / ``logfire_base_url`` /
+    ``logfire_environment`` settings (#3411) — flat keys in
+    ``klangkd.yaml`` or the ``KLANGKD_LOGFIRE_TOKEN`` / ``KLANGKD_LOGFIRE_BASE_URL``
+    / ``KLANGKD_LOGFIRE_ENVIRONMENT`` env vars. The token is passed to
+    ``logfire.configure()`` explicitly, so no ambient ``LOGFIRE_TOKEN``
+    env var or credentials file is consulted.
+    """
+    settings = app.state.settings
+    if not settings.logfire_token:
         return False
     import logfire  # allow-deferred-import (opt-in, ~440ms)
 
-    base_url = os.environ.get("LOGFIRE_BASE_URL")
-    environment = os.environ.get("LOGFIRE_ENVIRONMENT")
     kwargs: dict = {
+        "token": settings.logfire_token,
         # The SDK prints "Logfire project URL: ..." to stderr via rich —
         # from a background token-validation thread when no creds file
         # exists (#3156) — which would inject a non-JSON line into the
@@ -1296,12 +1304,14 @@ def setup_logfire(app: FastAPI) -> bool:
         # keeps its defaults.
         "console": logfire.ConsoleOptions(show_project_link=False),
     }
-    if environment:
-        kwargs["environment"] = environment
-    if base_url:
+    if settings.logfire_environment:
+        kwargs["environment"] = settings.logfire_environment
+    if settings.logfire_base_url:
         # The top-level `base_url` argument is deprecated; pass it via
         # `advanced=logfire.AdvancedOptions(base_url=...)` instead (#1410).
-        kwargs["advanced"] = logfire.AdvancedOptions(base_url=base_url)
+        kwargs["advanced"] = logfire.AdvancedOptions(
+            base_url=settings.logfire_base_url
+        )
     logfire.configure(**kwargs)
     logfire.instrument_fastapi(app)
     logger.info("Logfire instrumentation enabled")
