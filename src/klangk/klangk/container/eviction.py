@@ -117,7 +117,7 @@ def _cgroup_usage(cgroup_dir: str) -> tuple[int, int, int] | None:
         if v2_max is not None:
             return _cgroup_v2_usage(cgroup_dir, v2_max)
         return _cgroup_v1_usage(cgroup_dir)
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return None
 
 
@@ -160,7 +160,7 @@ def _v2_memory_limit(cgroup_dir: str) -> int | None:
         text = open(f"{cgroup_dir}/memory.max").read().strip()
         if text != "max":
             return int(text)
-    except (OSError, ValueError):
+    except OSError, ValueError:
         pass
     return None
 
@@ -194,7 +194,7 @@ def stat_value(stat_path: str, names: tuple[str, ...]) -> int:
             name, _, value = line.partition(" ")
             if name in names:
                 return int(value)
-    except (OSError, ValueError):
+    except OSError, ValueError:
         pass
     return 0
 

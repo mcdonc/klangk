@@ -1206,7 +1206,7 @@ async def send_ignore_closed(ws, msg: str) -> None:
     """Send a WebSocket message, ignoring errors if the connection is closed."""
     try:
         await ws.send(msg)
-    except (websockets.ConnectionClosed, OSError):
+    except websockets.ConnectionClosed, OSError:
         pass
 
 
@@ -1296,7 +1296,7 @@ def drain_stdin() -> None:
         finally:
             if old is not None:
                 termios.tcsetattr(fd, termios.TCSADRAIN, old)
-    except (OSError, io.UnsupportedOperation):
+    except OSError, io.UnsupportedOperation:
         pass
 
 
@@ -1946,7 +1946,7 @@ class TerminalSession(_ShellSession):
             disposition, payload = await self._handle_byte(data, st, fd)
             if disposition == "exit":
                 return False
-        except (OSError, io.UnsupportedOperation):
+        except OSError, io.UnsupportedOperation:
             return False
         # The send sits outside the except scope, as in the original loop:
         # a send failure must propagate and tear down the other pumps.
@@ -2149,7 +2149,7 @@ class ExecSession(_ShellSession):
         try:
             if self.stdout is not None:
                 self._stdout_fd = self.stdout.fileno()
-        except (io.UnsupportedOperation, AttributeError):
+        except io.UnsupportedOperation, AttributeError:
             pass
         self._has_stdout_fd = self._stdout_fd >= 0
 
@@ -2157,7 +2157,7 @@ class ExecSession(_ShellSession):
         """stdin's fileno, or None when it has none (BytesIO etc.)."""
         try:
             return self.stdin.fileno()
-        except (io.UnsupportedOperation, AttributeError):
+        except io.UnsupportedOperation, AttributeError:
             return None
 
     async def send_exec_input(self, data: bytes) -> None:

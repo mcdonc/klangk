@@ -2056,7 +2056,7 @@ class TestSSHAgentRelayLoop:
                 stdout=stdout,
                 ssh_agent_sock="/fake/agent.sock",
             )
-        except (websockets.ConnectionClosed, Exception):
+        except websockets.ConnectionClosed, Exception:
             pass
         finally:
             os.close(read_fd)
@@ -2143,7 +2143,7 @@ class TestSSHAgentRelayLoop:
                 stdout=stdout,
                 ssh_agent_sock=agent_path,
             )
-        except (websockets.ConnectionClosed, Exception):
+        except websockets.ConnectionClosed, Exception:
             pass
         finally:
             os.close(read_fd)
@@ -2159,7 +2159,7 @@ class TestSSHAgentRelayLoop:
                 msg = json.loads(call[0][0])
                 if msg.get("cmd") == "ssh_agent_data":
                     agent_data_msgs.append(msg)
-            except (json.JSONDecodeError, IndexError):
+            except json.JSONDecodeError, IndexError:
                 pass
 
         assert len(agent_data_msgs) == 1
@@ -2216,7 +2216,7 @@ class TestSSHAgentRelayLoop:
                 stdout=stdout,
                 ssh_agent_sock=bad_sock,
             )
-        except (websockets.ConnectionClosed, Exception):
+        except websockets.ConnectionClosed, Exception:
             pass
         finally:
             os.close(read_fd)

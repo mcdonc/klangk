@@ -134,7 +134,7 @@ def _machine_memory_of(entry) -> int | None:
     (>= the 64 MiB unit-mismatch floor), else None."""
     try:
         value = int(entry["Memory"])
-    except (KeyError, TypeError, ValueError):
+    except KeyError, TypeError, ValueError:
         return None
     if value < _MIN_MACHINE_MEMORY_BYTES:
         return None
@@ -228,7 +228,7 @@ async def _measure_machine_memory(podman_bin: str, runner) -> int | None:
         machines = await runner(
             podman_bin, "machine", "ls", "--format", "json"
         )
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return None
     return _pick_machine_memory(machines)
 

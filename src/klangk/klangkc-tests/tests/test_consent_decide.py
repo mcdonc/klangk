@@ -2474,7 +2474,7 @@ class TestRulesScreen:
                 task.cancel()
                 try:
                     await task
-                except (asyncio.CancelledError, Exception):
+                except asyncio.CancelledError, Exception:
                     pass
 
     async def test_refresh_rules_before_mount_is_noop(self):

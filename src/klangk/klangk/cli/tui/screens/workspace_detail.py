@@ -1070,7 +1070,7 @@ class WorkspaceDetailScreen(StatusScreen):
         """
         try:
             idx = int(key)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return None
         for w in self.terminals:
             if w.get("index") == idx:
@@ -1170,7 +1170,7 @@ class WorkspaceDetailScreen(StatusScreen):
         """Friendly label for a list row: the window name, or the key."""
         try:
             idx = int(key)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return key
         for w in self.terminals:
             if w.get("index") == idx:

@@ -35,7 +35,7 @@ def parse_setup_timeout(sandbox: dict) -> int:
     )
     try:
         return int(setup_timeout)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         raise ValueError(
             f"setup-timeout must be an integer, got {setup_timeout!r}"
         )

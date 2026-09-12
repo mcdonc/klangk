@@ -4694,7 +4694,7 @@ class TestSshAgentForwarder:
                 t.cancel()
                 try:
                     await t
-                except (asyncio.CancelledError, Exception):
+                except asyncio.CancelledError, Exception:
                     pass
 
     async def test_start_creates_proc_and_notifies(self):

@@ -334,7 +334,7 @@ def select_oidc_provider(providers: list) -> dict:
     try:
         idx = int(choice) - 1
         return providers[idx]
-    except (ValueError, IndexError):
+    except ValueError, IndexError:
         _err.print("[red]Invalid choice[/red]")
         raise SystemExit(1)
 
@@ -644,7 +644,7 @@ def proc_ppid(pid: int) -> int | None:
     """One /proc pid's parent pid, or None when unreadable."""
     try:
         return int(open(f"/proc/{pid}/stat", "rb").read().decode().split()[3])
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return None
 
 
