@@ -48,7 +48,7 @@ jobs:
           # read/write, this repo only): PRs authored by it trigger workflows
           # with no approval gate (#3448). The || fallback keeps today's
           # approval-gated behavior when the secret is unset.
-          token: ${{ secrets.BACKPORT_TOKEN || github.token }}
+          github_token: ${{ secrets.BACKPORT_TOKEN || github.token }}
           target_branches: stable/2.0
           # Match the hand-made backport PR titles (e.g. #3426): the
           # original PR title unchanged; the squash merge appends the
