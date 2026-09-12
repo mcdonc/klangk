@@ -69,11 +69,11 @@ runs:
         # Retry wrapper: devenv 2.2.x's embedded Nix intermittently fails eval
         # with "path ... is not valid" (UAF, #2774 / cachix/devenv#3064) - a
         # per-eval coin flip, so one retry converts it to noise (#2775).
-        "$GITHUB_ACTION_PATH/scripts/retry-on-invalid-path.sh" devenv shell -- true
+        "$GITHUB_ACTION_PATH/scripts/retry-devenv-eval.sh" devenv shell -- true
 
     - name: Build
       if: inputs.build-tasks != ''
       shell: bash
       run: |
         . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-        "$GITHUB_ACTION_PATH/scripts/retry-on-invalid-path.sh" devenv tasks run ${{ inputs.build-tasks }}
+        "$GITHUB_ACTION_PATH/scripts/retry-devenv-eval.sh" devenv tasks run ${{ inputs.build-tasks }}

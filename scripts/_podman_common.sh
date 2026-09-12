@@ -165,7 +165,7 @@ klangk::prune_old_tags() {
 # invocation so that exactly this signature is retried once (after capturing
 # diagnostics, so a persistent occurrence is attributable); every other
 # failure passes through untouched with its original exit code — the same
-# policy as scripts/retry-on-invalid-path.sh for the devenv eval UAF (#2775).
+# policy as scripts/retry-devenv-eval.sh for the devenv eval UAF (#2775).
 
 # Fixed-string signature (grep -F): any "failed to reexec:" is the rootless
 # bootstrap (userns reexec) failing, which is runner-environment level — never

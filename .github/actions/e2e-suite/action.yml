@@ -44,7 +44,7 @@ runs:
       run: |
         . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh 2>/dev/null || true
         # Retry wrapper for the devenv 2.2.x embedded-Nix UAF (#2774 / cachix/devenv#3064, #2775)
-        retry="$GITHUB_WORKSPACE/.github/actions/devenv-setup/scripts/retry-on-invalid-path.sh"
+        retry="$GITHUB_WORKSPACE/.github/actions/devenv-setup/scripts/retry-devenv-eval.sh"
         "$retry" devenv shell -- true
 
     - name: Build images
@@ -52,7 +52,7 @@ runs:
       shell: bash
       run: |
         . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh 2>/dev/null || true
-        retry="$GITHUB_WORKSPACE/.github/actions/devenv-setup/scripts/retry-on-invalid-path.sh"
+        retry="$GITHUB_WORKSPACE/.github/actions/devenv-setup/scripts/retry-devenv-eval.sh"
         "$retry" devenv tasks run ${{ inputs.build-tasks }}
 
     - name: Obtain FIPS image (pull, capped-build fallback)
@@ -67,7 +67,7 @@ runs:
       shell: bash
       run: |
         . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh 2>/dev/null || true
-        retry="$GITHUB_WORKSPACE/.github/actions/devenv-setup/scripts/retry-on-invalid-path.sh"
+        retry="$GITHUB_WORKSPACE/.github/actions/devenv-setup/scripts/retry-devenv-eval.sh"
         # Wrapped so a UAF flake (#2774) is not misread as a pull failure
         # and answered with an unnecessary capped local FIPS build.
         if "$retry" devenv shell -- bash scripts/pull-fips-image.sh "${{ inputs.fips-image }}"; then
@@ -97,7 +97,7 @@ runs:
         KLANGK_E2E_VERBOSE_PODMAN: ${{ inputs.verbose-podman == 'true' && '1' || '' }}
       run: |
         . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh 2>/dev/null || true
-        retry="$GITHUB_WORKSPACE/.github/actions/devenv-setup/scripts/retry-on-invalid-path.sh"
+        retry="$GITHUB_WORKSPACE/.github/actions/devenv-setup/scripts/retry-devenv-eval.sh"
         "$retry" devenv shell -- ${{ inputs.suite }}
 
     - name: Skip notice
