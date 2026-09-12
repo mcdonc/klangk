@@ -646,6 +646,17 @@ alone — run the destroy consciously and explicitly every time.
 - This applies to every PR opened from a `gh issue` (via `/workon`,
   `/stackon`, or directly) — check the title before `gh pr create`.
 
+## Closing the issue on merge
+
+- The PR body must contain the exact phrase `Closes #<issue>` (or
+  `Fixes`/`Resolves #<issue>`) for the originating issue. GitHub closes the
+  issue automatically only on those keyword forms; near-misses such as
+  "closing #3447" do nothing, and the issue stays open after the merge
+  until someone closes it by hand.
+- Put the phrase in its own sentence in the Summary (e.g. "Closes #2055."),
+  and check the issue state after merging; if it is still open, close it
+  with a comment recording the landing commits.
+
 ## Stacked PRs (retarget before deleting the base branch)
 
 - A PR merges into its **base** branch. When a PR is stacked on another
