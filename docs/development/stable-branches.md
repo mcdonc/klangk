@@ -13,14 +13,22 @@ backport runs as automation (#3361):
 - Merging a labeled pull request cherry-picks its squash commit onto
   `stable/2.0` and opens a backport pull request
   (`.github/workflows/backport.yml`, the `korthout/backport-action`
-  workflow). A cherry-pick that conflicts opens the pull request with a
-  conflict comment and waits for a manual resolution.
+  workflow). A cherry-pick that conflicts opens a draft pull request
+  that carries the first conflict committed; resolve the conflicts on
+  its branch, then mark it ready and merge it.
+- Only the `backport/2.0` label and the `/backport` comment select the
+  backport; the target is fixed to `stable/2.0` and other labels play
+  no part.
 - While `BACKPORT_2_0_AUTO_MERGE` is set to `true`, the backport pull
   request merges itself (squash) as soon as it applies cleanly — the
-  commit is a cherry-pick of an already-reviewed `main` commit.
-  `stable/2.0` carries no required status checks today, so the merge
-  happens immediately; adding required checks at the freeze turns the
-  same setting into merge-when-green without further changes.
+  commit is a cherry-pick of an already-reviewed `main` commit. The
+  backport pull request carries no test runs: it is opened with the
+  workflow's `GITHUB_TOKEN`, and pull requests and pushes caused by
+  that token start no CI workflows. `stable/2.0` carries no required
+  status checks, so nothing gates the merge. At the freeze, drop
+  `BACKPORT_2_0_AUTO_MERGE` and merge backports by hand, or pass the
+  workflow a PAT (its `github_token` input) so its pull requests run
+  CI and required checks on `stable/2.0` can gate the merge.
 - A `/backport` comment on an already-merged pull request runs the same
   flow — the rescue path for a merge that happened without the label.
 

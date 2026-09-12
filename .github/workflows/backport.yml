@@ -17,9 +17,11 @@ jobs:
     # A merged PR carrying backport/2.0 (the routine path — the label is
     # auto-applied to PRs against main while BACKPORT_2_0_DEFAULT is set,
     # see backport-autolabel.yml), or a `/backport` comment on a merged PR
-    # (the rescue path for a merge that happened unlabeled). stable/2.0 is
-    # the only target during the 2.0 pre-release window, so the label or
-    # comment gates whether the flow runs; the target is fixed here (#3361).
+    # (the rescue path for a merge that happened unlabeled; write-access
+    # authors only — the repo is public and this job holds a write token).
+    # stable/2.0 is the only target during the 2.0 pre-release window, so
+    # the label or comment gates whether the flow runs; the target is
+    # fixed here (#3361).
     if: >
       (
         github.event_name == 'pull_request_target' &&
@@ -28,6 +30,7 @@ jobs:
       ) || (
         github.event_name == 'issue_comment' &&
         github.event.issue.pull_request &&
+        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
         startsWith(github.event.comment.body, '/backport')
       )
     steps:
@@ -39,6 +42,11 @@ jobs:
           # original PR title unchanged; the squash merge appends the
           # backport PR's own number.
           pull_title: "${pull_title}"
+          # A conflicted cherry-pick opens a draft PR carrying the first
+          # conflict committed, instead of only a failure comment on the
+          # source PR — the backport is never silently missing (#3361
+          # acceptance criteria).
+          experimental: '{"conflict_resolution": "draft_commit_conflicts"}'
           # Pre-release window: the backport commit is a cherry-pick of an
           # already-reviewed main commit, so the PR merges itself (squash)
           # while BACKPORT_2_0_AUTO_MERGE is set. Remove the variable at
