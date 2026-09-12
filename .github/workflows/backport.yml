@@ -50,6 +50,14 @@ jobs:
       - name: Create backport pull request
         uses: korthout/backport-action@v4
         with:
+          # A PR authored by github-actions[bot] via the default GITHUB_TOKEN
+          # lands its CI in an approval-required state (GitHub's 2026-06-11
+          # bot-PR rule), which stalls the auto-merge loop on a human click.
+          # BACKPORT_TOKEN is a fine-grained PAT (contents + pull-requests,
+          # read/write, this repo only): PRs authored by it trigger workflows
+          # with no approval gate (#3448). The || fallback keeps today's
+          # approval-gated behavior when the secret is unset.
+          token: ${{ secrets.BACKPORT_TOKEN || github.token }}
           target_branches: stable/2.0
           # Match the hand-made backport PR titles (e.g. #3426): the
           # original PR title unchanged; the squash merge appends the
