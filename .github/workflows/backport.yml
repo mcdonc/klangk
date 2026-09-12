@@ -48,15 +48,16 @@ jobs:
         with:
           token: ${{ secrets.BACKPORT_TOKEN || github.token }}
       - name: Create backport pull request
+        id: backport
         uses: korthout/backport-action@v4
         with:
           # A PR authored by github-actions[bot] via the default GITHUB_TOKEN
           # lands its CI in an approval-required state (GitHub's 2026-06-11
-          # bot-PR rule), which stalls the auto-merge loop on a human click.
-          # BACKPORT_TOKEN is a fine-grained PAT (contents + pull-requests,
-          # read/write, this repo only): PRs authored by it trigger workflows
-          # with no approval gate (#3448). The || fallback keeps today's
-          # approval-gated behavior when the secret is unset.
+          # bot-PR rule), which stalls the loop on a human click.
+          # BACKPORT_TOKEN is a fine-grained PAT (contents + pull-requests +
+          # workflows, read/write, this repo only): PRs authored by it
+          # trigger workflows with no approval gate (#3448). The ||
+          # fallback keeps that gated behavior when the secret is unset.
           github_token: ${{ secrets.BACKPORT_TOKEN || github.token }}
           target_branches: stable/2.0
           # Match the hand-made backport PR titles (e.g. #3426): the
@@ -68,9 +69,18 @@ jobs:
           # source PR — the backport is never silently missing (#3361
           # acceptance criteria).
           experimental: '{"conflict_resolution": "draft_commit_conflicts"}'
-          # Pre-release window: the backport commit is a cherry-pick of an
-          # already-reviewed main commit, so the PR merges itself (squash)
-          # while BACKPORT_2_0_AUTO_MERGE is set. Remove the variable at
-          # the v2.0.0 freeze to keep backports hand-merged.
-          auto_merge_enabled: ${{ vars.BACKPORT_2_0_AUTO_MERGE == 'true' }}
-          auto_merge_method: squash
+      # Backports are sync-only (#3456): the cherry-pick is content main's
+      # CI already passed, so the backport PR runs no CI of its own (every
+      # pull_request-triggered workflow targets main) and this step merges
+      # it in the same run that created it. --auto lands the merge at once
+      # when nothing is pending and after any straggler checks pass on the
+      # rare stable PR that runs some. A conflicted backport opens a draft;
+      # merging a draft fails loudly and points a human at it.
+      - name: Merge backport pull requests
+        if: steps.backport.outputs.created_pull_numbers != ''
+        env:
+          GH_TOKEN: ${{ secrets.BACKPORT_TOKEN || github.token }}
+        run: |
+          for pr in $(echo "${{ steps.backport.outputs.created_pull_numbers }}" | tr ',' ' '); do
+            gh pr merge "$pr" --squash --auto --delete-branch
+          done
