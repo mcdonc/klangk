@@ -1,0 +1,38 @@
+name: "Backport auto-label for the 2.0 pre-release window"
+
+on:
+  pull_request_target:
+    types: [opened]
+
+# Inert unless the repo variable BACKPORT_2_0_DEFAULT == "true" (the
+# pre-release window switch, same pattern as ENABLE_SLOP_POLICY in
+# auto-close.yml). While set, every PR opened against main carries
+# backport/2.0, so a plain merge also backports the squash commit to
+# stable/2.0 (#3361); a PR opts out by removing the label before merge.
+# After the v2.0.0 freeze, remove the variable: the label becomes opt-in
+# and the /backport comment (backport.yml) stays as the rescue path.
+# Enable with: gh variable set BACKPORT_2_0_DEFAULT --body true
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  autolabel:
+    if: ${{ vars.BACKPORT_2_0_DEFAULT == 'true' && github.event.pull_request.base.ref == 'main' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Apply backport/2.0 label
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          # Idempotent, same pattern as auto-close.yml's label step.
+          gh label create "backport/2.0" --repo "$REPO" \
+            --description "Merge also backports the squash commit to stable/2.0 (#3361)" \
+            --color FBCA04 2>/dev/null || true
+
+          gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "backport/2.0"
+          echo "::notice::labeled #$PR_NUMBER backport/2.0 (2.0 pre-release default)."
