@@ -37,7 +37,16 @@ jobs:
       # The action cherry-picks inside a git checkout and fetches the
       # source PR + target branch itself. Checkout the base branch only —
       # never PR code (pull_request_target runs with a write token).
+      # korthout pushes with the credentials checkout persists, so the PAT
+      # must be wired in HERE and not only into the action's github_token
+      # input: GITHUB_TOKEN (the persisted default) is refused any push
+      # that touches .github/workflows/ — and backports of workflow
+      # changes (this file's own backports included) are exactly that
+      # (#3448). The checkout ref stays the base branch, so the token never
+      # runs PR code.
       - uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.BACKPORT_TOKEN || github.token }}
       - name: Create backport pull request
         uses: korthout/backport-action@v4
         with:
