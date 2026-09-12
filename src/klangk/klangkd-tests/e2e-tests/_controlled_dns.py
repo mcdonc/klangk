@@ -283,7 +283,7 @@ def cleanup_stale_containers() -> list[str]:
             text=True,
             timeout=30,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except FileNotFoundError, subprocess.TimeoutExpired:
         return removed
     for name in res.stdout.split():
         # Match only the fixture's own prefixes (``--filter name=`` is a
@@ -299,7 +299,7 @@ def cleanup_stale_containers() -> list[str]:
                 timeout=30,
             )
             removed.append(name)
-        except (FileNotFoundError, subprocess.TimeoutExpired):
+        except FileNotFoundError, subprocess.TimeoutExpired:
             break
     return removed
 

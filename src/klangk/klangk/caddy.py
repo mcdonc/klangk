@@ -195,7 +195,7 @@ def detect_host_ipv4s() -> list[str]:
         out = subprocess.check_output(
             ["ip", "-4", "addr", "show"], text=True, stderr=subprocess.DEVNULL
         )
-    except (OSError, subprocess.CalledProcessError, FileNotFoundError):
+    except OSError, subprocess.CalledProcessError, FileNotFoundError:
         return []
     addrs: list[str] = []
     for line in out.splitlines():
@@ -372,7 +372,7 @@ def csp_policy(frontend_dir: str | Path) -> str:
             .joinpath("index.html")
             .read_text(encoding="utf-8")
         )
-    except (OSError, UnicodeDecodeError):
+    except OSError, UnicodeDecodeError:
         # Unreadable OR non-UTF-8 (a ValueError, not an OSError — a
         # windows-1252 byte would otherwise raise out of the renderer and
         # wedge the watchdog in a kill/respawn loop). Either way: strict
@@ -440,7 +440,7 @@ def classify_caddy_line(line: str) -> tuple[int, str]:
     """
     try:
         obj = json.loads(line)
-    except (json.JSONDecodeError, ValueError):
+    except json.JSONDecodeError, ValueError:
         return logging.ERROR, line
 
     caddy_level = obj.get("level", "info")
@@ -475,7 +475,7 @@ def is_bind_error(line: str) -> bool:
     """
     try:
         obj = json.loads(line)
-    except (json.JSONDecodeError, ValueError):
+    except json.JSONDecodeError, ValueError:
         return False
     msg = f"{obj.get('msg') or ''} {obj.get('error') or ''}".strip().lower()
     if not msg:
@@ -1275,7 +1275,7 @@ def caddy_supports_full_global_block(bin_path: str) -> bool:
             timeout=5,
         )
         return r.returncode == 0
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
         return True  # probe failed to run — assume supported (rare; preserves features)
     finally:
         if probe_path is not None:
@@ -1487,7 +1487,7 @@ class CaddyWatchdog:
                     # real socket — don't let it mask the successful connect.
                     pass
                 return True
-            except (httpx.HTTPError, OSError):
+            except httpx.HTTPError, OSError:
                 await asyncio.sleep(0.2)
         return False
 
@@ -1721,7 +1721,7 @@ class CaddyWatchdog:
         alone when the group is gone or not ours."""
         try:
             os.killpg(proc.pid, sig)
-        except (ProcessLookupError, PermissionError):
+        except ProcessLookupError, PermissionError:
             if sig == signal.SIGTERM:
                 proc.terminate()
             else:

@@ -249,7 +249,7 @@ def ensure_autostart_allowed(client, requested) -> None:
         return
     try:
         cfg = client.config()
-    except (httpx.HTTPError, AuthError, ValueError):
+    except httpx.HTTPError, AuthError, ValueError:
         return
     if not isinstance(cfg, dict) or cfg.get("allow_autostart") is not True:
         context.err.print(

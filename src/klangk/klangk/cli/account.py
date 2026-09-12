@@ -190,7 +190,7 @@ def parsed_min_length(config: dict) -> int:
     """The advertised min password length, or the default when unparseable."""
     try:
         return int(config.get("min_password_length") or _DEFAULT_MIN_PASSWORD)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return _DEFAULT_MIN_PASSWORD
 
 
@@ -198,7 +198,7 @@ def parsed_min_changed(config: dict) -> int:
     """The advertised min changed-character count, 0 when unparseable."""
     try:
         return max(0, int(config.get("password_min_changed") or 0))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return 0
 
 
@@ -211,7 +211,7 @@ def parsed_requirements(config: dict) -> dict:
     for key in requirements:
         try:
             requirements[key] = int(reqs.get(key) or 0)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             pass
     return requirements
 

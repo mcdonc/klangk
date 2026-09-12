@@ -435,7 +435,7 @@ def bundled_dockerfile() -> Path | None:
         res = importlib.resources.files("klangk") / _BUNDLE_DIR / "Dockerfile"
         p = Path(str(res))
         return p if p.is_file() else None
-    except (ModuleNotFoundError, FileNotFoundError):
+    except ModuleNotFoundError, FileNotFoundError:
         return None
 
 

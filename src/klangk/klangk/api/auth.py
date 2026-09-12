@@ -65,7 +65,7 @@ def _decode_binding_jwk(raw: str | None):
         return None
     try:
         jwk = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
-    except (ValueError, json.JSONDecodeError):
+    except ValueError, json.JSONDecodeError:
         return None
     return jwk if isinstance(jwk, dict) else None
 
@@ -1514,7 +1514,7 @@ def _validate_state_cookie(
 
     try:
         cookie_data = json.loads(cookie_raw)
-    except (json.JSONDecodeError, UnicodeDecodeError):
+    except json.JSONDecodeError, UnicodeDecodeError:
         raise HTTPException(
             status_code=400, detail="Invalid OIDC state cookie"
         )

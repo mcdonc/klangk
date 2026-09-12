@@ -233,7 +233,7 @@ def read_instance_file(path: Path) -> str | None:
     """
     try:
         return path.read_text().strip() or None
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return None
 
 
@@ -252,7 +252,7 @@ def write_instance_file(path: Path) -> str:
         tmp = path.parent / f"{path.name}.tmp"
         tmp.write_text(fresh)
         os.replace(tmp, path)
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return ""
     return fresh
 

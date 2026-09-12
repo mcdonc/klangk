@@ -3101,7 +3101,7 @@ async def _settle(app):
     while app.workers:
         try:
             await app.workers.wait_for_complete()
-        except (WorkerCancelled, WorkerFailed):
+        except WorkerCancelled, WorkerFailed:
             continue
         break
 
@@ -3125,7 +3125,7 @@ async def _quiesce(app, pilot):
     while True:
         try:
             await app.workers.wait_for_complete()
-        except (WorkerCancelled, WorkerFailed):
+        except WorkerCancelled, WorkerFailed:
             continue
         if not len(app.workers):
             await pilot.pause()

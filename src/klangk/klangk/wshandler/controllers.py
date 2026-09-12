@@ -144,7 +144,7 @@ def decode_b64_payload(raw, cmd: str) -> bytes | None:
     """
     try:
         return base64.b64decode(raw, validate=True)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         logger.warning("%s: invalid base64 payload, dropping", cmd)
         return None
 
@@ -379,7 +379,7 @@ class SshAgentForwarder:
         try:
             proc.stdin.write(decoded)
             await proc.stdin.drain()
-        except (ConnectionError, RuntimeError):
+        except ConnectionError, RuntimeError:
             logger.warning(
                 "SSH agent relay stdin gone; dropping frame and stopping relay"
             )
@@ -771,7 +771,7 @@ class TerminalController:
                 self._conn.container_id,
                 SERVICE_SESSION,
             )
-        except (TerminalError, OSError):
+        except TerminalError, OSError:
             return False  # service session doesn't exist yet
         if not windows:
             return False
@@ -913,7 +913,7 @@ class TerminalController:
                     except WS_ERRORS:
                         pass
                     return
-                except (TerminalError, OSError):
+                except TerminalError, OSError:
                     logger.exception("_start_terminal: window list failed")
                 ctrl._send_shared_terminals()
             except asyncio.CancelledError:
@@ -921,7 +921,7 @@ class TerminalController:
                 conn.app.state.container_registry.revoke_browser(conn.sock)
                 conn.browser_id = None
                 raise
-            except (SlowClientError, WebSocketDisconnect):
+            except SlowClientError, WebSocketDisconnect:
                 await session.stop()
                 conn.app.state.container_registry.revoke_browser(conn.sock)
                 conn.browser_id = None

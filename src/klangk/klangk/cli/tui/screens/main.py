@@ -257,7 +257,7 @@ def parse_status_event(raw: str) -> dict | None:
     """A dict event from one frame, or None when not JSON / not an object."""
     try:
         event = json.loads(raw)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
     if not isinstance(event, dict):
         return None
@@ -1223,7 +1223,7 @@ class MainScreen(StatusScreen):
                 .astimezone()
                 .strftime("%Y-%m-%d %H:%M")
             )
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return ""
 
     @staticmethod
@@ -1232,7 +1232,7 @@ class MainScreen(StatusScreen):
         try:
             dt = datetime.datetime.fromisoformat(raw)
             return dt.strftime("%Y-%m-%d")
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return ""
 
     @staticmethod

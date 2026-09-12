@@ -147,7 +147,7 @@ def verify_signature(
         der = _raw_to_der(signature) if len(signature) == 64 else signature
         key.verify(der, signing_input, ec.ECDSA(hashes.SHA256()))
         return True
-    except (ValueError, TypeError, InvalidSignature):
+    except ValueError, TypeError, InvalidSignature:
         return False
 
 
@@ -164,7 +164,7 @@ def decode_proof(proof: str) -> tuple[dict, dict, bytes] | None:
         header = json.loads(_b64url_decode(parts[0]))
         payload = json.loads(_b64url_decode(parts[1]))
         signature = _b64url_decode(parts[2])
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return None
     if not isinstance(header, dict) or not isinstance(payload, dict):
         return None

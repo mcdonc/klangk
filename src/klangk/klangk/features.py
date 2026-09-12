@@ -193,7 +193,7 @@ class Features:
                 return {}
             with open(path) as f:
                 data = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError, ValueError, OSError):
+        except FileNotFoundError, json.JSONDecodeError, ValueError, OSError:
             return {}
         if not isinstance(data, dict):
             return {}
