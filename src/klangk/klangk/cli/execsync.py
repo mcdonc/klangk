@@ -49,7 +49,7 @@ def sync_denied(client, host: str) -> bool:
     """
     try:
         ws = client.resolve_workspace(host)
-    except (WorkspaceNotFoundError, httpx.HTTPError):
+    except WorkspaceNotFoundError, httpx.HTTPError:
         return False
     resource = f"/workspaces/{ws.id}"
     try:
@@ -57,7 +57,7 @@ def sync_denied(client, host: str) -> bool:
             "/api/v1/my-permissions", params={"resource": resource}
         )
         perms = resp.json().get("permissions", {}).get(resource)
-    except (httpx.HTTPError, ValueError):
+    except httpx.HTTPError, ValueError:
         # ValueError: a non-JSON error body (e.g. an HTML 500 page from
         # a proxy in front of klangkd) must not crash the preflight.
         return False

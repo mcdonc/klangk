@@ -161,7 +161,7 @@ async def version(app=Depends(get_app_dep)):
         try:
             with open(version_file) as f:
                 info = json.load(f)
-        except (OSError, ValueError):
+        except OSError, ValueError:
             info = None
         if isinstance(info, dict):
             info["features"] = app.state.features.feature_list()

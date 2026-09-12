@@ -129,7 +129,7 @@ async def _receive_sidecar_frame(websocket) -> tuple[bool, dict | None]:
     (malformed / non-dict)."""
     try:
         raw = await websocket.receive_text()
-    except (WebSocketDisconnect, RuntimeError):
+    except WebSocketDisconnect, RuntimeError:
         # Starlette raises RuntimeError ("WebSocket is not connected...")
         # on a client disconnect during receive_text(); treat it the same
         # as WebSocketDisconnect.

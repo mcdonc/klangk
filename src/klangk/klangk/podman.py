@@ -1097,10 +1097,10 @@ class ExecSession:
         try:
             self._proc.terminate()
             await asyncio.wait_for(self._proc.wait(), timeout=5)
-        except (ProcessLookupError, asyncio.TimeoutError, OSError):
+        except ProcessLookupError, asyncio.TimeoutError, OSError:
             try:
                 self._proc.kill()
-            except (ProcessLookupError, OSError):
+            except ProcessLookupError, OSError:
                 pass
         self._save_returncode()
         self._proc = None

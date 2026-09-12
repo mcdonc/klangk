@@ -480,7 +480,7 @@ def _read_instance_id(settings: KlangkSettings) -> str | None:
     instance_id_path = Path(settings.data_dir) / "instance-id"
     try:
         return instance_id_path.read_text().strip() or None
-    except (FileNotFoundError, ValueError):
+    except FileNotFoundError, ValueError:
         return None
 
 
@@ -492,7 +492,7 @@ def _live_foreign_pid(pid_path: Path, pid: int) -> bool:
     """
     try:
         os.kill(pid, 0)
-    except (ProcessLookupError, OverflowError):
+    except ProcessLookupError, OverflowError:
         # Stale PID file — clean it up.
         pid_path.unlink(missing_ok=True)
         return False
@@ -515,7 +515,7 @@ def check_pid_preflight(settings: KlangkSettings) -> int | None:
     pid_path = Path(settings.state_dir) / f"klangk-{instance_id}.pid"
     try:
         pid = int(pid_path.read_text().strip())
-    except (FileNotFoundError, ValueError):
+    except FileNotFoundError, ValueError:
         return None
     return pid if _live_foreign_pid(pid_path, pid) else None
 
@@ -552,7 +552,7 @@ def refusal_already_reported(marker: Path, winner_pid: int) -> bool:
     """True if a refusal for this live winner PID was already logged (#2021)."""
     try:
         return int(marker.read_text().strip()) == winner_pid
-    except (FileNotFoundError, ValueError):
+    except FileNotFoundError, ValueError:
         return False
 
 
@@ -581,7 +581,7 @@ def check_port_preflight(host: str, port: int) -> bool:
     try:
         sock.connect((host, port))
         return True
-    except (ConnectionRefusedError, OSError):
+    except ConnectionRefusedError, OSError:
         return False
     finally:
         sock.close()
@@ -620,7 +620,7 @@ def _brew_prefix() -> str:
             timeout=5,
         )
         return result.stdout.strip()
-    except (subprocess.TimeoutExpired, OSError):
+    except subprocess.TimeoutExpired, OSError:
         return ""
 
 

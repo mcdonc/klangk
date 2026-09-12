@@ -133,7 +133,7 @@ def member_may_decide(client, workspace_id: str) -> bool:
             "/api/v1/my-permissions", params={"resource": resource}
         )
         perms = resp.json().get("permissions", {}).get(resource)
-    except (httpx.HTTPError, ValueError):
+    except httpx.HTTPError, ValueError:
         # ValueError: a non-JSON error body (e.g. an HTML 500 page from a
         # proxy in front of klangkd) must not skip the decider.
         return True

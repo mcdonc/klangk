@@ -561,11 +561,11 @@ class Util:
         path = self.pid_file_path()
         try:
             pid = int(path.read_text().strip())
-        except (FileNotFoundError, ValueError):
+        except FileNotFoundError, ValueError:
             return None
         try:
             os.kill(pid, 0)
-        except (ProcessLookupError, OverflowError):
+        except ProcessLookupError, OverflowError:
             # Process is dead or PID is invalid — stale PID file.
             path.unlink(missing_ok=True)
             return None
@@ -592,7 +592,7 @@ class Util:
             # have overwritten it after we were signalled to stop).
             if path.read_text().strip() == str(os.getpid()):
                 path.unlink()
-        except (FileNotFoundError, ValueError, OSError):
+        except FileNotFoundError, ValueError, OSError:
             pass
 
     # --- Proxy trust / forwarded headers ---------------------------------
@@ -991,7 +991,7 @@ class Util:
         raw = self.app.state.settings.bridge_timeout_seconds
         try:
             deploy_default = float(raw) if raw else None
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             deploy_default = None
         resolved = bridge_ws_settings.resolve_bridge_timeout(
             workspace, deploy_default
