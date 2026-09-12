@@ -34,6 +34,10 @@ jobs:
         startsWith(github.event.comment.body, '/backport')
       )
     steps:
+      # The action cherry-picks inside a git checkout and fetches the
+      # source PR + target branch itself. Checkout the base branch only —
+      # never PR code (pull_request_target runs with a write token).
+      - uses: actions/checkout@v7
       - name: Create backport pull request
         uses: korthout/backport-action@v4
         with:
