@@ -381,6 +381,24 @@ in
         "features/*/klangk/pubspec.yaml"
       ];
     };
+
+    # WORKAROUND (#3444): devenv 2.3.x's RunMode::All scheduler gained a third
+    # selection pass that adds the prerequisites of every visited task --
+    # including the skipped devenv:enterTest (it sits `after` enterShell),
+    # whose prerequisite devenv:git-hooks:run is the full prek suite
+    # (`prek run -a`: 16 hooks over all files, ~14.5s wall / ~5m30s CPU per
+    # shell entry under devenv 2.3.1; under 2.2.2 the task never ran on shell
+    # entry). Clearing the `before` edge keeps that task out of the shell's
+    # task graph; mkForce replaces the upstream list outright (a plain
+    # `before = [ ]` would concatenate with it and change nothing). The
+    # commit-time pre-commit hook keeps enforcing the suite on `git commit`.
+    # `devenv test` loses the suite as well -- that edge was its only path
+    # in; `prek run -a` or an ordinary commit runs a full-suite pass. Remove
+    # this override once an upstream release stops scheduling prerequisites
+    # of skipped tasks.
+    "devenv:git-hooks:run" = lib.mkIf config.git-hooks.enable {
+      before = lib.mkForce [ ];
+    };
   };
 
   processes = {
