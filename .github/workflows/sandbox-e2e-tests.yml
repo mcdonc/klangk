@@ -9,6 +9,7 @@ on:
         options: [stock, nix]
         default: stock
   pull_request:
+    branches: [main] # PR CI targets main; backport PRs to stable/2.0 run none (#3456)
     paths:
       - "sandboxes/**"
       - ".github/workflows/sandbox-e2e-tests.yml"

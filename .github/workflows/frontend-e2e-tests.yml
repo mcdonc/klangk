@@ -19,6 +19,7 @@ on:
   push:
     branches: [release/**]
   pull_request:
+    branches: [main] # PR CI targets main; backport PRs to stable/2.0 run none (#3456)
     paths:
       - "src/klangk/**"
       - "src/frontend/**"
