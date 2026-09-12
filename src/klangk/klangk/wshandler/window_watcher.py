@@ -51,7 +51,7 @@ async def _terminate_watcher_proc(proc) -> None:
         pass
     try:
         await asyncio.wait_for(proc.wait(), timeout=3)
-    except (asyncio.TimeoutError, ProcessLookupError):
+    except asyncio.TimeoutError, ProcessLookupError:
         try:
             proc.kill()
         except ProcessLookupError:

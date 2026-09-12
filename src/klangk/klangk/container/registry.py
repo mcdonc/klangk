@@ -156,7 +156,7 @@ def _parse_host_port(entry) -> int | None:
     """Host port from one PortBindings entry, or None when unreadable."""
     try:
         return int(entry["HostPort"])
-    except (KeyError, ValueError, TypeError):
+    except KeyError, ValueError, TypeError:
         return None
 
 
@@ -210,7 +210,7 @@ def _owner_pid_label(c: dict) -> int | None:
         return None
     try:
         return int(label)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
 
@@ -1414,7 +1414,7 @@ class ContainerRegistry(NetworkSidecarMixin):
             containers = await self.app.state.podman.list_containers(
                 f"klangk.workspace={workspace_id}"
             )
-        except (podman.PodmanError, OSError, ValueError):
+        except podman.PodmanError, OSError, ValueError:
             # Best-effort reconcile: a failed ps must not break a start
             # that may legitimately create a fresh container.
             return None

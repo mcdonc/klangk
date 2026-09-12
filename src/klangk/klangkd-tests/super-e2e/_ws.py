@@ -52,7 +52,7 @@ async def recv_until(ws, predicate, timeout: float = 60.0) -> list[dict]:
             continue
         try:
             msg = json.loads(raw)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
         messages.append(msg)
         if predicate(msg):

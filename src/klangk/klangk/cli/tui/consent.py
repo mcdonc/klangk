@@ -402,7 +402,7 @@ class ConsentDeciderController:
         """
         try:
             msg = json.loads(raw)
-        except (json.JSONDecodeError, TypeError):
+        except json.JSONDecodeError, TypeError:
             return IGNORED, None
         if not isinstance(msg, dict):
             return IGNORED, None
@@ -656,7 +656,7 @@ async def cancel_and_await(task) -> None:
     task.cancel()
     try:
         await task
-    except (asyncio.CancelledError, Exception):
+    except asyncio.CancelledError, Exception:
         pass
 
 

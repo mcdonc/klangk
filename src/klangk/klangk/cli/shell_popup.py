@@ -93,7 +93,7 @@ def host_tmux_version() -> tuple[int, int] | None:
         proc = subprocess.run(
             ["tmux", "-V"], capture_output=True, text=True, timeout=5
         )
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
         return None
     if proc.returncode != 0:
         return None
@@ -172,7 +172,7 @@ def list_session_names(socket: str) -> list[str] | None:
             text=True,
             timeout=5,
         )
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
         return None
     if proc.returncode != 0:
         return None
@@ -348,7 +348,7 @@ def outer_clients(socket: str, hidden: str) -> list[str]:
             text=True,
             timeout=5,
         )
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
         return []
     clients: list[str] = []
     for line in proc.stdout.splitlines():
@@ -367,7 +367,7 @@ def hidden_has_client(socket: str, hidden: str) -> bool:
             text=True,
             timeout=5,
         )
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
         return False
     return bool(proc.stdout.strip())
 

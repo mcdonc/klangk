@@ -149,7 +149,7 @@ def client() -> KlangkClient:
         )
         try:
             entered = Prompt.ask(message, password=True)
-        except (EOFError, KeyboardInterrupt):
+        except EOFError, KeyboardInterrupt:
             return None
         return entered or None
 

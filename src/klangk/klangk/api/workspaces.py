@@ -1257,7 +1257,7 @@ async def _estimate_home_size(home_dir) -> int:
         )
         if result.returncode == 0:
             return int(result.stdout.split()[0])
-    except (OSError, ValueError, subprocess.TimeoutExpired):
+    except OSError, ValueError, subprocess.TimeoutExpired:
         pass  # fall back to 0
     return 0
 
@@ -1527,14 +1527,14 @@ async def _read_archive_metadata(archive_path: str) -> dict:
                 f"{_METADATA_MAX_BYTES // (1024 * 1024)} MB metadata bound"
             ),
         )
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+    except subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError:
         raise HTTPException(
             status_code=400,
             detail="Archive missing workspace.json or is corrupt",
         )
     try:
         return json.loads(payload)
-    except (json.JSONDecodeError, UnicodeDecodeError):
+    except json.JSONDecodeError, UnicodeDecodeError:
         raise HTTPException(
             status_code=400,
             detail="workspace.json is corrupt or contains invalid JSON",
@@ -1983,7 +1983,7 @@ async def import_workspace(
 
     except HTTPException:
         raise
-    except (json.JSONDecodeError, subprocess.TimeoutExpired):
+    except json.JSONDecodeError, subprocess.TimeoutExpired:
         # The metadata read converts its own timeout to a 400 upstream
         # (#3284), so every timeout reaching here has a row to roll
         # back; ws stays None only for the HTTPException paths that

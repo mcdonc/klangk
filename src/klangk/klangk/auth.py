@@ -929,7 +929,7 @@ class Auth:
             return False
         try:
             first_dt = datetime.fromisoformat(first)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return False
         return (
             datetime.now(timezone.utc) - first_dt

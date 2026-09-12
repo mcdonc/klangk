@@ -405,7 +405,7 @@ async def wait_for_terminal_start(ws, timeout: float) -> None:
             break
         try:
             raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
-        except (asyncio.TimeoutError, websockets.ConnectionClosed):
+        except asyncio.TimeoutError, websockets.ConnectionClosed:
             break
         if json.loads(raw).get("type") == "terminal_started":
             break

@@ -333,7 +333,7 @@ async def _receive_decider_frame(safe_ws):
     # as WebSocketDisconnect.
     try:
         raw = await safe_ws.receive_text()
-    except (WebSocketDisconnect, RuntimeError):
+    except WebSocketDisconnect, RuntimeError:
         return _FRAME_DISCONNECTED
     try:
         msg = json.loads(raw)

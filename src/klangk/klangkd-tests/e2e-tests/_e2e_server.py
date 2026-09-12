@@ -229,13 +229,13 @@ def _terminate(proc: Popen) -> None:
     try:
         proc.terminate()
         proc.wait(timeout=5)
-    except (ProcessLookupError, subprocess.TimeoutExpired):
+    except ProcessLookupError, subprocess.TimeoutExpired:
         pass
     if proc.poll() is None:  # SIGTERM ignored / not delivered
         try:
             proc.kill()
             proc.wait(timeout=5)
-        except (ProcessLookupError, subprocess.TimeoutExpired):
+        except ProcessLookupError, subprocess.TimeoutExpired:
             pass
 
 
@@ -302,7 +302,7 @@ def _wait_ready(
                         f"(instance mismatch) — a concurrent E2E run "
                         f"grabbed the drawn port (#3057)"
                     )
-            except (ForeignServerError, EarlyExitError):
+            except ForeignServerError, EarlyExitError:
                 raise
             except Exception as exc:  # not up yet
                 last_exc = exc
@@ -649,7 +649,7 @@ def _abandon_attempt(server: dict[str, Any]) -> None:
     try:
         proc.kill()
         proc.wait(timeout=5)
-    except (ProcessLookupError, subprocess.TimeoutExpired):
+    except ProcessLookupError, subprocess.TimeoutExpired:
         pass
     log_file = getattr(proc, "_log_file", None)
     if log_file is not None:
@@ -680,7 +680,7 @@ def stop_server(server: dict[str, Any]) -> None:
     try:
         proc.kill()
         proc.wait(timeout=5)
-    except (ProcessLookupError, subprocess.TimeoutExpired):
+    except ProcessLookupError, subprocess.TimeoutExpired:
         pass
     # Close the log file when one was opened (file-streamed stdout).
     log_file = getattr(proc, "_log_file", None)

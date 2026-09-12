@@ -92,7 +92,7 @@ async def test_sighup_closes_ws_with_1012_and_recovers(appliance, api, auth):
                 raw = await asyncio.wait_for(ws.recv(), timeout=90)
                 try:
                     msg = json.loads(raw)
-                except (TypeError, ValueError):
+                except TypeError, ValueError:
                     continue
                 if msg.get("type") == "server_recycle":
                     phases.append(msg.get("phase"))

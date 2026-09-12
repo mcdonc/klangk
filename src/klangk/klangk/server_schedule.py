@@ -117,7 +117,7 @@ class ServerScheduler(IntervalWorker):
         for s in schedules:
             try:
                 is_due = parse_fire_at(s["fire_at"]) <= now
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 # 7: a malformed fire_at row (manual DB edit) must not
                 # kill the whole tick — skip and log it, keep the healthy
                 # rows working (still broadcast it; never fire it).
