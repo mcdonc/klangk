@@ -7,13 +7,23 @@ scenario parked the tab on the backend's JSON error page failed on
 "No Flutter isolate found"). ``FmtkClient.exec`` carries the recovery:
 a gone isolate with the tab on the app origin arms a marker, a state
 that outlives the window restarts the flutter run transparently, and a
-parked-away tab never arms. This scenario pins all three legs against
-the live stack.
+parked-away tab never arms. The first scenario pins all three legs
+against the live stack.
+
+``Harness.restart_app`` is the manual counterpart of that recovery —
+callers reach for it when they find the app already dead (the flows
+nightly lost its whole network module ten runs running to this: the
+auth module's dying deep-link-booted instance, then a drain that died
+on the dead app before the restart could run). The second scenario
+pins that the pre-restart drain treats the gone-isolate state as
+"no window left to launder" and the restart proceeds.
 """
 
 from __future__ import annotations
 
 import time
+
+import pytest
 
 from fmtkharness import (
     BACKEND_PORT,
@@ -82,4 +92,21 @@ def test_isolate_wedge_recovery(harness, app):
     cdp_wait_tab_url((proxy_origin(),), timeout=30)
     app.flutter.isolate_gone_since = time.monotonic() - (WEDGE_RECOVERY_SECONDS + 5)
     assert app.recover_if_wedged(gone_error()) is True
+    app.wait_for_login_page()
+
+
+def test_restart_app_survives_dead_app(harness, app):
+    # the dead-instance state restart_app exists to recover: Chrome is
+    # gone (what a dying instance leaves behind), so the flutter tool's
+    # VM service answers with no Flutter isolate behind it
+    at_login(harness, app)
+    harness.flutter.stop_chrome()
+    with pytest.raises(FmtkError):
+        app.app_errors()  # sanity: the drain really is in the gone state
+
+    # the pre-restart drain must treat that as "nothing to launder",
+    # not fail the restart it is part of — and the relaunch must bring
+    # back a drivable app with the wedge marker cleared
+    harness.restart_app()
+    assert app.flutter.isolate_gone_since is None
     app.wait_for_login_page()
