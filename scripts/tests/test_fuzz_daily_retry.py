@@ -4,10 +4,13 @@ fuzz-daily-retry.yml re-runs the daily fuzz job when the hosted runner
 is reclaimed mid-fuzz ("The runner has received a shutdown signal",
 step exit 143 — 6 of the 10 daily runs between Sep 10 and Sep 19,
 2026). The signature it keys on is the fuzz job's ``if: always()``
-"Upload server log" step ending *skipped*: a runner shutdown skips
-post-steps, while a genuine fuzz-anomaly failure runs them and is
-therefore never auto-retried (a rerun draws a fresh random seed and
-could mask a real finding with a passing attempt).
+"Upload server log" step ending *skipped*: a runner shutdown takes
+the runner VM with the job, so every remaining step — including that
+`if: always()` upload step — never starts and is reported skipped,
+while a genuine fuzz-anomaly failure exits the fuzzer itself, runs
+the upload step, and is therefore never auto-retried (a rerun draws a
+fresh random seed and could mask a real finding with a passing
+attempt).
 
 Pure file-content contract — no network, no runners. Pins the couplings
 that would otherwise drift silently:
@@ -71,6 +74,10 @@ def test_retry_triggers_on_daily_workflow_by_name():
     daily_name = load_workflow(DAILY)["name"]
     trigger = workflow_run_trigger(load_workflow(RETRY))
     assert trigger is not None, "fuzz-daily-retry.yml: no workflow_run trigger"
+    assert isinstance(trigger["workflows"], list), (
+        "workflow_run.workflows must stay a list — a bare string would "
+        "turn the membership check below into a substring match"
+    )
     assert daily_name in trigger["workflows"], (
         f"fuzz-daily-retry.yml must trigger on completions of "
         f"{daily_name!r} — renaming fuzz-daily.yml's name: key silently "
@@ -82,9 +89,10 @@ def test_retry_triggers_on_daily_workflow_by_name():
 def test_retry_gate_bounds_attempts_to_failed_runs():
     gate = load_workflow(RETRY)["jobs"]["retry"]["if"]
     assert "conclusion == 'failure'" in gate
-    assert "run_attempt <" in gate, (
-        "the retry gate must bound github.event.workflow_run.run_attempt, "
-        "or every rerun that fails again fires another rerun forever"
+    assert "run_attempt < 3" in gate, (
+        "the retry gate must bound github.event.workflow_run.run_attempt "
+        "to the original attempt plus two reruns (#3471), or every rerun "
+        "that fails again fires another rerun forever"
     )
 
 
