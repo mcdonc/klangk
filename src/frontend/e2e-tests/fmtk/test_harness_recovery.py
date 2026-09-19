@@ -23,10 +23,9 @@ from __future__ import annotations
 
 import time
 
-import pytest
-
 from fmtkharness import (
     BACKEND_PORT,
+    FmtkClient,
     FmtkError,
     ISOLATE_GONE_MARK,
     WEDGE_RECOVERY_SECONDS,
@@ -95,18 +94,21 @@ def test_isolate_wedge_recovery(harness, app):
     app.wait_for_login_page()
 
 
-def test_restart_app_survives_dead_app(harness, app):
-    # the dead-instance state restart_app exists to recover: Chrome is
-    # gone (what a dying instance leaves behind), so the flutter tool's
-    # VM service answers with no Flutter isolate behind it
+def test_restart_app_survives_dead_app(harness, app, monkeypatch):
+    # the dead-instance state restart_app exists to recover: the drain
+    # must treat a gone isolate as "no window left to launder", not
+    # fail the restart it is part of. The gone failure is fabricated
+    # with the same synthetic error the wedge legs use — killing
+    # Chrome for real on CI takes the VM service down with it
+    # (connection refused), a different dead state than the nightly's
+    # (service answers, no isolate behind it).
     at_login(harness, app)
-    harness.flutter.stop_chrome()
-    with pytest.raises(FmtkError):
-        app.app_errors()  # sanity: the drain really is in the gone state
 
-    # the pre-restart drain must treat that as "nothing to launder",
-    # not fail the restart it is part of — and the relaunch must bring
-    # back a drivable app with the wedge marker cleared
-    harness.restart_app()
+    def raise_gone(self):
+        raise gone_error()
+
+    monkeypatch.setattr(FmtkClient, "app_errors", raise_gone)
+    harness.restart_app()  # must not raise; stop + relaunch run
+    monkeypatch.undo()
     assert app.flutter.isolate_gone_since is None
     app.wait_for_login_page()
