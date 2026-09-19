@@ -3,12 +3,17 @@ name: "Fuzz API: retry infra kills"
 # Companion to "Fuzz API: daily run" (fuzz-daily.yml), for the failure
 # mode of #3471: the hosted ubuntu-latest runner is reclaimed mid-fuzz —
 # minutes of total silence, then "The runner has received a shutdown
-# signal" and step exit 143. When that happens the fuzz job's
-# ``if: always()`` "Upload server log" step is *skipped* (a runner
-# shutdown skips post-steps), and that is the signature this workflow
-# keys on. A genuine fuzz-anomaly failure runs the upload step, so it
-# is never auto-retried: a rerun draws a fresh random seed and could
-# mask a real finding with a passing attempt.
+# signal" and step exit 143. When that happens the runner VM is gone
+# with the job, so every remaining step — including the fuzz job's
+# ``if: always()`` "Upload server log" step — never starts and is
+# reported *skipped*. That is the signature this workflow keys on. A
+# genuine fuzz-anomaly failure exits the fuzzer itself, the upload
+# step runs, and the failure is never auto-retried: a rerun draws a
+# fresh random seed and could mask a real finding with a passing
+# attempt. (The inverse gap is deliberate: if the runner dies during
+# the upload step itself, that step reports failure/cancelled rather
+# than skipped, no retry fires, and the red run stays visible for
+# triage.)
 #
 # A retry job inside fuzz-daily.yml itself cannot work:
 # rerunFailedJobs requires the run to be completed, and the run is not
@@ -85,10 +90,16 @@ jobs:
                 run_id: run.id,
               });
             } catch (err) {
-              // 422 = the run is already re-running (duplicate event
-              // delivery) — nothing left to do.
+              // 422 = the run refused a rerun — most likely a
+              // duplicate event delivery racing an already-started
+              // rerun. Log why, so a different refusal is visible.
               if (err.status === 422) {
-                core.info("run already re-running");
+                core.info(
+                  `rerun refused (422): ${err.message}` +
+                  (err.response?.data?.message
+                    ? ` — ${err.response.data.message}`
+                    : ""),
+                );
                 return;
               }
               throw err;
