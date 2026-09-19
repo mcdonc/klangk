@@ -1,0 +1,95 @@
+name: "Fuzz API: retry infra kills"
+
+# Companion to "Fuzz API: daily run" (fuzz-daily.yml), for the failure
+# mode of #3471: the hosted ubuntu-latest runner is reclaimed mid-fuzz —
+# minutes of total silence, then "The runner has received a shutdown
+# signal" and step exit 143. When that happens the fuzz job's
+# ``if: always()`` "Upload server log" step is *skipped* (a runner
+# shutdown skips post-steps), and that is the signature this workflow
+# keys on. A genuine fuzz-anomaly failure runs the upload step, so it
+# is never auto-retried: a rerun draws a fresh random seed and could
+# mask a real finding with a passing attempt.
+#
+# A retry job inside fuzz-daily.yml itself cannot work:
+# rerunFailedJobs requires the run to be completed, and the run is not
+# complete while one of its jobs is still executing. Hence this
+# separate workflow_run-triggered workflow.
+#
+# The gate allows the original attempt plus two automatic reruns
+# (run_attempt < 3); after that the failure stands for human triage.
+
+on:
+  workflow_run:
+    workflows: ["Fuzz API: daily run"]
+    types: [completed]
+
+permissions:
+  actions: write # rerunFailedJobs
+
+concurrency:
+  group: ${{ github.workflow }}
+
+jobs:
+  retry:
+    if: >
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.run_attempt < 3
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Re-run the fuzz job when the runner was shut down mid-run
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            const jobs = await github.paginate(
+              github.rest.actions.listJobsForWorkflowRun,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: run.id,
+                per_page: 100,
+              },
+            );
+            const fuzz = jobs.find((j) => j.name === "fuzz");
+            if (!fuzz) {
+              core.setFailed(`no fuzz job in ${run.html_url}`);
+              return;
+            }
+            const upload = (fuzz.steps || []).find(
+              (s) => s.name === "Upload server log",
+            );
+            core.info(
+              `fuzz conclusion=${fuzz.conclusion}, ` +
+              `upload-step conclusion=${upload ? upload.conclusion : "absent"}`,
+            );
+            const killed =
+              fuzz.conclusion === "failure" &&
+              upload &&
+              upload.conclusion === "skipped";
+            if (!killed) {
+              core.info(
+                "not the runner-shutdown signature (#3471); " +
+                "leaving the failure for triage",
+              );
+              return;
+            }
+            core.notice(
+              `runner shutdown detected (attempt ${run.run_attempt}); ` +
+              "re-running the fuzz job",
+            );
+            try {
+              await github.rest.actions.rerunFailedJobs({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: run.id,
+              });
+            } catch (err) {
+              // 422 = the run is already re-running (duplicate event
+              // delivery) — nothing left to do.
+              if (err.status === 422) {
+                core.info("run already re-running");
+                return;
+              }
+              throw err;
+            }
