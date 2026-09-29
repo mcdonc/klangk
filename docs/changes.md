@@ -33,6 +33,20 @@ operators or integrators to act when upgrading.
 
 ## \[Unreleased]
 
+### Fixed
+
+- **Soliplex web login works against fragment-based auth callbacks
+  (#3476).** Soliplex `soliplex#1415` moved the post-IdP `return_to`
+  tokens from the query string into the URL fragment; the feature's
+  popup poller read only `Uri.queryParameters`, so every web login
+  against such a backend failed with "No token in auth callback" (the
+  `href.contains('token=')` poll trigger still fired, but the params
+  were behind the `#`). `extractCallbackParams` now reads the
+  fragment's `?`-part after the query string — the same precedence as
+  the Soliplex web client's `callback_params_parser` — so older
+  query-string backends keep working. Native (`flutter_appauth`)
+  login is unaffected.
+
 ## \[v2.0a4] - 2026-09-29
 
 ### Added

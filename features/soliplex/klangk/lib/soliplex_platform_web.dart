@@ -2,7 +2,8 @@
 // conditional export in soliplex_platform.dart when dart.library.js_interop is
 // available. Preserves the original feature behavior verbatim: localStorage
 // token store + popup OAuth login (the IdP dance is mediated by the Soliplex
-// backend, which redirects back to `return_to` with tokens in the query).
+// backend, which redirects back to `return_to` with tokens in the fragment
+// — soliplex#1415 — with a query-string fallback for older backends).
 import 'dart:async';
 
 import 'package:klangk_plugin_api/klangk_plugin_api.dart' show baseUrl;
@@ -101,16 +102,28 @@ class SoliplexConfigStore {
 
 /// Popup OIDC login. Must be called from a user gesture to avoid popup
 /// blockers. Opens `$soliplexUrl/api/login/$systemId?return_to=...` and polls
-/// the popup URL for the token query params once it redirects back to our
-/// origin.
+/// the popup URL for the token params once it redirects back to our origin.
 ///
 /// The return_to points at the klangk backend's `/empty` endpoint — a
-/// plain-text page that returns an empty body. The `?token=` query params
-/// stay in the URL for the poller to read same-origin. This avoids loading
+/// plain-text page that returns an empty body. Since soliplex#1415 the token
+/// params land in the URL fragment (`/empty#?token=…`), which never leaves the
+/// browser; the poller reads them same-origin from `popup.location.href`.
+/// Before that change they were query params. This avoids loading
 /// the Flutter SPA in the popup (which is slow and has hash-routing
 /// complications). Works in Firefox because the final landing URL is
 /// same-origin — cross-origin SecurityErrors during the IdP hop are caught
 /// and the poller keeps going.
+///
+/// Callback params are accepted from either the query string (pre-1415
+/// backends) or after the `?` inside the fragment (mirrors the Soliplex web
+/// client's `callback_params_parser.extractQueryParams`).
+Map<String, String> extractCallbackParams(Uri uri) {
+  if (uri.queryParameters.containsKey('token')) return uri.queryParameters;
+  final fragment = uri.fragment;
+  final q = fragment.indexOf('?');
+  return q < 0 ? const {} : Uri.splitQueryString(fragment.substring(q + 1));
+}
+
 Future<SoliplexAuthResult> soliplexInteractiveLogin({
   required String systemId,
   required String soliplexUrl,
@@ -127,10 +140,11 @@ Future<SoliplexAuthResult> soliplexInteractiveLogin({
   );
 
   // Point return_to at the klangk backend's /empty endpoint — a plain-text
-  // page that returns an empty body and just sits there, so ?token= stays
-  // in popup.location.href for the poller to read same-origin.
+  // page that returns an empty body and just sits there, so the token
+  // params stay in popup.location.href (in the fragment since soliplex#1415)
+  // for the poller to read same-origin.
   // Ensure baseUrl ends with / so the redirect doesn't hit a bare-path
-  // 301 that strips query params (e.g. /klangk -> /klangk/ drops ?token=).
+  // 301 that strips params (e.g. /klangk -> /klangk/ drops ?token=).
   final base = baseUrl.endsWith('/') ? baseUrl : '$baseUrl/';
   final callbackPath = Uri.encodeComponent(
     '${web.window.location.origin}${base}empty',
@@ -166,9 +180,10 @@ Future<SoliplexAuthResult> soliplexInteractiveLogin({
         t.cancel();
         popup.close();
         final uri = Uri.parse(href);
-        final token = uri.queryParameters['token'];
-        final refreshToken = uri.queryParameters['refresh_token'];
-        final expiresIn = uri.queryParameters['expires_in'];
+        final params = extractCallbackParams(uri);
+        final token = params['token'];
+        final refreshToken = params['refresh_token'];
+        final expiresIn = params['expires_in'];
         if (token == null || token.isEmpty) {
           completer.completeError(Exception('No token in auth callback'));
           return;
