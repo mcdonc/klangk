@@ -33,6 +33,8 @@ operators or integrators to act when upgrading.
 
 ## \[Unreleased]
 
+## \[v2.0a5] - 2026-09-29
+
 ### Fixed
 
 - **Soliplex web login works against fragment-based auth callbacks
