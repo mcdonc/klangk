@@ -2776,6 +2776,87 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+<<<<<<< HEAD
+=======
+- **Soliplex web login works against fragment-based auth callbacks
+  (#3476).** Soliplex `soliplex#1415` moved the post-IdP `return_to`
+  tokens from the query string into the URL fragment; the feature's
+  popup poller read only `Uri.queryParameters`, so every web login
+  against such a backend failed with "No token in auth callback" (the
+  `href.contains('token=')` poll trigger still fired, but the params
+  were behind the `#`). `extractCallbackParams` now reads the
+  fragment's `?`-part after the query string — the same precedence as
+  the Soliplex web client's `callback_params_parser` — so older
+  query-string backends keep working. Native (`flutter_appauth`)
+  login is unaffected.
+- **Container-egress proxy now routes the streaming bridge endpoint
+  (#3473).** The built-in proxy's browser-delegate handle matched only
+  the exact path `/api/v1/browser-delegate`, so calls to its streaming
+  sibling `/api/v1/browser-delegate/stream` matched no handler and the
+  proxy answered its default empty `200` — container tool plugins that
+  use the streaming bridge (e.g. all soliplex tools) received zero-byte
+  responses and reported "no output". Both endpoints now share one
+  reverse-proxied route, and the egress site gained a terminal catch-all
+  that answers `404`, so a future allowlist gap surfaces as an error
+  instead of a silent empty `200`. Deployed proxies pick the fix up on
+  the next klangkd restart (or SIGHUP config re-render).
+- **Opening a second workspace no longer corrupts the app or strands git
+  authentication (#3406).** Closing a workspace page disposed the app-wide
+  feature plugins, so the next workspace opened in the same session
+  threw "A `<Feature>` was used after being disposed" while building
+  the app bar and left the page unrenderable for the rest of the
+  session; in release builds the git-credential feature's message
+  listener stayed cancelled, so every later browser-based git
+  authorization in the session waited forever. The workspace page now
+  releases only per-workspace feature-tab resources on close; the
+  plugin registry owns the features' lifetime.
+- **Workspace page no longer throws during teardown under a live config
+  reload (#3402).** A `workspacesChanged` push arriving while the
+  workspace page was deactivating — a SIGHUP reload resetting the
+  workspace socket just as the page is navigated away — ran the
+  classification-marking re-resolve on the deactivated element and
+  surfaced as an uncaught "deactivated widget" error in the browser
+  console. The listener now returns early once the page is no longer
+  mounted.
+- **Cancel in a git authorization dialog now fails the git operation
+  (#3402).** Cancelling the workspace's git-authorization dialog (or
+  denying the app on the provider's approval page) during a Gitea
+  browser-flow clone exits the credential helper with an error, so git
+  tries its next configured helper and otherwise reports a fatal
+  authentication failure — the documented contract. Previously the
+  helper re-prompted with the manual token dialog, leaving the clone
+  waiting on a dialog nobody asked for.
+- **SSO login completes under an every-visit login banner
+  (#3371).** With `login_banner_every_visit` on, the browser's
+  return from the identity provider carried a one-time login code
+  that the banner gate discarded by redirecting to the consent page
+  first, so single sign-on could never finish (the code expires in 60
+  seconds and the redirect replaces the URL). The OIDC callback page
+  now redeems the code before the banner is shown, and the user is
+  sent to the consent page on the next navigation as usual. A failed
+  code exchange shows the error with a “Go to Login” button instead
+  of stranding the browser on the callback page.
+- **FIPS images pin ambient OpenSSL fetches to `fips=yes` (#3359).**
+  The activation config in the FIPS workspace and FIPS host images
+  now sets `default_properties = fips=yes`, so every process in the
+  container requires the fips property on provider-less algorithm
+  fetches, and Node's `crypto.getFips()` reports FIPS mode as active.
+  In the FIPS workspace image this un-breaks the pi coding agent:
+  jiti (its TypeScript extension loader) chooses its cache-key hash
+  from `crypto.getFips()` and previously picked MD5 — refused by the
+  fips provider — which failed every extension load with
+  `error:0308010C` until `pi -ne` was used. The configs also set
+  `config_diagnostics = 1`: a config that fails to parse now aborts
+  the process instead of silently falling back to the default
+  provider.
+- **FIPS fetch pin is Linux-only (#3364).** Under
+  `KLANGKD_FIPS_MODE`, the startup step that pins ambient OpenSSL
+  fetches to `fips=yes` (#3350) now runs only on Linux, where
+  OpenSSL's FIPS provider exists. On other platforms the step is
+  skipped and the regular process-posture check still governs
+  startup; on macOS the previous ctypes load of the system libcrypto
+  aborted the whole process at load time.
+>>>>>>> 91ef920 (Fix soliplex web login for fragment-based auth callback (soliplex#1415) (#3476))
 - **Environment-variable reference page (#3339).** The table on
   `docs/reference/environment.md` listed every variable twice: a stale
   copy of the table (missing five variables added since, carrying an

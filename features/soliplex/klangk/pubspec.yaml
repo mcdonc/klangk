@@ -1,7 +1,7 @@
 name: klangk_feature_soliplex
 description: Soliplex knowledge base feature for Klangk (native + web)
 publish_to: none
-version: 0.2.0
+version: 0.2.1
 
 # Native-capable port of the web-only soliplex klangk feature. The two
 # browser-only concerns — token storage and interactive login — live behind a
