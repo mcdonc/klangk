@@ -33,6 +33,8 @@ operators or integrators to act when upgrading.
 
 ## \[Unreleased]
 
+## \[v2.0a4] - 2026-09-29
+
 ### Added
 
 - **`KLANGKWS_FEATURE_GITEA_OAUTH_CLIENT_ID` (#3405).** With
