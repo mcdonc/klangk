@@ -794,6 +794,22 @@ class TestRenderConfig:
         )  # unbuffered bidirectional verdict stream
         assert "reverse_proxy upstream" in locs
 
+    def test_egress_delegate_handle_covers_stream_sibling(self):
+        # #3473: the delegate handle must cover BOTH /api/v1/browser-delegate
+        # and /api/v1/browser-delegate/stream. An exact-path handle left the
+        # streaming sibling matching no handler, so Caddy answered its
+        # default EMPTY 200 — containers saw 0-byte responses and every
+        # streaming-bridge tool call returned no output.
+        s = make_settings(env={"KLANGKD_EGRESS_PORT": "8995"})
+        locs = _renderer(s)._egress_locations("upstream", "10.0.0.0/8")
+        assert (
+            "path /api/v1/browser-delegate /api/v1/browser-delegate/*" in locs
+        )
+        assert "handle @browser_delegate" in locs
+        # exact-path-only handle must be gone — it is the regression
+        assert "handle /api/v1/browser-delegate {" not in locs
+        assert "flush_interval -1" in locs  # unbuffered NDJSON chunks
+
     def test_headless_has_only_egress(self):
         s = make_settings(env={"KLANGKD_EGRESS_PORT": "8995"})
         cf = _renderer(s).render_config("unix//sock", self.ADMIN)

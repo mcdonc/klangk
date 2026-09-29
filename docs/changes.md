@@ -2682,6 +2682,15 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Container-egress proxy now routes the streaming bridge endpoint
+  (#3473).** The built-in proxy's browser-delegate handle matched only
+  the exact path `/api/v1/browser-delegate`, so calls to its streaming
+  sibling `/api/v1/browser-delegate/stream` matched no handler and the
+  proxy answered its default empty `200` — container tool plugins that
+  use the streaming bridge (e.g. all soliplex tools) received zero-byte
+  responses and reported "no output". Both endpoints now share one
+  reverse-proxied route. Deployed proxies pick the fix up on the next
+  klangkd restart (or SIGHUP config re-render).
 - **Opening a second workspace no longer corrupts the app or strands git
   authentication (#3406).** Closing a workspace page disposed the app-wide
   feature plugins, so the next workspace opened in the same session

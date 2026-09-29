@@ -944,8 +944,18 @@ class CaddyRenderer:
             not_src_matcher = ""
             guard = "		respond 403\n"
         llm = self._build_llm_block(upstream, guard)
+        # #3473: the matcher must cover BOTH bridge endpoints. A bare
+        # ``handle /api/v1/browser-delegate`` is an exact-path match, so the
+        # streaming sibling ``/api/v1/browser-delegate/stream`` matched no
+        # handler and Caddy answered its default EMPTY 200 — containers saw
+        # 0-byte "success" responses and every streaming-bridge tool call
+        # (e.g. all soliplex tools) returned no output.
+        delegate_matcher = (
+            "	@browser_delegate path /api/v1/browser-delegate "
+            "/api/v1/browser-delegate/*\n"
+        )
         delegate = (
-            "	handle /api/v1/browser-delegate {\n"
+            "	handle @browser_delegate {\n"
             f"{guard}"
             f"		reverse_proxy {upstream} {{\n"
             f"{self._common_rp_headers()}\n"
@@ -968,7 +978,7 @@ class CaddyRenderer:
             "		}\n"
             "	}\n"
         )
-        return not_src_matcher + egress_ws + llm + delegate
+        return not_src_matcher + delegate_matcher + egress_ws + llm + delegate
 
     def _egress_site(self, upstream: str, container_srcs: str) -> str:
         """The full container-egress site block (headless + full both render it)."""
