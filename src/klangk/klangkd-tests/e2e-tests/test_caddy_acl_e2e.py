@@ -453,13 +453,15 @@ class TestCaddyEgressAclAllow:
 
     def test_browser_delegate_stream_allowed_from_container_ip(self, stack):
         """#3473 regression: the streaming sibling passes the egress ACL and
-        is actually reverse-proxied (echo backend 200). Pre-fix it got the
-        default empty 200 with no proxying at all."""
+        is actually reverse-proxied. The echoed request path pins the
+        proxying itself — Caddy's default empty 200 (the pre-fix behavior)
+        is also a bare 200 and must not satisfy this test."""
         r = httpx.post(
             f"http://{stack['host_ip']}:{stack['egress_port']}/api/v1/browser-delegate/stream",
             timeout=5,
         )
         assert r.status_code == 200
+        assert r.json()["path"] == "/api/v1/browser-delegate/stream"
 
 
 # ---------------------------------------------------------------------------
