@@ -805,10 +805,33 @@ class TestRenderConfig:
         assert (
             "path /api/v1/browser-delegate /api/v1/browser-delegate/*" in locs
         )
-        assert "handle @browser_delegate" in locs
         # exact-path-only handle must be gone — it is the regression
         assert "handle /api/v1/browser-delegate {" not in locs
-        assert "flush_interval -1" in locs  # unbuffered NDJSON chunks
+        # Slice to the delegate block itself: sibling handles emit the same
+        # guard / flush_interval strings, so a whole-`locs` assert would pass
+        # even if the delegate's own lines were dropped.
+        delegate_block = locs[locs.index("handle @browser_delegate") :]
+        assert "respond @notContainerSrc 403" in delegate_block
+        assert "flush_interval -1" in delegate_block  # unbuffered NDJSON
+
+    def test_egress_site_is_deny_by_default(self):
+        # #3473 follow-up: the egress site ends in a bare catch-all handle, so
+        # an allowlist gap can never again surface as Caddy's default EMPTY
+        # 200. The catch-all must be LAST — `handle` blocks run in written
+        # order, and a bare handle matches everything.
+        s = make_settings(env={"KLANGKD_EGRESS_PORT": "8995"})
+        locs = _renderer(s)._egress_locations("upstream", "10.0.0.0/8")
+        catch_all = "\thandle {\n\t\trespond 404\n\t}\n"
+        assert locs.endswith(catch_all)
+
+    def test_egress_site_deny_by_default_when_fail_closed(self):
+        # The fail-closed branch (no container sources → deny all) keeps the
+        # same shape: guards inside each handle, catch-all last.
+        s = make_settings(env={"KLANGKD_EGRESS_PORT": "8995"})
+        locs = _renderer(s)._egress_locations("upstream", "")
+        delegate_block = locs[locs.index("handle @browser_delegate") :]
+        assert "respond 403" in delegate_block
+        assert locs.endswith("\thandle {\n\t\trespond 404\n\t}\n")
 
     def test_headless_has_only_egress(self):
         s = make_settings(env={"KLANGKD_EGRESS_PORT": "8995"})
@@ -901,8 +924,12 @@ class TestRenderConfig:
         assert "handle @notTrustedPeer {" in cf
         assert cf.count("header_up -X-Forwarded-Host") == 1
         assert cf.count("header_up -X-Forwarded-Prefix") == 1
-        # The trusted fallback handle proxies without the deletions.
-        trusted = cf[cf.index("\thandle {\n") :]
+        # The trusted fallback handle proxies without the deletions. Slice
+        # inside the browser site first — the egress site also ends in a bare
+        # catch-all `handle {` (#3473), so a whole-config `index` would land
+        # on the wrong one.
+        browser = cf[cf.index("http://:8997 {") :]
+        trusted = browser[browser.index("\thandle {\n") :]
         assert "header_up -X-Forwarded-" not in trusted
         assert trusted.count("reverse_proxy") >= 1
 

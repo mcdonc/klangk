@@ -332,6 +332,31 @@ class TestCaddyAclEnforcement:
         )
         assert r.status_code == 403
 
+    def test_browser_delegate_stream_denied_from_non_container(self, stack):
+        """#3473 regression: the streaming sibling is inside the guard.
+
+        Pre-fix, the exact-path handle left /api/v1/browser-delegate/stream
+        matching no handler, so Caddy answered its default EMPTY 200 — the
+        request neither hit the container-source guard nor reached the
+        backend, and callers read a 0-byte "success"."""
+        r = httpx.post(
+            f"http://127.0.0.1:{stack['egress_port']}/api/v1/browser-delegate/stream",
+            timeout=5,
+        )
+        assert r.status_code == 403
+
+    def test_unmatched_egress_path_is_404_not_empty_200(self, stack):
+        """#3473 follow-up: the egress site is deny-by-default.
+
+        An allowlist gap must surface as 404, never as Caddy's default
+        empty 200 (the silent failure mode that hid the missing /stream
+        route)."""
+        r = httpx.post(
+            f"http://127.0.0.1:{stack['egress_port']}/api/v1/not-a-route",
+            timeout=5,
+        )
+        assert r.status_code == 404
+
 
 # ---------------------------------------------------------------------------
 # Egress ACL allow-path (the positive case) (#1559 acceptance criterion)
@@ -422,6 +447,16 @@ class TestCaddyEgressAclAllow:
         positive counterpart to ``test_browser_delegate_denied_from_non_container``."""
         r = httpx.post(
             f"http://{stack['host_ip']}:{stack['egress_port']}/api/v1/browser-delegate",
+            timeout=5,
+        )
+        assert r.status_code == 200
+
+    def test_browser_delegate_stream_allowed_from_container_ip(self, stack):
+        """#3473 regression: the streaming sibling passes the egress ACL and
+        is actually reverse-proxied (echo backend 200). Pre-fix it got the
+        default empty 200 with no proxying at all."""
+        r = httpx.post(
+            f"http://{stack['host_ip']}:{stack['egress_port']}/api/v1/browser-delegate/stream",
             timeout=5,
         )
         assert r.status_code == 200

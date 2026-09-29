@@ -978,7 +978,21 @@ class CaddyRenderer:
             "		}\n"
             "	}\n"
         )
-        return not_src_matcher + delegate_matcher + egress_ws + llm + delegate
+        # #3473 follow-up: terminal catch-all. Without it, any future
+        # allowlist gap matches no handler and Caddy answers its default
+        # EMPTY 200 — the exact failure mode that hid the missing /stream
+        # route (0-byte "success" to the caller, nothing in the logs). A
+        # bare handle (no matcher) placed last makes the egress site
+        # deny-by-default, like the rest of the ACL posture.
+        catch_all = "\thandle {\n\t\trespond 404\n\t}\n"
+        return (
+            not_src_matcher
+            + delegate_matcher
+            + egress_ws
+            + llm
+            + delegate
+            + catch_all
+        )
 
     def _egress_site(self, upstream: str, container_srcs: str) -> str:
         """The full container-egress site block (headless + full both render it)."""
