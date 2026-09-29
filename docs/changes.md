@@ -2682,6 +2682,17 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Soliplex web login works against fragment-based auth callbacks
+  (#3476).** Soliplex `soliplex#1415` moved the post-IdP `return_to`
+  tokens from the query string into the URL fragment; the feature's
+  popup poller read only `Uri.queryParameters`, so every web login
+  against such a backend failed with "No token in auth callback" (the
+  `href.contains('token=')` poll trigger still fired, but the params
+  were behind the `#`). `extractCallbackParams` now reads the
+  fragment's `?`-part after the query string — the same precedence as
+  the Soliplex web client's `callback_params_parser` — so older
+  query-string backends keep working. Native (`flutter_appauth`)
+  login is unaffected.
 - **Container-egress proxy now routes the streaming bridge endpoint
   (#3473).** The built-in proxy's browser-delegate handle matched only
   the exact path `/api/v1/browser-delegate`, so calls to its streaming
