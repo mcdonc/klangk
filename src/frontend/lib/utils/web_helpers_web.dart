@@ -182,7 +182,14 @@ Future<bool> setClipboardText(String text) async {
   } catch (e) {
     debugPrint('[WebHelpers] clipboard.writeText failed, falling back: $e');
   }
-  return _execCommandCopy(text);
+  try {
+    return _execCommandCopy(text);
+  } catch (e) {
+    // A throw here would surface as an unhandled async rejection in
+    // fire-and-forget callers (copy buttons) — report failure instead.
+    debugPrint('[WebHelpers] execCommand copy failed: $e');
+    return false;
+  }
 }
 
 // `document.execCommand('copy')` is deprecated but is the only clipboard-write

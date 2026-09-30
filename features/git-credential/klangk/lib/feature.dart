@@ -6,9 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
-import 'open_url.dart';
 import 'copy_to_clipboard.dart';
 import 'git_auth_callback_page.dart';
+import 'open_url.dart';
 import 'window_messaging.dart';
 
 /// Only https verification URIs are auto-opened: the provider map is
@@ -776,11 +776,19 @@ class _CopyButtonState extends State<_CopyButton> {
 
   Future<void> _copy() async {
     // Web helper first for insecure-context (plain-HTTP) support; falls
-    // back to Clipboard.setData when it reports "not handled".
-    if (!await copyToClipboard(widget.text)) {
-      await Clipboard.setData(ClipboardData(text: widget.text));
+    // back to Clipboard.setData when it reports "not handled". The
+    // confirmation state only shows when a write path actually succeeded —
+    // a silent clipboard failure must not be reported as "Copied!".
+    var ok = await copyToClipboard(widget.text);
+    if (!ok) {
+      try {
+        await Clipboard.setData(ClipboardData(text: widget.text));
+        ok = true;
+      } catch (_) {
+        // Both write paths failed — leave the button unconfirmed.
+      }
     }
-    if (!mounted) return;
+    if (!mounted || !ok) return;
     setState(() => _copied = true);
     Future.delayed(const Duration(seconds: 2), () {
       if (mounted) setState(() => _copied = false);

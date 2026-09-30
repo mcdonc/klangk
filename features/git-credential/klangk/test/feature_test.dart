@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:klangk_feature_git_credential/feature.dart';
 import 'package:klangk_feature_git_credential/git_auth_callback_page.dart';
@@ -370,6 +371,37 @@ void main() {
       expect(find.text('Sign in to gitlab.com'), findsOneWidget);
       expect(find.text('Enter this code at gitlab.com:'), findsOneWidget);
       expect(find.byType(SelectableText), findsOneWidget);
+    });
+
+    testWidgets('copy button places the device code on the clipboard', (
+      tester,
+    ) async {
+      await pumpWithDeviceFlow(tester, feature, {
+        'host': 'gitlab.com',
+        'user_code': 'ABCD-1234',
+        'verification_uri': 'https://gitlab.com/oauth/authorize_device',
+      });
+      // VM: the web helper stub reports "not handled", so the button
+      // falls back to Clipboard.setData — record that platform-channel
+      // call (the web writeText path needs a browser).
+      String? copied;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') {
+            copied = call.arguments['text'] as String?;
+          }
+          return null;
+        },
+      );
+      await tester.tap(find.byTooltip('Copy code'));
+      await tester.pump();
+      expect(copied, 'ABCD-1234');
+      // The confirmation state only shows after a successful write.
+      expect(find.byTooltip('Copied!'), findsOneWidget);
+      // Flush the 2s reset timer so no timer is pending at teardown.
+      await tester.pump(const Duration(seconds: 2));
+      expect(find.byTooltip('Copy code'), findsOneWidget);
     });
 
     testWidgets('falls back to github.com when host is absent', (tester) async {

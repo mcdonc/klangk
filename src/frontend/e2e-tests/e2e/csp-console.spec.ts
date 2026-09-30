@@ -457,17 +457,24 @@ test.describe("CSP / Trusted Types (#3219)", () => {
 
       // --- terminal copy-on-select: tmux copy-pipe → bridge
       // clipboard_write → setClipboardText → navigator.clipboard.writeText.
-      // Fill the screen first so the echoed marker sits in the bottom rows,
-      // then drag across the bottom-center of the PTY (the region that
-      // demonstrably lands on the terminal — a drag at the top of the
-      // viewport hits the header/tab strips and selects nothing).
+      // Fill the ENTIRE PTY screen with marker lines so any drag whose
+      // selection lands inside the terminal captures one — the exact row
+      // the release lands on then doesn't matter (the old calibration
+      // class: a fixed-row drag breaks when the header/tab strips or the
+      // font metrics shift by a row).
       const marker = `CSPCOPY-${Date.now()}`;
-      await terminalType(page, `clear; seq 1 60; echo ${marker}`);
+      await terminalType(
+        page,
+        `clear; for i in $(seq 60); do echo ${marker}-$i; done`,
+      );
       await page.waitForTimeout(1000);
+      // Drag across the bottom-center of the PTY (the region that lands
+      // on the terminal; the top of the viewport is header/tab strips).
+      // Stay clear of the tmux status bar at the very bottom.
       const dragStartX = Math.round(width / 2) - 300;
       const dragEndX = Math.round(width / 2) + 300;
       const startY = height - 150;
-      const endY = height - 80;
+      const endY = height - 90;
       await page.mouse.move(dragStartX, startY);
       await page.mouse.down();
       for (let i = 1; i <= 10; i++) {

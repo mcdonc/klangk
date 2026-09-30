@@ -20,7 +20,14 @@ Future<bool> copyToClipboard(String text) async {
   } catch (e) {
     debugPrint('[git-credential] clipboard.writeText failed: $e');
   }
-  return _execCommandCopy(text);
+  try {
+    return _execCommandCopy(text);
+  } catch (e) {
+    // A throw here would surface as an unhandled async rejection in the
+    // button's onPressed — report the failure instead.
+    debugPrint('[git-credential] execCommand copy failed: $e');
+    return false;
+  }
 }
 
 // `document.execCommand('copy')` is deprecated but works in all contexts;
