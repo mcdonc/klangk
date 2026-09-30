@@ -33,6 +33,8 @@ operators or integrators to act when upgrading.
 
 ## \[Unreleased]
 
+## \[v2.0a7] - 2026-09-30
+
 ### Fixed
 
 - **Host image Python dependencies install under `uv.lock` constraints.**
