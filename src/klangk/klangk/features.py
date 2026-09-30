@@ -16,7 +16,8 @@ per-feature metadata (the frontend owns that).
     {
       "features": [
         {"name": "celebrate", "version": "1.0.0", "description": "...",
-         "config": { "KEY": {"description": "...", "default": "", "scope": "container"|"frontend"|"both"} }},
+         "config": { "KEY": {"description": "...", "default": "", "scope": "container"|"frontend"|"both",
+                              "csp_connect_origin": false} }},
         ...
       ],
       "defaults": ["celebrate", "beep", ...],
@@ -29,10 +30,14 @@ secret). Today the value source is the server's env; a future issue (#1659)
 adds a ``features_config:`` block in ``klangkd.yaml`` as an additional source.
 """
 
+import ipaddress
 import json
 import logging
 import os
+import re
+from urllib.parse import urlsplit
 
+from .container.spec import split_csv
 from .settings import resolve_dynamic_config
 
 logger = logging.getLogger(__name__)
@@ -134,6 +139,76 @@ def _all_manifest_feature_names(manifest: dict) -> set[str]:
         and isinstance((name := f.get("name")), str)
         and name
     }
+
+
+# The CSP host-source grammar admits reg-names (letters, digits, `.`, `-`)
+# and bracketed IPv6 literals — nothing else. Everything outside this set
+# is rejected (not sanitized): an origin with quotes, braces, semicolons,
+# whitespace, or userinfo would either be ignored by browsers or, worse,
+# break out of the quoted `header Content-Security-Policy "..."` token in
+# the rendered Caddyfile (a stray quote turns the header into caddy's
+# find-and-replace form, silently disabling the whole policy).
+_SAFE_HOST = re.compile(r"^[A-Za-z0-9.-]+$")
+
+
+def _ipv6_host(host: str) -> str | None:
+    """The bracketed CSP form of an IPv6 literal, or ``None`` when *host*
+    is not one (``:`` in a hostname is otherwise never a legal reg-name)."""
+    try:
+        ipaddress.IPv6Address(host)
+    except ValueError:
+        return None
+    return f"[{host}]"
+
+
+def _csp_host(parts) -> str | None:
+    """The CSP host-source form of a parsed URL's host.
+
+    Built from ``parts.hostname`` — **not** ``parts.netloc`` — so userinfo
+    (``user:pass@host``, invalid in a host-source and a credential leak into
+    a public response header) drops by construction. Bracketed for IPv6,
+    ``None`` for anything the CSP grammar cannot express safely.
+    """
+    host = parts.hostname
+    if host is None:
+        return None
+    if ":" in host:
+        return _ipv6_host(host)
+    return host if _SAFE_HOST.match(host) else None
+
+
+def _port_suffix(parts) -> str:
+    """``:<port>`` for an explicit valid port, ``""`` otherwise."""
+    try:
+        port = parts.port
+    except ValueError:  # non-numeric / out-of-range port
+        return ""
+    return "" if port is None else f":{port}"
+
+
+def url_origin(url: str | None) -> str | None:
+    """The ``scheme://host[:port]`` origin of an absolute http(s) URL.
+
+    The value is **rebuilt from the parsed parts** (scheme, hostname,
+    port) against the CSP host-source grammar — never echoed from the
+    input — so hostile or typo'd values (embedded quotes, braces,
+    semicolons, whitespace, userinfo) can neither widen the policy nor
+    mangle the Caddyfile header token it is served through. ``None`` for
+    anything that is not a safely expressible absolute http(s) origin —
+    such values contribute nothing to ``connect-src``.
+    """
+    if not url:
+        return None
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        # RFC 3986-invalid netloc (Python's urlsplit rejects e.g. a bad
+        # bracketed host outright) — nothing usable here either.
+        return None
+    host = _csp_host(parts)
+    if parts.scheme not in ("http", "https") or host is None:
+        return None
+    return f"{parts.scheme}://{host}{_port_suffix(parts)}"
 
 
 class Features:
@@ -383,6 +458,72 @@ class Features:
                 continue
             self._add_frontend_entries(result, config, features_config)
         return result
+
+    def _flagged_entries(self, config: dict, flag: str):
+        """(key, spec) pairs of one feature block's config entries that
+        carry *flag* truthy. Keys keep the feature-config prefix guard
+        ``frontend_config`` applies — a flagged non-prefixed key in a
+        (build-trusted) manifest resolves nothing."""
+        for key, spec in config.items():
+            if (
+                isinstance(spec, dict)
+                and spec.get(flag)
+                and self._frontend_key_ok(key)
+            ):
+                yield key, spec
+
+    def _flagged_config_entries(self, flag: str):
+        """(key, spec) pairs of every manifest config entry carrying
+        *flag* truthy, across all features."""
+        for feature in self._manifest.get("features", []):
+            if not isinstance(feature, dict):
+                continue
+            config = feature.get("config", {})
+            if not isinstance(config, dict):
+                continue
+            yield from self._flagged_entries(config, flag)
+
+    def connect_origins(self) -> list[str]:
+        """Remote origins the browser CSP must let the frontend fetch.
+
+        Two sources funnel through the same machinery (resolve →
+        ``scheme://host[:port]`` origin via :func:`url_origin` → de-dupe,
+        order-preserving):
+
+        1. The ``csp_connect_origins`` setting (``klangkd.yaml`` /
+           ``KLANGKD_CSP_CONNECT_ORIGINS``) — operator-declared URLs, the
+           escape hatch for remotes no feature declares up front (e.g. a
+           soliplex server added at runtime via the overlay).
+        2. Feature-declared keys: a feature whose frontend fetches a
+           deploy-configured remote browser-side declares
+           ``"csp_connect_origin": true`` on that config key in its
+           ``package.json``; the build carries the flag into
+           ``features.json``, and each flagged key's value is resolved
+           exactly as ``frontend_config`` resolves it (env, then the
+           ``features_config:`` block, then the feature default).
+
+        The caddy renderer appends the results to the browser site's
+        ``connect-src``. Unset values and non-absolute-URL values
+        contribute nothing — the policy stays first-party-only.
+        Configuration presence is the gate, not feature activation: the
+        operator configuring a URL signals intent (the widening only
+        permits fetches to that origin), and activation semantics belong
+        to the frontend (#1655).
+        """
+        features_config = self.app.state.settings.features_config
+        resolved = (
+            resolve_dynamic_config(
+                key,
+                spec.get("default", ""),
+                features_config=features_config,
+            )
+            for key, spec in self._flagged_config_entries("csp_connect_origin")
+        )
+        configured = split_csv(self.app.state.settings.csp_connect_origins)
+        urls = [*configured, *resolved]
+        return list(
+            dict.fromkeys(filter(None, (url_origin(url) for url in urls)))
+        )
 
     def features_enable(self) -> str | None:
         """The deploy's chosen active-feature list (``KLANGKD_FEATURES_ENABLE``).

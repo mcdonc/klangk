@@ -342,6 +342,7 @@ port: 8997
 | `caddy_admin_socket`     | `<state_dir>/caddy-admin.sock`   | `KLANGKD_CADDY_ADMIN_SOCKET`     |
 | `port_range_start`       | `9000`                           | `KLANGKD_PORT_RANGE_START`       |
 | `cors_origins`           |                                  | `KLANGKD_CORS_ORIGINS`           |
+| `csp_connect_origins`    |                                  | `KLANGKD_CSP_CONNECT_ORIGINS`    |
 | `frontend_dir`           | _(in-package `klangk/frontend`)_ | `KLANGKD_FRONTEND_DIR`           |
 | `dns_servers`            |                                  | `KLANGKD_DNS_SERVERS`            |
 | `dns_search`             |                                  | `KLANGKD_DNS_SEARCH`             |

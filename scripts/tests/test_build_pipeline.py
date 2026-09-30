@@ -406,6 +406,16 @@ def assert_config_key_shape(f: dict, key: str, spec: dict) -> None:
     )
 
 
+def assert_csp_flag_shape(f: dict, key: str, spec: dict) -> None:
+    """One config key's entry carries a boolean csp_connect_origin flag."""
+    assert "csp_connect_origin" in spec, (
+        f"feature {f['name']} config {key} missing csp_connect_origin"
+    )
+    assert isinstance(spec["csp_connect_origin"], bool), (
+        f"feature {f['name']} config {key} csp_connect_origin is not a bool"
+    )
+
+
 def declared_container_keys(manifest: dict) -> set:
     """Keys declared in some feature's config with container/both scope."""
     return {
@@ -414,6 +424,17 @@ def declared_container_keys(manifest: dict) -> set:
         for key, spec in f["config"].items()
         if spec["scope"] in {"container", "both"}
     }
+
+
+def flagged_csp_specs(manifest: dict) -> list:
+    """(feature name, key, spec) for config entries flagged
+    csp_connect_origin."""
+    return [
+        (f["name"], key, spec)
+        for f in manifest["features"]
+        for key, spec in f["config"].items()
+        if spec["csp_connect_origin"]
+    ]
 
 
 class TestManifestContract:
@@ -451,6 +472,7 @@ class TestManifestContract:
         for f in manifest["features"]:
             for key, spec in f["config"].items():
                 assert_config_key_shape(f, key, spec)
+                assert_csp_flag_shape(f, key, spec)
                 all_keys[key] = spec["scope"]
         # Spot-check the keys declared today (the chat feature's agent
         # on-switch was removed with the chat feature, #2716).
@@ -463,6 +485,26 @@ class TestManifestContract:
             "KLANGKWS_FEATURE_OAUTH_PROVIDERS": "container",
             "KLANGKWS_FEATURE_SOLIPLEX_URL": "frontend",
         }
+
+    def test_csp_connect_origin_only_on_soliplex_url(self, tmp_path, monkeypatch):
+        # The soliplex server URL is the one shipped key whose origin the
+        # browser CSP must allow in connect-src (the feature fetches it
+        # browser-side); every other key keeps the flag false. A flagged
+        # key must also ship an empty default — a non-empty default would
+        # widen the CSP on every deploy with zero operator action (env /
+        # features_config: is the operator's choice; the default is the
+        # feature's).
+        manifest = self._build_manifest(tmp_path, monkeypatch)
+        flagged = flagged_csp_specs(manifest)
+        assert [(name, key) for name, key, _ in flagged] == [
+            ("soliplex", "KLANGKWS_FEATURE_SOLIPLEX_URL")
+        ]
+        for _name, _key, spec in flagged:
+            assert spec["default"] == "", (
+                "a csp_connect_origin-flagged key ships a non-empty default — "
+                "the default would widen the CSP on every deploy; ship an "
+                "empty default and let the operator set the value"
+            )
 
     def test_defaults_are_default_features_constant(self, tmp_path, monkeypatch):
         """The manifest's defaults list == DEFAULT_FEATURES in
