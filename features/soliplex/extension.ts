@@ -253,12 +253,15 @@ export default function (pi: any) {
       "thread_id — pass BOTH to soliplex_reply to continue that conversation " +
       "(multi-turn). Pass room_id as a single room id, several ids " +
       'comma-separated ("kb,docs"), or "*" for every room on the server; ' +
-      "several rooms are asked in parallel and the result has a `## " +
+      "several rooms are asked 3 at a time (the server answers serially when " +
+      "many are asked at once) and the result has a `## " +
       "server/room` section per room with that room's answer (and its " +
-      "Sources). A failed room shows an Error line while the others still " +
-      "return. A single room streams and will not time out; in a multi-room " +
-      "fan-out only per-room completions keep the bridge alive, so a fan-out " +
-      "where every room outlives the bridge idle timeout can still time out.",
+      "Sources); each section also streams as it finishes, in completion " +
+      "order. A failed room shows an Error line while the others still " +
+      "return. Keepalives bridge silent phases (RAG retrieval, model " +
+      "warm-up), every room carries a 6-minute deadline, and keepalives stop " +
+      "after 30 minutes of total call time, which ends any call still " +
+      "running — hung, or a fan-out larger than the cap's worth of waves.",
     parameters: Type.Object({
       room_id: Type.String({
         description:
@@ -316,7 +319,9 @@ export default function (pi: any) {
     description:
       "Continue an existing Soliplex conversation thread (multi-turn). Use the " +
       "server + thread_id returned by a prior soliplex_query. The room keeps the " +
-      "thread history, so earlier turns stay in context. Long answers stream.",
+      "thread history, so earlier turns stay in context. Long answers stream " +
+      "with keepalives bridging silent phases; a reply carries the same " +
+      "6-minute deadline as soliplex_query.",
     parameters: Type.Object({
       room_id: Type.String({ description: "Room id of the thread." }),
       message: Type.String({ description: "The follow-up message." }),

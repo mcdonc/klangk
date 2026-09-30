@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -18,6 +19,13 @@ SoliplexServerRegistry registryWith(
   http.Response Function(http.Request req) handler,
 ) =>
     SoliplexServerRegistry(httpClient: MockClient((r) async => handler(r)));
+
+/// Async variant of [registryWith] for routes that need to delay or hang
+/// (keepalive + deadline tests, #3485).
+SoliplexServerRegistry registryWithAsync(
+  Future<http.Response> Function(http.Request req) handler,
+) =>
+    SoliplexServerRegistry(httpClient: MockClient(handler));
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -1022,7 +1030,7 @@ void main() {
     );
 
     test(
-      'keepalive empty chunks are emitted during streaming fan-out',
+      'initial keepalive + per-room blocks stream during a fan-out (#3485)',
       () async {
         final feature = SoliplexFeature(
           registry: registryWith((req) {
@@ -1044,10 +1052,18 @@ void main() {
           'question': 'q',
           'room_id': '*',
         }, chunks.add);
-        // At minimum: 1 initial keepalive + 1 per finished room (2 rooms
-        // from wildcard expansion). All are empty strings.
-        expect(chunks.length, greaterThanOrEqualTo(3));
-        expect(chunks.every((c) => c.isEmpty), isTrue);
+        // The ticker's initial keepalive leads the stream (empty).
+        expect(chunks.first, '');
+        // Each finished room streams its labeled block the moment it
+        // completes (2 rooms from the wildcard expansion) — completion
+        // carries the block, not an empty keepalive. Both rooms fail fast
+        // in parallel, so assert the SET of headers, not the order.
+        final blocks = chunks.where((c) => c.startsWith('## ')).toList();
+        expect(blocks, hasLength(2));
+        expect(
+          blocks.map((b) => b.split('\n').first).toSet(),
+          {'## default/a', '## default/b'},
+        );
       },
     );
   });
@@ -1093,5 +1109,302 @@ void main() {
       expect(out, contains('## default/docs\nans'));
       expect(out, isNot(contains('thread_id')));
     });
+  });
+
+  group(
+      'formatFanOutBlock (per-room block shared by stream + aggregate, #3485)',
+      () {
+    test('success: header + answer + continuation hint', () {
+      final b = formatFanOutBlock(
+        const FanOutResult(
+          server: 's',
+          room: 'r',
+          answer: 'A',
+          threadId: 't1',
+        ),
+      );
+      expect(b, startsWith('## s/r\nA'));
+      expect(b, contains('thread_id: t1'));
+    });
+
+    test('error: header + Error line, no hint', () {
+      final b = formatFanOutBlock(
+        const FanOutResult(server: 's', room: 'r', error: 'boom'),
+      );
+      expect(b, '## s/r\nError: boom');
+    });
+  });
+
+  group('KeepaliveTicker (#3485)', () {
+    test('emits the initial keepalive immediately, then periodic empties',
+        () async {
+      final chunks = <String>[];
+      final ticker = KeepaliveTicker(
+        (delta) => chunks.add(delta),
+        interval: const Duration(milliseconds: 10),
+        ceiling: const Duration(seconds: 5),
+      )..start();
+      // The initial keepalive is synchronous — it covers the silent warm-up
+      // before the first AG-UI event without waiting one interval.
+      expect(chunks, ['']);
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+      expect(chunks.length, greaterThan(3));
+      ticker.stop();
+      final after = chunks.length;
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(chunks.length, after); // a stopped ticker stays silent
+    });
+
+    test('goes silent after the ceiling and self-disarms', () async {
+      final sw = Stopwatch()..start();
+      final stamps = <int>[];
+      final ticker = KeepaliveTicker(
+        (_) => stamps.add(sw.elapsedMilliseconds),
+        interval: const Duration(milliseconds: 10),
+        ceiling: const Duration(milliseconds: 50),
+      )..start();
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      // Total-duration cap: nothing emits past the ceiling (small slack for
+      // timer granularity), and the ticker disarmed itself.
+      expect(stamps.last, lessThan(80));
+      expect(ticker.running, isFalse);
+    });
+
+    test('start() without a sink is a no-op (plain-handler path)', () {
+      final ticker = KeepaliveTicker(
+        null,
+        interval: const Duration(milliseconds: 5),
+        ceiling: const Duration(milliseconds: 5),
+      )..start();
+      expect(ticker.running, isFalse);
+    });
+  });
+
+  group('streaming keepalive + deadline wiring (#3485)', () {
+    test(
+      'single-room query emits the initial keepalive before the room answers',
+      () async {
+        final chunks = <String>[];
+        final feature = SoliplexFeature(
+          registry: registryWithAsync((req) async {
+            if (req.url.path.endsWith('/api/v1/config')) {
+              return _json({'soliplex_url': 'https://api'});
+            }
+            if (req.url.path.endsWith('/api/v1/rooms/kb/agui')) {
+              // Slow thread creation: without the initial keepalive the bridge
+              // idle timer would run during exactly this wait.
+              await Future<void>.delayed(const Duration(milliseconds: 60));
+              return http.Response('nope', 401);
+            }
+            return http.Response('unexpected ${req.url}', 404);
+          }),
+          keepaliveInterval: const Duration(milliseconds: 10),
+          queryDeadline: const Duration(seconds: 5),
+          keepaliveCeiling: const Duration(seconds: 5),
+        );
+        final out = await feature.streamingHandlers['soliplex_query']!(
+          {'question': 'q', 'room_id': 'kb'},
+          chunks.add,
+        );
+        expect(chunks.first, '');
+        expect(chunks.where((c) => c.isEmpty).length, greaterThan(3));
+        expect(out, contains('Error querying Soliplex'));
+      },
+    );
+
+    test('a single room that never answers returns the deadline error',
+        () async {
+      final feature = SoliplexFeature(
+        registry: registryWithAsync((req) async {
+          if (req.url.path.endsWith('/api/v1/config')) {
+            return _json({'soliplex_url': 'https://api'});
+          }
+          if (req.url.path.endsWith('/api/v1/rooms/kb/agui')) {
+            await Completer<void>().future; // hangs past the deadline
+          }
+          return http.Response('unexpected ${req.url}', 404);
+        }),
+        keepaliveInterval: const Duration(milliseconds: 10),
+        queryDeadline: const Duration(milliseconds: 50),
+        keepaliveCeiling: const Duration(seconds: 5),
+      );
+      final out = await feature.handlers['soliplex_query']!(
+        {'question': 'q', 'room_id': 'kb'},
+      );
+      expect(out, contains('did not answer within'));
+      expect(out, contains('per-call deadline'));
+    });
+
+    test(
+      'fan-out streams each room\'s completed block as a chunk, in completion order',
+      () async {
+        final chunks = <String>[];
+        final feature = SoliplexFeature(
+          registry: registryWithAsync((req) async {
+            if (req.url.path.endsWith('/api/v1/config')) {
+              return _json({'soliplex_url': 'https://api'});
+            }
+            if (req.url.path.contains('/api/v1/rooms/kb/agui')) {
+              return http.Response('nope', 401); // fails fast
+            }
+            if (req.url.path.contains('/api/v1/rooms/docs/agui')) {
+              await Completer<void>().future; // hangs past its deadline
+            }
+            return http.Response('unexpected ${req.url}', 404);
+          }),
+          keepaliveInterval: const Duration(milliseconds: 10),
+          queryDeadline: const Duration(milliseconds: 500),
+          keepaliveCeiling: const Duration(seconds: 5),
+        );
+        final out = await feature.streamingHandlers['soliplex_query']!(
+          {'question': 'q', 'room_id': 'kb,docs'},
+          chunks.add,
+        );
+        // Each room's block streams the moment it finishes: kb's fast error
+        // lands first, docs' deadline error second (plus empty keepalives).
+        final blocks = chunks.where((c) => c.startsWith('## ')).toList();
+        expect(blocks, hasLength(2));
+        expect(blocks.first, startsWith('## default/kb\nError:'));
+        expect(blocks.last, startsWith('## default/docs\nError:'));
+        expect(blocks.last, contains('did not answer within'));
+        // Exactly one Error: prefix — the deadline message feeds
+        // formatFanOutBlock's own prefix (#3485 review round 1).
+        expect(blocks.last, isNot(contains('Error: Error')));
+        // The final aggregate carries both rooms regardless of stream order.
+        expect(out, contains('Asked 2 room(s): "q"'));
+        expect(out, contains('## default/kb\nError:'));
+        expect(out, contains('## default/docs\nError:'));
+      },
+    );
+
+    test('a reply that never answers returns the deadline error + keepalive',
+        () async {
+      final chunks = <String>[];
+      final feature = SoliplexFeature(
+        registry: registryWithAsync((req) async {
+          if (req.url.path.endsWith('/api/v1/config')) {
+            return _json({'soliplex_url': 'https://api'});
+          }
+          if (req.url.path.contains('/api/v1/rooms/search/agui/t1')) {
+            await Completer<void>().future; // hangs past the deadline
+          }
+          return http.Response('unexpected ${req.url}', 404);
+        }),
+        keepaliveInterval: const Duration(milliseconds: 10),
+        queryDeadline: const Duration(milliseconds: 50),
+        keepaliveCeiling: const Duration(seconds: 5),
+      );
+      final out = await feature.streamingHandlers['soliplex_reply']!(
+        {'room_id': 'search', 'thread_id': 't1', 'message': 'm'},
+        chunks.add,
+      );
+      expect(chunks.first, '');
+      expect(out, contains('did not answer within'));
+    });
+  });
+
+  group('bounded fan-out concurrency (#3485)', () {
+    test('runBounded preserves input order, not completion order', () async {
+      final out = await runBounded<int, int>(
+        [1, 2, 3],
+        // Room 1 is slowest; results must still come back in input order.
+        (i) async => Future<void>.delayed(Duration(milliseconds: 30 * (4 - i)))
+            .then((_) => i * 10),
+        3,
+      );
+      expect(out, [10, 20, 30]);
+    });
+
+    test('runBounded(…, 1) runs strictly serially', () async {
+      final log = <int>[];
+      await runBounded<int, int>([1, 2, 3], (i) async {
+        log.add(i); // start
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        log.add(-i); // finish
+        return i;
+      }, 1);
+      expect(log, [1, -1, 2, -2, 3, -3]);
+    });
+
+    test(
+      'fan-out asks at most fanOutConcurrency rooms at once and queues waves',
+      () async {
+        var inFlight = 0;
+        var maxInFlight = 0;
+        final feature = SoliplexFeature(
+          registry: registryWithAsync((req) async {
+            if (req.url.path.endsWith('/api/v1/config')) {
+              return _json({'soliplex_url': 'https://api'});
+            }
+            if (req.url.path.contains('/api/v1/rooms/') &&
+                req.url.path.contains('/agui')) {
+              inFlight++;
+              maxInFlight = maxInFlight < inFlight ? inFlight : maxInFlight;
+              await Future<void>.delayed(const Duration(milliseconds: 20));
+              inFlight--;
+            }
+            // No-runs → every room fails fast into a per-room error entry.
+            return _json({'thread_id': 't', 'runs': <String, dynamic>{}});
+          }),
+          keepaliveInterval: const Duration(milliseconds: 50),
+          queryDeadline: const Duration(seconds: 5),
+        );
+        final rooms = List.generate(9, (i) => 'r$i');
+        final out = await feature.handlers['soliplex_query']!({
+          'question': 'q',
+          'room_id': rooms.join(','),
+        });
+        // 9 rooms, default concurrency 3: never more than 3 POSTs at once.
+        expect(maxInFlight, lessThanOrEqualTo(3));
+        expect(maxInFlight, greaterThan(1)); // genuinely parallel waves
+        // The aggregate keeps input order regardless of completion order.
+        expect(
+          out,
+          stringContainsInOrder([
+            for (final r in rooms) '## default/$r',
+          ]),
+        );
+      },
+    );
+    test(
+      'a room hanging past its deadline does not consume the next room\'s clock',
+      () async {
+        // Concurrency 1: rooms run in strict waves, each racing its OWN
+        // per-room deadline (armed when the room's query starts). "hang"
+        // never answers and burns its full (tiny) deadline; "ok" runs
+        // afterwards and must still fail with its OWN fast error, not a
+        // deadline error — its clock was not shortened by hang's wait.
+        final feature = SoliplexFeature(
+          registry: registryWithAsync((req) async {
+            if (req.url.path.endsWith('/api/v1/config')) {
+              return _json({'soliplex_url': 'https://api'});
+            }
+            if (req.url.path.contains('/api/v1/rooms/hang/agui')) {
+              await Completer<void>().future;
+            }
+            if (req.url.path.contains('/api/v1/rooms/ok/agui')) {
+              return http.Response('boom', 500); // fails fast, own error
+            }
+            return http.Response('unexpected ${req.url}', 404);
+          }),
+          keepaliveInterval: const Duration(milliseconds: 50),
+          queryDeadline: const Duration(milliseconds: 100),
+          keepaliveCeiling: const Duration(seconds: 5),
+          fanOutConcurrency: 1,
+        );
+        final out = await feature.handlers['soliplex_query']!({
+          'question': 'q',
+          'room_id': 'hang,ok',
+        });
+        expect(out, contains('## default/hang\nError: Soliplex room "hang"'));
+        expect(out, contains('did not answer within'));
+        expect(
+          out,
+          contains(
+            '## default/ok\nError: Exception: Failed to create thread: 500',
+          ),
+        );
+      },
+    );
   });
 }

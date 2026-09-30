@@ -2691,6 +2691,20 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Soliplex bridged queries survive silent phases and always terminate
+  (#3485).** `soliplex_query` / `soliplex_reply` streaming calls now emit
+  an initial keepalive plus a periodic empty chunk every 20s, so a slow
+  thread creation or a silent RAG/LLM phase can no longer hit the
+  browser-delegate bridge's per-chunk idle timeout (a fan-out where every
+  room outlives it used to die). In a multi-room fan-out each room's
+  completed `## server/room` section streams as it finishes instead of only
+  at the end. Rooms are asked 3 at a time — one Soliplex server falls back to
+  serial answering when many rooms are queried at once, so a fan-out sends
+  bounded waves instead. Every room carries a 6-minute deadline that returns
+  a labeled error (the server-side run finishes on its own — the client
+  cannot cancel it), and keepalives stop after 30 minutes of total call
+  time, which ends any call still running — hung, or a fan-out larger than
+  the cap's worth of waves.
 - **Frontend builds now require Flutter 3.47 / Dart 3.13 (#3479).**
   The `pdfrx` constraint was raised to `^2.6.5` because
   `pdfrx_engine 0.4.3` — which `pdfrx 2.4.x` still admits — no
