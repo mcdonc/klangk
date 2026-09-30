@@ -113,7 +113,7 @@ The browser-side feature keeps **one Soliplex server connected at a time**
 server's Connect — disconnects the currently active server, so the deploy's
 `csp_connect_origins` allow-list stays minimal. Multi-room queries stay
 available through `soliplex_query`: `room_id` accepts a single room id,
-several ids (comma-separated or a list), or `*` (every room), and several
+several ids comma-separated, or `*` (every room), and several
 rooms are asked in parallel on the target server and aggregated into
 per-room-labeled sections.
 

@@ -188,10 +188,17 @@ void main() {
   });
 
   group('argument validation (returns before any network)', () {
-    test('soliplex_query requires a question', () async {
+    test('soliplex_query requires a question (absent or whitespace)', () async {
       final feature = SoliplexFeature(registry: registryWith(defaultRoutes));
       expect(
         await feature.handlers['soliplex_query']!({'room_id': 'search'}),
+        'Error: question is required',
+      );
+      expect(
+        await feature.handlers['soliplex_query']!({
+          'room_id': 'search',
+          'question': '   ',
+        }),
         'Error: question is required',
       );
     });
