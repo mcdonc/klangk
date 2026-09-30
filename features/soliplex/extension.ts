@@ -248,28 +248,44 @@ export default function (pi: any) {
   pi.registerTool({
     name: "soliplex_query",
     description:
-      "Ask a question to a Soliplex room (RAG + LLM). Starts a NEW conversation " +
-      "thread and returns the answer. The result ends with the server + thread_id " +
-      "— pass BOTH to soliplex_reply to continue the same conversation " +
-      "(multi-turn). Long-running answers stream and will not time out.",
+      "Ask a question to one or many Soliplex rooms (RAG + LLM). Each room " +
+      "starts a NEW conversation thread; the result ends with the server + " +
+      "thread_id — pass BOTH to soliplex_reply to continue that conversation " +
+      "(multi-turn). Pass room_id as a single room id, several ids " +
+      'comma-separated ("kb,docs"), or "*" for every room on the server; ' +
+      "several rooms are asked in parallel and the result has a `## " +
+      "server/room` section per room with that room's answer (and its " +
+      "Sources). A failed room shows an Error line while the others still " +
+      "return. A single room streams and will not time out; in a multi-room " +
+      "fan-out only per-room completions keep the bridge alive, so a fan-out " +
+      "where every room outlives the bridge idle timeout can still time out.",
     parameters: Type.Object({
       room_id: Type.String({
-        description: "Room id (from soliplex_list_rooms).",
+        description:
+          "Room id (from soliplex_list_rooms), several ids comma-separated " +
+          '("kb,docs"), or "*" for every room on the server.',
       }),
       question: Type.String({ description: "The question to ask." }),
       server: Type.Optional(
         Type.String({
           description:
-            "Soliplex server name (from soliplex_list_rooms). Omit for the " +
-            "default server.",
+            "Soliplex server name (from soliplex_list_rooms). Only one server " +
+            "is connected at a time; omit for the default server.",
         }),
       ),
     }),
     renderCall(args: any) {
       const a = args ?? {};
       const srv = oneLine(a.server);
+      let rid = oneLine(a.room_id) || "?";
+      if (Array.isArray(a.room_id)) {
+        rid = `${a.room_id.length} room${a.room_id.length === 1 ? "" : "s"}`;
+      } else if (typeof a.room_id === "string" && a.room_id.includes(",")) {
+        const n = a.room_id.split(",").filter((s) => s.trim()).length;
+        rid = `${n} rooms`;
+      }
       return callLine(
-        `soliplex_query(${srv ? `server: ${srv}, ` : ""}roomId: ${oneLine(a.room_id) || "?"}, message: ${oneLine(a.question)})`,
+        `soliplex_query(${srv ? `server: ${srv}, ` : ""}roomId: ${rid}, message: ${oneLine(a.question)})`,
       );
     },
     async execute(
@@ -291,69 +307,6 @@ export default function (pi: any) {
         return textResult(error ? `Error: ${error}` : text);
       } catch (e: any) {
         return textResult(`soliplex_query failed: ${e?.message ?? e}`);
-      }
-    },
-  });
-
-  pi.registerTool({
-    name: "soliplex_query_all",
-    description:
-      "Ask ONE natural-language question of MANY Soliplex rooms at once and get " +
-      "a single aggregated, per-target answer. This is a KNOWLEDGE query: each " +
-      "target opens a NEW thread and answers from that room's indexed content " +
-      "(RAG). It is NOT for room metadata (use soliplex_get_room_info) or files " +
-      "(use soliplex_list_files / soliplex_get_file). Each target is " +
-      '{server?, room}; omit server for the default; room: "*" fans out to ' +
-      "every room on that server. The result has a `## server/room` section per " +
-      "target with that room's answer (and its Sources) plus a thread_id you can " +
-      "pass to soliplex_reply to continue that specific conversation. A failed " +
-      "target (down, auth, unknown) shows an Error line while the others still " +
-      "return. Fan-outs stream incrementally; a target silent longer than the " +
-      "bridge idle timeout can still time out.",
-    parameters: Type.Object({
-      question: Type.String({
-        description: "The question to ask every target.",
-      }),
-      targets: Type.Array(
-        Type.Object({
-          server: Type.Optional(
-            Type.String({
-              description: "Soliplex server name. Omit for the default server.",
-            }),
-          ),
-          room: Type.String({
-            description:
-              'Room id (from soliplex_list_rooms), or "*" for all rooms.',
-          }),
-        }),
-        { description: "The (server, room) targets to ask in parallel." },
-      ),
-    }),
-    renderCall(args: any) {
-      const a = args ?? {};
-      const n = Array.isArray(a.targets) ? a.targets.length : 0;
-      return callLine(
-        `soliplex_query_all(targets: ${n}, question: ${oneLine(a.question)})`,
-      );
-    },
-    async execute(
-      _id: string,
-      params: {
-        question: string;
-        targets: Array<{ server?: string; room: string }>;
-      },
-      _signal: AbortSignal | undefined,
-      onUpdate: any,
-    ) {
-      try {
-        const { text, error } = await streamBridge(
-          "soliplex_query_all",
-          { question: params.question, targets: params.targets },
-          onUpdate,
-        );
-        return textResult(error ? `Error: ${error}` : text);
-      } catch (e: any) {
-        return textResult(`soliplex_query_all failed: ${e?.message ?? e}`);
       }
     },
   });
@@ -435,9 +388,10 @@ export default function (pi: any) {
     name: "soliplex_add_server",
     description:
       "Register an additional Soliplex server so it can be queried by name. " +
-      "After adding, the user may need to authenticate to it via the " +
-      "'Connect to Soliplex' overlay (each server has its own login); no-auth " +
-      "servers work immediately. The name is then usable as the `server` arg.",
+      "Only one server is connected at a time — connecting to the new server " +
+      "disconnects the currently active one. Auth is interactive via the " +
+      "'Connect to Soliplex' overlay; no-auth servers work immediately. The " +
+      "name is then usable as the `server` arg.",
     parameters: Type.Object({
       name: Type.String({
         description: "Short name for the server (used as the `server` arg).",

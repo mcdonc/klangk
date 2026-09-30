@@ -188,10 +188,17 @@ void main() {
   });
 
   group('argument validation (returns before any network)', () {
-    test('soliplex_query requires a question', () async {
+    test('soliplex_query requires a question (absent or whitespace)', () async {
       final feature = SoliplexFeature(registry: registryWith(defaultRoutes));
       expect(
         await feature.handlers['soliplex_query']!({'room_id': 'search'}),
+        'Error: question is required',
+      );
+      expect(
+        await feature.handlers['soliplex_query']!({
+          'room_id': 'search',
+          'question': '   ',
+        }),
         'Error: question is required',
       );
     });
@@ -405,172 +412,258 @@ void main() {
     });
   });
 
-  group('streaming handlers are registered for query and reply', () {
-    test('streamingHandlers expose query, query_all + reply', () {
+  group('tool registration (single active server model, #3480)', () {
+    test('query + reply register plain + streaming; query_all is retired', () {
       final feature = SoliplexFeature(registry: registryWith(defaultRoutes));
+      expect(feature.handlers.keys, isNot(contains('soliplex_query_all')));
       expect(
         feature.streamingHandlers.keys,
-        containsAll(['soliplex_query', 'soliplex_query_all', 'soliplex_reply']),
+        containsAll(['soliplex_query', 'soliplex_reply']),
+      );
+      expect(
+        feature.streamingHandlers.keys,
+        isNot(contains('soliplex_query_all')),
       );
     });
   });
 
-  // Fan-out orchestration. We exercise everything UP TO the live SSE
-  // (`_streamRun`, coverage-ignored): target expansion (incl. `*`), default
-  // server fill-in, per-target error capture, and aggregation/formatting. We
-  // drive failures through the agui thread-creation endpoint
-  // (POST /api/v1/rooms/<room>/agui) returning non-200 / no-runs, which makes
-  // queryRoom throw BEFORE _streamRun — so a succeeding target's happy path is
-  // tested via the pure formatter, and the failing target via the real handler.
-  group('soliplex_query_all validation (returns before any network)', () {
-    test('requires a question', () async {
+  // Multiroom fan-out (via soliplex_query's room_id, #3480). We exercise
+  // everything UP TO the live SSE (`_streamRun`, coverage-ignored): room
+  // parsing, `"*"` expansion, per-room error capture, and
+  // aggregation/formatting. We drive failures through the agui thread-creation
+  // endpoint (POST /api/v1/rooms/<room>/agui) returning non-200 / no-runs,
+  // which makes queryRoom throw BEFORE _streamRun — so a succeeding room's
+  // happy path is tested via the pure formatter, and a failing room via the
+  // real handler.
+  group('soliplex_query multiroom validation (returns before any network)', () {
+    test('empty room list errors', () async {
       final feature = SoliplexFeature(registry: registryWith(defaultRoutes));
       expect(
-        await feature.handlers['soliplex_query_all']!({
-          'targets': [
-            {'room': 'search'},
-          ],
+        await feature.handlers['soliplex_query']!({
+          'question': 'q',
+          'room_id': <dynamic>[],
         }),
-        'Error: question is required',
+        'Error: room_id list must not be empty',
       );
     });
 
-    test('requires at least one target', () async {
+    test('non-string / blank entries error', () async {
       final feature = SoliplexFeature(registry: registryWith(defaultRoutes));
       expect(
-        await feature.handlers['soliplex_query_all']!({
+        await feature.handlers['soliplex_query']!({
           'question': 'q',
-          'targets': <dynamic>[],
+          'room_id': ['a', 5],
         }),
-        contains('at least one target'),
+        'Error: room_id entries must be non-empty strings',
       );
       expect(
-        await feature.handlers['soliplex_query_all']!({'question': 'q'}),
-        contains('at least one target'),
+        await feature.handlers['soliplex_query']!({
+          'question': 'q',
+          'room_id': ['a', '  '],
+        }),
+        'Error: room_id entries must be non-empty strings',
       );
     });
 
-    test('each target requires a room', () async {
+    test('blank room_id and empty comma segments error', () async {
       final feature = SoliplexFeature(registry: registryWith(defaultRoutes));
       expect(
-        await feature.handlers['soliplex_query_all']!({
+        await feature.handlers['soliplex_query']!({
           'question': 'q',
-          'targets': [
-            {'server': 'default'},
-          ],
+          'room_id': '  ',
         }),
-        contains('requires a "room"'),
+        'Error: room_id is required',
+      );
+      expect(
+        await feature.handlers['soliplex_query']!({
+          'question': 'q',
+          'room_id': 'a,,b',
+        }),
+        'Error: room_id entries must be non-empty',
+      );
+    });
+
+    test('wrong-typed room_id errors', () async {
+      final feature = SoliplexFeature(registry: registryWith(defaultRoutes));
+      expect(
+        await feature.handlers['soliplex_query']!({
+          'question': 'q',
+          'room_id': 42,
+        }),
+        'Error: room_id must be a room id, comma-separated room ids, or "*"',
       );
     });
   });
 
-  group('soliplex_query_all target expansion + default fill-in', () {
-    test('room "*" expands to all rooms on the server', () async {
-      // defaultRoutes serves one room ("search") at /api/v1/rooms; the agui
-      // POST returns no runs so the (resolved) target fails fast — but the
-      // failure header proves the wildcard resolved "search" on "default".
+  group('soliplex_query room expansion', () {
+    test('room_id "*" (string or single-entry list) expands to all rooms',
+        () async {
+      // /api/v1/rooms serves two rooms; the agui POST returns no runs so each
+      // (resolved) room fails fast — but the failure headers prove the
+      // wildcard resolved both rooms on "default".
+      http.Response routes(http.Request req) {
+        if (req.url.path.endsWith('/api/v1/config')) {
+          return _json({'soliplex_url': 'https://api'});
+        }
+        if (req.url.path.endsWith('/api/v1/rooms')) {
+          return _json({
+            'alpha': {'name': 'Alpha'},
+            'beta': {'name': 'Beta'},
+          });
+        }
+        // agui thread creation: no runs -> queryRoom throws before _streamRun.
+        return _json({'thread_id': 't', 'runs': <String, dynamic>{}});
+      }
+
+      final feature = SoliplexFeature(registry: registryWith(routes));
+      for (final roomId in [
+        '*',
+        ['*']
+      ]) {
+        final out = await feature.handlers['soliplex_query']!({
+          'question': 'q',
+          'room_id': roomId,
+        });
+        expect(out, contains('## default/alpha'));
+        expect(out, contains('## default/beta'));
+        expect(out, contains('Asked 2 room(s)'));
+      }
+    });
+
+    test(
+      'a single-room "*" expansion takes the single-room path (streams)',
+      () async {
+        // One room on the server: the wildcard resolves to exactly one room,
+        // which must go through _queryOneRoom (token streaming), NOT the
+        // fan-out aggregate. Distinguish via the single-room error wording.
+        final feature = SoliplexFeature(
+          registry: registryWith((req) {
+            if (req.url.path.endsWith('/api/v1/config')) {
+              return _json({'soliplex_url': 'https://api'});
+            }
+            if (req.url.path.endsWith('/api/v1/rooms')) {
+              return _json({
+                'search': {'name': 'Search'},
+              });
+            }
+            return _json({'thread_id': 't', 'runs': <String, dynamic>{}});
+          }),
+        );
+        final out = await feature.handlers['soliplex_query']!({
+          'question': 'q',
+          'room_id': '*',
+        });
+        expect(out, contains('Error querying Soliplex'));
+        expect(out, isNot(contains('Asked 1 room(s)')));
+      },
+    );
+
+    test('comma-separated room ids fan out like the list form', () async {
       final feature = SoliplexFeature(
         registry: registryWith((req) {
           if (req.url.path.endsWith('/api/v1/config')) {
             return _json({'soliplex_url': 'https://api'});
           }
-          if (req.url.path.endsWith('/api/v1/rooms')) {
-            return _json({
-              'alpha': {'name': 'Alpha'},
-              'beta': {'name': 'Beta'},
-            });
-          }
-          // agui thread creation: no runs -> queryRoom throws before _streamRun.
           return _json({'thread_id': 't', 'runs': <String, dynamic>{}});
         }),
       );
-      final out = await feature.handlers['soliplex_query_all']!({
+      final out = await feature.handlers['soliplex_query']!({
         'question': 'q',
-        'targets': [
-          {'room': '*'},
-        ],
-      });
-      expect(out, contains('## default/alpha'));
-      expect(out, contains('## default/beta'));
-      expect(out, contains('Asked 2 target(s)'));
-    });
-
-    test('omitted server fills in the default server name', () async {
-      final feature = SoliplexFeature(
-        registry: registryWith((req) {
-          if (req.url.path.endsWith('/api/v1/config')) {
-            return _json({'soliplex_url': 'https://api'});
-          }
-          return _json({'thread_id': 't', 'runs': <String, dynamic>{}});
-        }),
-      );
-      final out = await feature.handlers['soliplex_query_all']!({
-        'question': 'q',
-        'targets': [
-          {'room': 'search'},
-        ],
+        'room_id': ' search , kb ',
       });
       expect(out, contains('## default/search'));
+      expect(out, contains('## default/kb'));
+      expect(out, contains('Asked 2 room(s)'));
+    });
+
+    test('a concrete list asks each room; duplicates collapse', () async {
+      final feature = SoliplexFeature(
+        registry: registryWith((req) {
+          if (req.url.path.endsWith('/api/v1/config')) {
+            return _json({'soliplex_url': 'https://api'});
+          }
+          return _json({'thread_id': 't', 'runs': <String, dynamic>{}});
+        }),
+      );
+      final out = await feature.handlers['soliplex_query']!({
+        'question': 'q',
+        'room_id': ['search', 'kb', 'search'],
+      });
+      expect(out, contains('## default/search'));
+      expect(out, contains('## default/kb'));
+      expect(out, contains('Asked 2 room(s)'));
     });
 
     test('"*" against an unknown server surfaces an expansion error', () async {
       final feature = SoliplexFeature(registry: registryWith(defaultRoutes));
-      final out = await feature.handlers['soliplex_query_all']!({
+      final out = await feature.handlers['soliplex_query']!({
         'question': 'q',
-        'targets': [
-          {'server': 'ghost', 'room': '*'},
-        ],
+        'room_id': '*',
+        'server': 'ghost',
       });
-      expect(out, contains('Error expanding targets'));
+      expect(out, contains('Error expanding rooms'));
       expect(out, contains('Unknown soliplex server'));
     });
-  });
 
-  group('soliplex_query_all partial-failure aggregation', () {
-    test(
-      'one target fails, the others still report (per-target errors)',
-      () async {
-        // Two named servers. "default" agui POST 401s -> error entry; "good" agui
-        // POST returns no-runs -> a distinct error entry. Both are captured; the
-        // batch does not throw, and each target gets its own labeled section.
-        final reg = registryWith((req) {
+    test('"*" on a server with no rooms reports none resolved', () async {
+      final feature = SoliplexFeature(
+        registry: registryWith((req) {
           if (req.url.path.endsWith('/api/v1/config')) {
             return _json({'soliplex_url': 'https://api'});
           }
-          // host distinguishes the two servers (default=api, good=good)
-          if (req.url.host == 'good') {
-            return _json({'thread_id': 't', 'runs': <String, dynamic>{}});
-          }
-          return http.Response('nope', 401); // default server: auth failure
-        });
-        await reg.addServer('good', 'https://good');
-        final feature = SoliplexFeature(registry: reg);
+          if (req.url.path.endsWith('/api/v1/rooms')) return _json({});
+          return http.Response('unexpected ${req.url}', 404);
+        }),
+      );
+      expect(
+        await feature.handlers['soliplex_query']!({
+          'question': 'q',
+          'room_id': '*',
+        }),
+        'Error: no rooms resolved from room_id',
+      );
+    });
+  });
 
-        final out = await feature.handlers['soliplex_query_all']!({
-          'question': 'compare',
-          'targets': [
-            {'room': 'search'}, // default -> 401
-            {'server': 'good', 'room': 'kb'}, // good -> no runs
-          ],
-        });
-        expect(out, contains('Asked 2 target(s): "compare"'));
-        expect(out, contains('## default/search\nError:'));
-        expect(out, contains('## good/kb\nError:'));
-        // partial-failure tolerant: a thrown per-target error never aborts.
-      },
-    );
+  group('soliplex_query multiroom partial-failure aggregation', () {
+    test('a failing room is captured per-room; the batch never throws',
+        () async {
+      // Room "kb"'s agui POST 401s -> auth error; room "docs"'s POST returns
+      // no-runs -> a distinct error. Both are captured; the batch does not
+      // throw, and each room gets its own labeled section.
+      final feature = SoliplexFeature(
+        registry: registryWith((req) {
+          if (req.url.path.endsWith('/api/v1/config')) {
+            return _json({'soliplex_url': 'https://api'});
+          }
+          if (req.url.path.contains('/api/v1/rooms/kb/agui')) {
+            return http.Response('nope', 401);
+          }
+          return _json({'thread_id': 't', 'runs': <String, dynamic>{}});
+        }),
+      );
+
+      final out = await feature.handlers['soliplex_query']!({
+        'question': 'compare',
+        'room_id': ['kb', 'docs'],
+      });
+      expect(out, contains('Asked 2 room(s): "compare"'));
+      expect(out, contains('## default/kb\nError:'));
+      expect(out, contains('## default/docs\nError:'));
+      // partial-failure tolerant: a thrown per-room error never aborts.
+    });
 
     test(
-      'unknown per-target server becomes a per-target error, not a throw',
+      'unknown server becomes per-room errors in a fan-out, not a throw',
       () async {
         final feature = SoliplexFeature(registry: registryWith(defaultRoutes));
-        final out = await feature.handlers['soliplex_query_all']!({
+        final out = await feature.handlers['soliplex_query']!({
           'question': 'q',
-          'targets': [
-            {'server': 'ghost', 'room': 'kb'},
-          ],
+          'room_id': ['kb', 'docs'],
+          'server': 'ghost',
         });
         expect(out, contains('## ghost/kb\nError:'));
+        expect(out, contains('## ghost/docs\nError:'));
         expect(out, contains('Unknown soliplex server'));
       },
     );
@@ -874,69 +967,57 @@ void main() {
     );
   });
 
-  group('soliplex_query_all fan-out edge cases', () {
+  group('soliplex_query multiroom fan-out edge cases', () {
     test(
-      'network exception on one target becomes a per-target error',
+      'network exception during fan-out becomes per-room errors, not a throw',
       () async {
-        // "default" works (returns no-runs error); "bad" throws from the http
-        // client itself, simulating a network timeout / connection refused.
-        var callCount = 0;
-        final reg = SoliplexServerRegistry(
-          httpClient: MockClient((req) async {
-            if (req.url.path.endsWith('/api/v1/config')) {
-              return _json({'soliplex_url': 'https://api'});
-            }
-            if (req.url.host == 'bad') {
+        final feature = SoliplexFeature(
+          registry: SoliplexServerRegistry(
+            httpClient: MockClient((req) async {
+              if (req.url.path.endsWith('/api/v1/config')) {
+                return _json({'soliplex_url': 'https://api'});
+              }
               throw Exception('Connection timed out');
-            }
-            callCount++;
-            return _json({'thread_id': 't', 'runs': <String, dynamic>{}});
-          }),
+            }),
+          ),
         );
-        await reg.addServer('bad', 'https://bad');
-        final feature = SoliplexFeature(registry: reg);
-        final out = await feature.handlers['soliplex_query_all']!({
+        final out = await feature.handlers['soliplex_query']!({
           'question': 'q',
-          'targets': [
-            {'room': 'search'}, // default -> no-runs error
-            {'server': 'bad', 'room': 'kb'}, // bad -> network exception
-          ],
+          'room_id': ['a', 'b'],
         });
-        // Both targets appear as per-target errors, not a batch-level throw.
-        expect(out, contains('## default/search\nError:'));
-        expect(out, contains('## bad/kb\nError:'));
+        // Both rooms appear as per-room errors, not a batch-level throw.
+        expect(out, contains('## default/a\nError:'));
+        expect(out, contains('## default/b\nError:'));
         expect(out, contains('Connection timed out'));
-        expect(callCount, 1); // default's agui POST did fire
       },
     );
 
     test(
-      'malformed (non-JSON) response on one target becomes per-target error',
+      'malformed (non-JSON) response on one room becomes per-room error',
       () async {
-        final reg = SoliplexServerRegistry(
-          httpClient: MockClient((req) async {
-            if (req.url.path.endsWith('/api/v1/config')) {
-              return _json({'soliplex_url': 'https://api'});
-            }
-            if (req.url.host == 'garbled') {
-              return http.Response(
-                'not json at all {{{',
-                200,
-                headers: {'content-type': 'application/json'},
-              );
-            }
-            return _json({'thread_id': 't', 'runs': <String, dynamic>{}});
-          }),
+        final feature = SoliplexFeature(
+          registry: SoliplexServerRegistry(
+            httpClient: MockClient((req) async {
+              if (req.url.path.endsWith('/api/v1/config')) {
+                return _json({'soliplex_url': 'https://api'});
+              }
+              if (req.url.path.contains('/api/v1/rooms/garbled/agui')) {
+                return http.Response(
+                  'not json at all {{{',
+                  200,
+                  headers: {'content-type': 'application/json'},
+                );
+              }
+              return _json({'thread_id': 't', 'runs': <String, dynamic>{}});
+            }),
+          ),
         );
-        await reg.addServer('garbled', 'https://garbled');
-        final feature = SoliplexFeature(registry: reg);
-        final out = await feature.handlers['soliplex_query_all']!({
+        final out = await feature.handlers['soliplex_query']!({
           'question': 'q',
-          'targets': [
-            {'server': 'garbled', 'room': 'kb'},
-          ],
+          'room_id': ['garbled', 'ok'],
         });
-        expect(out, contains('## garbled/kb\nError:'));
+        expect(out, contains('## default/garbled\nError:'));
+        expect(out, contains('## default/ok\nError:'));
       },
     );
 
@@ -954,18 +1035,16 @@ void main() {
                 'b': {'name': 'B'},
               });
             }
-            // Each target's agui POST returns no-runs → fails fast.
+            // Each room's agui POST returns no-runs → fails fast.
             return _json({'thread_id': 't', 'runs': <String, dynamic>{}});
           }),
         );
         final chunks = <String>[];
-        await feature.streamingHandlers['soliplex_query_all']!({
+        await feature.streamingHandlers['soliplex_query']!({
           'question': 'q',
-          'targets': [
-            {'room': '*'},
-          ],
+          'room_id': '*',
         }, chunks.add);
-        // At minimum: 1 initial keepalive + 1 per finished target (2 targets
+        // At minimum: 1 initial keepalive + 1 per finished room (2 rooms
         // from wildcard expansion). All are empty strings.
         expect(chunks.length, greaterThanOrEqualTo(3));
         expect(chunks.every((c) => c.isEmpty), isTrue);
@@ -993,7 +1072,7 @@ void main() {
         ),
         FanOutResult(server: 'staging', room: 'kb', error: 'Bridge down (503)'),
       ]);
-      expect(out, startsWith('Asked 2 target(s): "What is RAG?"'));
+      expect(out, startsWith('Asked 2 room(s): "What is RAG?"'));
       // Success block keeps its answer + Sources and exposes the thread_id for
       // soliplex_reply continuation.
       expect(out, contains('## default/docs'));

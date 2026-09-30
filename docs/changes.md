@@ -2280,6 +2280,13 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
 
 ### Changed
 
+- **Soliplex keeps one server connected at a time (#3480).** Connecting to
+  a Soliplex server — interactive login or an open/no-auth server's Connect —
+  disconnects the currently active server, and the overlay states the rule.
+  The `soliplex_query_all` tool is removed; `soliplex_query` accepts several
+  comma-separated room ids or `"*"` in `room_id` and returns one
+  aggregated, per-room answer from the target server.
+
 - **Strict xenon complexity gate (#3415).** The complexity gate now runs
   through `scripts/xenon-gate.sh` — also the `klangk:xenon` devenv task —
   which fails when its parser cannot read a graded file instead of
