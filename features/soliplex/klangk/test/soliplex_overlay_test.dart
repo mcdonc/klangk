@@ -85,6 +85,22 @@ void main() {
     );
   });
 
+  testWidgets('expand: overlay states the single-server rule (#3480)', (
+    tester,
+  ) async {
+    await pumpOverlay(tester, _feature());
+    await tester.pump();
+    await tester.tap(find.byKey(_iconKey));
+    await tester.pumpAndSettle();
+    expect(
+      find.text(
+        'One server connected at a time — connecting to another '
+        'disconnects it.',
+      ),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('connected default shows Logout instead of Connect', (
     tester,
   ) async {
