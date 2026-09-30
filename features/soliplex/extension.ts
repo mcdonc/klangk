@@ -255,10 +255,11 @@ export default function (pi: any) {
       'comma-separated ("kb,docs"), or "*" for every room on the server; ' +
       "several rooms are asked in parallel and the result has a `## " +
       "server/room` section per room with that room's answer (and its " +
-      "Sources). A failed room shows an Error line while the others still " +
-      "return. A single room streams and will not time out; in a multi-room " +
-      "fan-out only per-room completions keep the bridge alive, so a fan-out " +
-      "where every room outlives the bridge idle timeout can still time out.",
+      "Sources); each section also streams as it finishes, in completion " +
+      "order. A failed room shows an Error line while the others still " +
+      "return. Keepalives bridge silent phases (RAG retrieval, model " +
+      "warm-up), every room carries a 3-minute deadline, and keepalives stop " +
+      "at 10 minutes of total call time so a hung call terminates.",
     parameters: Type.Object({
       room_id: Type.String({
         description:

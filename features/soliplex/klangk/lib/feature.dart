@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -9,7 +10,24 @@ import 'soliplex_servers.dart';
 import 'soliplex_status_page.dart';
 import 'soliplex_tools.dart';
 
-const soliplexFeatureVersion = '2026-09-30-single-server';
+const soliplexFeatureVersion = '2026-09-30-keepalive';
+
+/// Default period between keepalive chunks emitted during a bridged
+/// streaming call (#3485). Well under the 30s default bridge idle timeout, so
+/// a silent-but-active phase (RAG retrieval, LLM first-token latency) keeps
+/// resetting the idle timer.
+const defaultKeepaliveInterval = Duration(seconds: 20);
+
+/// Default per-room deadline for one RAG + LLM query (#3485). A room that
+/// misses it returns an error (per-room in a fan-out) instead of hanging the
+/// call — this is the primary bound that keeps every call finite.
+const defaultQueryDeadline = Duration(minutes: 3);
+
+/// Default total-duration cap on keepalive emission (#3485). After this much
+/// call time the ticker goes silent on purpose, so the bridge idle timeout
+/// closes the stream — the backstop for a hang the per-room deadline somehow
+/// misses (room resolution, session setup, a deadline that fails to fire).
+const defaultKeepaliveCeiling = Duration(minutes: 10);
 
 /// Outcome of querying one room in a multiroom fan-out: either the answer
 /// (with its Sources block + thread id, for continuation) or a captured
@@ -30,6 +48,76 @@ class FanOutResult {
   final String? error;
 }
 
+/// Periodic empty-chunk keepalive for ONE bridged streaming tool call
+/// (#3485).
+///
+/// The klangk browser-delegate bridge bounds the gap BETWEEN chunks (the
+/// per-chunk idle timeout), not total duration — so a call is safe exactly as
+/// long as something keeps crossing the bridge. [start] emits an immediate
+/// empty chunk (the initial keepalive covering the silent warm-up before the
+/// first AG-UI event: session fetch, thread creation, model warm-up), then
+/// re-emits every [interval] so a silent-but-active phase (RAG retrieval,
+/// first-token latency) cannot outlive the idle timeout — including a
+/// multiroom fan-out where every room outlives it. After [ceiling] of total
+/// call time the ticker goes silent ON PURPOSE: the bridge idle timeout then
+/// closes the stream, so a hung call terminates instead of running forever.
+/// Both bounds are what keep "never times out" from becoming literal.
+class KeepaliveTicker {
+  KeepaliveTicker(this._sink, {required this.interval, required this.ceiling});
+
+  final ToolChunkSink? _sink;
+  final Duration interval;
+  final Duration ceiling;
+  final Stopwatch _elapsed = Stopwatch();
+  Timer? _timer;
+
+  /// Whether the periodic timer is armed.
+  bool get running => _timer != null;
+
+  /// Emit the initial keepalive and arm the periodic timer. No-op without a
+  /// sink (non-streaming call) or when already running.
+  void start() {
+    if (_sink == null || _timer != null) return;
+    _elapsed.start();
+    _sink?.call('');
+    _timer = Timer.periodic(interval, (_) => _tick());
+  }
+
+  void _tick() {
+    if (_elapsed.elapsed >= ceiling) {
+      // Total-duration cap: fall silent so the bridge idle timeout closes
+      // the stream (see the class doc). stop() also disarms the timer.
+      stop();
+      return;
+    }
+    _sink?.call('');
+  }
+
+  /// Cancel the timer. Safe to call more than once; every start() owner must
+  /// call this in a finally so a completed call never leaks a running timer.
+  void stop() {
+    _timer?.cancel();
+    _timer = null;
+    _elapsed.stop();
+  }
+}
+
+/// Render ONE fan-out result as its labeled `## server/room` block. PURE (no
+/// I/O). Used twice: by [formatFanOut] for the final aggregate, and by the
+/// fan-out itself to stream each room's block as a chunk the moment that room
+/// finishes (#3485) — so the same text the agent sees mid-call is what the
+/// final aggregated result contains.
+String formatFanOutBlock(FanOutResult r) {
+  final header = '## ${r.server}/${r.room}';
+  if (r.error != null) return '$header\nError: ${r.error}';
+  final tid = r.threadId == null
+      ? ''
+      : '\n[soliplex server: ${r.server}, room_id: ${r.room}, '
+          'thread_id: ${r.threadId} — continue with '
+          'soliplex_reply(server, room_id, thread_id, message)]';
+  return '$header\n${r.answer ?? ''}$tid';
+}
+
 /// Render multiroom fan-out [results] as one aggregated, per-room-labeled
 /// block. PURE (no I/O) so the aggregation shape is unit-testable
 /// independently of the live SSE in `_streamRun`. Each successful room keeps
@@ -39,16 +127,7 @@ class FanOutResult {
 /// `Error: <message>` instead, so a partial failure is visible inline rather
 /// than collapsing the whole result.
 String formatFanOut(String question, List<FanOutResult> results) {
-  final blocks = results.map((r) {
-    final header = '## ${r.server}/${r.room}';
-    if (r.error != null) return '$header\nError: ${r.error}';
-    final tid = r.threadId == null
-        ? ''
-        : '\n[soliplex server: ${r.server}, room_id: ${r.room}, '
-            'thread_id: ${r.threadId} — continue with '
-            'soliplex_reply(server, room_id, thread_id, message)]';
-    return '$header\n${r.answer ?? ''}$tid';
-  }).join('\n\n');
+  final blocks = results.map(formatFanOutBlock).join('\n\n');
   return 'Asked ${results.length} room(s): "$question"\n\n$blocks';
 }
 
@@ -97,6 +176,13 @@ class SoliplexFeature extends ToolPlugin with ChangeNotifier {
   /// [soliplexServers]; tests inject one backed by a mock `http.Client`.
   final SoliplexServerRegistry registry;
 
+  /// Keepalive timing for bridged streaming calls (#3485). See the
+  /// `defaultKeepalive*` / `defaultQueryDeadline` constants for the semantics;
+  /// tests inject small values so timer behavior runs in milliseconds.
+  final Duration keepaliveInterval;
+  final Duration queryDeadline;
+  final Duration keepaliveCeiling;
+
   bool _authenticated = false;
   bool _loggingIn = false;
   String? _loginError;
@@ -114,8 +200,12 @@ class SoliplexFeature extends ToolPlugin with ChangeNotifier {
   String _mid(String p) =>
       '$p-${DateTime.now().millisecondsSinceEpoch}-${_msgSeq++}';
 
-  SoliplexFeature({SoliplexServerRegistry? registry})
-      : registry = registry ?? soliplexServers {
+  SoliplexFeature({
+    SoliplexServerRegistry? registry,
+    this.keepaliveInterval = defaultKeepaliveInterval,
+    this.queryDeadline = defaultQueryDeadline,
+    this.keepaliveCeiling = defaultKeepaliveCeiling,
+  }) : registry = registry ?? soliplexServers {
     _refreshAuthState();
   }
 
@@ -476,9 +566,9 @@ class SoliplexFeature extends ToolPlugin with ChangeNotifier {
   /// rooms fan out in parallel on that ONE server and aggregate into
   /// per-room-labeled sections ([formatFanOut]). With a single room the answer
   /// streams token-by-token through [onChunk]; with several, per-room deltas
-  /// are dropped (a concurrent interleave is unreadable) and [onChunk] gets
-  /// empty keepalives so the bridge idle timer keeps resetting — but a fan-out
-  /// where every room outlives the bridge idle timeout can still time out.
+  /// are dropped (a concurrent interleave is unreadable) and each room's
+  /// completed block streams through [onChunk] the moment it finishes, while
+  /// a [KeepaliveTicker] bridges the silent phases (#3485).
   Future<String> _runQuery(
     Map<String, dynamic> request,
     ToolChunkSink? onChunk,
@@ -563,18 +653,26 @@ class SoliplexFeature extends ToolPlugin with ChangeNotifier {
 
   /// Ask [question] in a single [roomId] on [server], streaming deltas through
   /// [onChunk] when present. Seeds the thread history so a later
-  /// soliplex_reply has context.
+  /// soliplex_reply has context. The [KeepaliveTicker] emits the initial
+  /// keepalive before the (possibly slow) session + thread-creation phase and
+  /// bridges silent-but-active stretches; [queryDeadline] bounds the room so
+  /// a hung server returns an error instead of stalling the call (#3485).
   Future<String> _queryOneRoom(
     String server,
     String roomId,
     String question,
     ToolChunkSink? onChunk,
   ) async {
+    final ticker = KeepaliveTicker(
+      onChunk,
+      interval: keepaliveInterval,
+      ceiling: keepaliveCeiling,
+    )..start();
     try {
       final session = await registry.session(server);
       final result = await SoliplexClient(
         session,
-      ).queryRoom(roomId, question, onChunk: onChunk);
+      ).queryRoom(roomId, question, onChunk: onChunk).timeout(queryDeadline);
       await _refreshAuthState();
       // Seed this thread's history so a later soliplex_reply has context.
       final key = (serverId: server, roomId: roomId, threadId: result.threadId);
@@ -587,56 +685,88 @@ class SoliplexFeature extends ToolPlugin with ChangeNotifier {
       return '${result.text}\n\n[soliplex server: $server, '
           'thread_id: ${result.threadId} — continue with '
           'soliplex_reply(server, room_id, thread_id, message)]';
+    } on TimeoutException {
+      await _refreshAuthState();
+      return _deadlineError('querying room "$roomId" on "$server"');
     } catch (e) {
       await _refreshAuthState();
       return 'Error querying Soliplex: $e';
+    } finally {
+      ticker.stop();
     }
   }
 
+  /// Deadline error text shared by every streaming query path (#3485).
+  String _deadlineError(String what) =>
+      'Error: Soliplex $what did not answer within '
+      '${queryDeadline.inSeconds}s (per-call deadline)';
+
   /// Run ONE question against MANY rooms on ONE server in parallel and
   /// aggregate into a single labeled block ([formatFanOut]). Each room is
-  /// wrapped so a thrown error (server down, 401, no run) becomes a
+  /// wrapped so a thrown error (server down, 401, no run, deadline) becomes a
   /// [FanOutResult] error entry rather than failing the batch (PARTIAL-FAILURE
   /// TOLERANT), and per-room thread history is seeded so a later
-  /// soliplex_reply has context.
+  /// soliplex_reply has context. Each room's completed block streams through
+  /// [onChunk] the moment it finishes (#3485) — incremental display in
+  /// completion order — while the [KeepaliveTicker] keeps the bridge alive
+  /// through silent phases and [queryDeadline] bounds every room.
   Future<String> _queryManyRooms(
     String server,
     List<String> rooms,
     String question,
     ToolChunkSink? onChunk,
   ) async {
-    onChunk?.call(''); // initial keepalive before the (possibly long) fan-out
+    final ticker = KeepaliveTicker(
+      onChunk,
+      interval: keepaliveInterval,
+      ceiling: keepaliveCeiling,
+    )..start();
 
-    final results = await Future.wait(
-      rooms.map((room) async {
-        try {
-          final session = await registry.session(server);
-          // Drop per-room token deltas (a concurrent interleave is unreadable);
-          // the answer is collected whole below.
-          final r = await SoliplexClient(session).queryRoom(room, question);
-          // Seed history so soliplex_reply on this exact (server, room, thread)
-          // has prior context — same contract as _queryOneRoom.
-          final key = (serverId: server, roomId: room, threadId: r.threadId);
-          _threadHistory[key] = [
-            sox.UserMessage(id: _mid('u'), content: question),
-            sox.AssistantMessage(id: _mid('a'), content: r.text),
-          ];
-          onChunk?.call(''); // keepalive: this room finished
-          return FanOutResult(
-            server: server,
-            room: room,
-            answer: r.text,
-            threadId: r.threadId,
-          );
-        } catch (e) {
-          onChunk?.call(''); // keepalive even on failure
-          return FanOutResult(server: server, room: room, error: '$e');
-        }
-      }),
-    );
+    Future<FanOutResult> askRoom(String room) async {
+      try {
+        final session = await registry.session(server);
+        // Drop per-room token deltas (a concurrent interleave is unreadable);
+        // the answer is collected whole below.
+        final r = await SoliplexClient(
+          session,
+        ).queryRoom(room, question).timeout(queryDeadline);
+        // Seed history so soliplex_reply on this exact (server, room, thread)
+        // has prior context — same contract as _queryOneRoom.
+        final key = (serverId: server, roomId: room, threadId: r.threadId);
+        _threadHistory[key] = [
+          sox.UserMessage(id: _mid('u'), content: question),
+          sox.AssistantMessage(id: _mid('a'), content: r.text),
+        ];
+        final result = FanOutResult(
+          server: server,
+          room: room,
+          answer: r.text,
+          threadId: r.threadId,
+        );
+        onChunk?.call(formatFanOutBlock(result));
+        return result;
+      } on TimeoutException {
+        final result = FanOutResult(
+          server: server,
+          room: room,
+          error: _deadlineError('room "$room"'),
+        );
+        onChunk?.call(formatFanOutBlock(result));
+        return result;
+      } catch (e) {
+        final result = FanOutResult(server: server, room: room, error: '$e');
+        onChunk?.call(formatFanOutBlock(result));
+        return result;
+      }
+    }
 
-    await _refreshAuthState();
-    return formatFanOut(question, results);
+    try {
+      final results = await Future.wait(rooms.map(askRoom));
+      await _refreshAuthState();
+      return formatFanOut(question, results);
+    } finally {
+      ticker.stop();
+    }
   }
 
   Future<String> _reply(Map<String, dynamic> request) =>
@@ -650,7 +780,8 @@ class SoliplexFeature extends ToolPlugin with ChangeNotifier {
 
   /// Continue an existing soliplex thread (multi-turn). Requires `thread_id`
   /// (from a prior soliplex_query) and a `message`; the soliplex backend keeps
-  /// the thread history so the model sees the earlier turns.
+  /// the thread history so the model sees the earlier turns. Same keepalive +
+  /// deadline contract as the query paths (#3485).
   Future<String> _runReply(
     Map<String, dynamic> request,
     ToolChunkSink? onChunk,
@@ -661,13 +792,20 @@ class SoliplexFeature extends ToolPlugin with ChangeNotifier {
     final message = request['message'] as String? ?? '';
     if (threadId.isEmpty) return 'Error: thread_id is required';
     if (message.isEmpty) return 'Error: message is required';
+    final ticker = KeepaliveTicker(
+      onChunk,
+      interval: keepaliveInterval,
+      ceiling: keepaliveCeiling,
+    )..start();
     try {
       final session = await registry.session(server);
       final key = (serverId: server, roomId: roomId, threadId: threadId);
       final prior = _threadHistory[key] ?? <sox.Message>[];
       final result = await SoliplexClient(
         session,
-      ).replyToThread(roomId, threadId, prior, message, onChunk: onChunk);
+      )
+          .replyToThread(roomId, threadId, prior, message, onChunk: onChunk)
+          .timeout(queryDeadline);
       await _refreshAuthState();
       _threadHistory[key] = [
         ...prior,
@@ -675,9 +813,14 @@ class SoliplexFeature extends ToolPlugin with ChangeNotifier {
         sox.AssistantMessage(id: _mid('a'), content: result),
       ];
       return '$result\n\n[soliplex server: $server, thread_id: $threadId]';
+    } on TimeoutException {
+      await _refreshAuthState();
+      return _deadlineError('replying in thread "$threadId" on "$server"');
     } catch (e) {
       await _refreshAuthState();
       return 'Error replying to Soliplex thread: $e';
+    } finally {
+      ticker.stop();
     }
   }
 
