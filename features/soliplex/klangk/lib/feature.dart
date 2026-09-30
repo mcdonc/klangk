@@ -49,7 +49,7 @@ String formatFanOut(String question, List<FanOutResult> results) {
             'soliplex_reply(server, room_id, thread_id, message)]';
     return '$header\n${r.answer ?? ''}$tid';
   }).join('\n\n');
-  return 'Asked ${results.length} target(s): "$question"\n\n$blocks';
+  return 'Asked ${results.length} room(s): "$question"\n\n$blocks';
 }
 
 /// Render one room's info block (pi `soliplex_get_room_info`). PURE (no I/O) so
@@ -471,19 +471,20 @@ class SoliplexFeature extends ToolPlugin with ChangeNotifier {
       _runQuery(request, emit);
 
   /// Ask [question] in one room or many on a single server (`soliplex_query`).
-  /// The `room_id` argument may be a single room id, a list of ids, or `"*"`
-  /// (every room on [server]); several resolved rooms fan out in parallel on
-  /// that ONE server and aggregate into per-room-labeled sections
-  /// ([formatFanOut]). With a single room the answer streams token-by-token
-  /// through [onChunk]; with several, per-room deltas are dropped (a concurrent
-  /// interleave is unreadable) and [onChunk] gets empty keepalives so the
-  /// bridge idle timer keeps resetting.
+  /// The `room_id` argument may be a single room id, several ids
+  /// comma-separated, or `"*"` (every room on [server]); several resolved
+  /// rooms fan out in parallel on that ONE server and aggregate into
+  /// per-room-labeled sections ([formatFanOut]). With a single room the answer
+  /// streams token-by-token through [onChunk]; with several, per-room deltas
+  /// are dropped (a concurrent interleave is unreadable) and [onChunk] gets
+  /// empty keepalives so the bridge idle timer keeps resetting — but a fan-out
+  /// where every room outlives the bridge idle timeout can still time out.
   Future<String> _runQuery(
     Map<String, dynamic> request,
     ToolChunkSink? onChunk,
   ) async {
     final server = _serverArg(request);
-    final question = request['question'] as String? ?? '';
+    final question = (request['question'] as String?)?.trim() ?? '';
     if (question.isEmpty) return 'Error: question is required';
     final List<String> rooms;
     try {
@@ -503,19 +504,26 @@ class SoliplexFeature extends ToolPlugin with ChangeNotifier {
     return _queryManyRooms(server, rooms, question, onChunk);
   }
 
-  /// Parse the `room_id` argument: one room id, a list of room ids, or `"*"`
-  /// (every room on the server). Returns null when absent/blank so the caller
-  /// keeps the legacy `search` default. Throws [ArgumentError] on a malformed
-  /// value so validation happens before any network fan-out.
+  /// Parse the `room_id` argument: one room id, several ids comma-separated,
+  /// or `"*"` (every room on the server). An explicit list is also accepted
+  /// for callers that pass arrays through the bridge. Returns null when the
+  /// argument is absent so the caller keeps the legacy `search` default.
+  /// Throws [ArgumentError] on a malformed value so validation happens before
+  /// any network fan-out.
   static List<String>? _parseRoomsArg(Object? raw) {
     if (raw == null) return null;
     if (raw is String) {
       final s = raw.trim();
-      return s.isEmpty ? null : [s];
+      if (s.isEmpty) throw ArgumentError('room_id is required');
+      final rooms = s.split(',').map((e) => e.trim()).toList();
+      if (rooms.any((e) => e.isEmpty)) {
+        throw ArgumentError('room_id entries must be non-empty');
+      }
+      return rooms;
     }
     if (raw is! List) {
       throw ArgumentError(
-        'room_id must be a room id, a list of room ids, or "*"',
+        'room_id must be a room id, comma-separated room ids, or "*"',
       );
     }
     if (raw.isEmpty) throw ArgumentError('room_id list must not be empty');

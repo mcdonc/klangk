@@ -458,6 +458,24 @@ void main() {
       );
     });
 
+    test('blank room_id and empty comma segments error', () async {
+      final feature = SoliplexFeature(registry: registryWith(defaultRoutes));
+      expect(
+        await feature.handlers['soliplex_query']!({
+          'question': 'q',
+          'room_id': '  ',
+        }),
+        'Error: room_id is required',
+      );
+      expect(
+        await feature.handlers['soliplex_query']!({
+          'question': 'q',
+          'room_id': 'a,,b',
+        }),
+        'Error: room_id entries must be non-empty',
+      );
+    });
+
     test('wrong-typed room_id errors', () async {
       final feature = SoliplexFeature(registry: registryWith(defaultRoutes));
       expect(
@@ -465,7 +483,7 @@ void main() {
           'question': 'q',
           'room_id': 42,
         }),
-        'Error: room_id must be a room id, a list of room ids, or "*"',
+        'Error: room_id must be a room id, comma-separated room ids, or "*"',
       );
     });
   });
@@ -501,8 +519,54 @@ void main() {
         });
         expect(out, contains('## default/alpha'));
         expect(out, contains('## default/beta'));
-        expect(out, contains('Asked 2 target(s)'));
+        expect(out, contains('Asked 2 room(s)'));
       }
+    });
+
+    test(
+      'a single-room "*" expansion takes the single-room path (streams)',
+      () async {
+        // One room on the server: the wildcard resolves to exactly one room,
+        // which must go through _queryOneRoom (token streaming), NOT the
+        // fan-out aggregate. Distinguish via the single-room error wording.
+        final feature = SoliplexFeature(
+          registry: registryWith((req) {
+            if (req.url.path.endsWith('/api/v1/config')) {
+              return _json({'soliplex_url': 'https://api'});
+            }
+            if (req.url.path.endsWith('/api/v1/rooms')) {
+              return _json({
+                'search': {'name': 'Search'},
+              });
+            }
+            return _json({'thread_id': 't', 'runs': <String, dynamic>{}});
+          }),
+        );
+        final out = await feature.handlers['soliplex_query']!({
+          'question': 'q',
+          'room_id': '*',
+        });
+        expect(out, contains('Error querying Soliplex'));
+        expect(out, isNot(contains('Asked 1 room(s)')));
+      },
+    );
+
+    test('comma-separated room ids fan out like the list form', () async {
+      final feature = SoliplexFeature(
+        registry: registryWith((req) {
+          if (req.url.path.endsWith('/api/v1/config')) {
+            return _json({'soliplex_url': 'https://api'});
+          }
+          return _json({'thread_id': 't', 'runs': <String, dynamic>{}});
+        }),
+      );
+      final out = await feature.handlers['soliplex_query']!({
+        'question': 'q',
+        'room_id': ' search , kb ',
+      });
+      expect(out, contains('## default/search'));
+      expect(out, contains('## default/kb'));
+      expect(out, contains('Asked 2 room(s)'));
     });
 
     test('a concrete list asks each room; duplicates collapse', () async {
@@ -520,7 +584,7 @@ void main() {
       });
       expect(out, contains('## default/search'));
       expect(out, contains('## default/kb'));
-      expect(out, contains('Asked 2 target(s)'));
+      expect(out, contains('Asked 2 room(s)'));
     });
 
     test('"*" against an unknown server surfaces an expansion error', () async {
@@ -555,7 +619,8 @@ void main() {
   });
 
   group('soliplex_query multiroom partial-failure aggregation', () {
-    test('one room fails, the others still report (per-room errors)', () async {
+    test('a failing room is captured per-room; the batch never throws',
+        () async {
       // Room "kb"'s agui POST 401s -> auth error; room "docs"'s POST returns
       // no-runs -> a distinct error. Both are captured; the batch does not
       // throw, and each room gets its own labeled section.
@@ -575,7 +640,7 @@ void main() {
         'question': 'compare',
         'room_id': ['kb', 'docs'],
       });
-      expect(out, contains('Asked 2 target(s): "compare"'));
+      expect(out, contains('Asked 2 room(s): "compare"'));
       expect(out, contains('## default/kb\nError:'));
       expect(out, contains('## default/docs\nError:'));
       // partial-failure tolerant: a thrown per-room error never aborts.
@@ -1000,7 +1065,7 @@ void main() {
         ),
         FanOutResult(server: 'staging', room: 'kb', error: 'Bridge down (503)'),
       ]);
-      expect(out, startsWith('Asked 2 target(s): "What is RAG?"'));
+      expect(out, startsWith('Asked 2 room(s): "What is RAG?"'));
       // Success block keeps its answer + Sources and exposes the thread_id for
       // soliplex_reply continuation.
       expect(out, contains('## default/docs'));

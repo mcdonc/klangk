@@ -251,26 +251,20 @@ export default function (pi: any) {
       "Ask a question to one or many Soliplex rooms (RAG + LLM). Each room " +
       "starts a NEW conversation thread; the result ends with the server + " +
       "thread_id — pass BOTH to soliplex_reply to continue that conversation " +
-      '(multi-turn). Pass room_id as a single room id, a list of ids, or "*" ' +
-      "for every room on the server; several rooms are asked in parallel and " +
-      "the result has a `## server/room` section per room with that room's " +
-      "answer (and its Sources). A failed room shows an Error line while the " +
-      "others still return. Long-running answers stream and will not time out.",
+      "(multi-turn). Pass room_id as a single room id, several ids " +
+      'comma-separated ("kb,docs"), or "*" for every room on the server; ' +
+      "several rooms are asked in parallel and the result has a `## " +
+      "server/room` section per room with that room's answer (and its " +
+      "Sources). A failed room shows an Error line while the others still " +
+      "return. A single room streams and will not time out; in a multi-room " +
+      "fan-out only per-room completions keep the bridge alive, so a fan-out " +
+      "where every room outlives the bridge idle timeout can still time out.",
     parameters: Type.Object({
-      room_id: Type.Union(
-        [
-          Type.String({
-            description: "Room id (from soliplex_list_rooms).",
-          }),
-          Type.Array(Type.String(), {
-            description: "Several room ids to ask in parallel.",
-          }),
-        ],
-        {
-          description:
-            'A room id, a list of room ids, or "*" for every room on the server.',
-        },
-      ),
+      room_id: Type.String({
+        description:
+          "Room id (from soliplex_list_rooms), several ids comma-separated " +
+          '("kb,docs"), or "*" for every room on the server.',
+      }),
       question: Type.String({ description: "The question to ask." }),
       server: Type.Optional(
         Type.String({
@@ -283,16 +277,20 @@ export default function (pi: any) {
     renderCall(args: any) {
       const a = args ?? {};
       const srv = oneLine(a.server);
-      const rid = Array.isArray(a.room_id)
-        ? `${a.room_id.length} rooms`
-        : oneLine(a.room_id) || "?";
+      let rid = oneLine(a.room_id) || "?";
+      if (Array.isArray(a.room_id)) {
+        rid = `${a.room_id.length} room${a.room_id.length === 1 ? "" : "s"}`;
+      } else if (typeof a.room_id === "string" && a.room_id.includes(",")) {
+        const n = a.room_id.split(",").filter((s) => s.trim()).length;
+        rid = `${n} rooms`;
+      }
       return callLine(
         `soliplex_query(${srv ? `server: ${srv}, ` : ""}roomId: ${rid}, message: ${oneLine(a.question)})`,
       );
     },
     async execute(
       _id: string,
-      params: { room_id: string | string[]; question: string; server?: string },
+      params: { room_id: string; question: string; server?: string },
       _signal: AbortSignal | undefined,
       onUpdate: any,
     ) {
