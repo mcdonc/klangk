@@ -666,6 +666,23 @@ class TestCspBlock:
         policy = csp_policy(frontend_fixture(tmp_path))
         assert "require-trusted-types-for 'script'" in policy
 
+    def test_connect_src_default_is_self_only(self, tmp_path):
+        # No feature-declared origins → byte-identical first-party policy.
+        policy = csp_policy(frontend_fixture(tmp_path))
+        connect_src = policy.split("connect-src ", 1)[1].split(";", 1)[0]
+        assert connect_src == "'self'"
+
+    def test_connect_src_widened_by_connect_extra(self, tmp_path):
+        # The one sanctioned cross-origin widening: origins contributed by
+        # the feature layer (Features.connect_origins — e.g. a configured
+        # soliplex server) append to connect-src, de-duplicated.
+        policy = csp_policy(
+            frontend_fixture(tmp_path),
+            ("https://rag.example.com", "https://rag.example.com"),
+        )
+        connect_src = policy.split("connect-src ", 1)[1].split(";", 1)[0]
+        assert connect_src == "'self' https://rag.example.com"
+
     def test_worker_src_allows_same_origin_blob(self, tmp_path):
         policy = csp_policy(frontend_fixture(tmp_path))
         worker_src = policy.split("worker-src ", 1)[1].split(";", 1)[0]
@@ -743,6 +760,33 @@ class TestCspBlock:
         browser = cf[cf.index("http://:8997 {") :]
         assert "@frontend not path" in browser
         assert csp_policy(str(frontend_fixture(tmp_path))) in browser
+
+    def test_browser_site_csp_widened_by_feature_origins(self, tmp_path):
+        # A real app.state carries the Features object; its connect_origins
+        # feed the browser site's CSP connect-src (the mock app here stands
+        # in for the feature layer).
+        s = make_settings(
+            {
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_EGRESS_PORT": "8995",
+                "KLANGKD_FRONTEND_DIR": str(frontend_fixture(tmp_path)),
+            }
+        )
+        renderer = CaddyRenderer(
+            types.SimpleNamespace(
+                state=types.SimpleNamespace(
+                    settings=s,
+                    features=types.SimpleNamespace(
+                        connect_origins=lambda: [
+                            "https://rag.enfoldsystems.net"
+                        ]
+                    ),
+                )
+            )
+        )
+        cf = renderer.render_config("unix//s", "/d/a.sock")
+        browser = cf[cf.index("http://:8997 {") :]
+        assert "connect-src 'self' https://rag.enfoldsystems.net;" in browser
 
     def test_egress_site_has_no_headers(self, tmp_path):
         s = make_settings(

@@ -16,7 +16,8 @@ per-feature metadata (the frontend owns that).
     {
       "features": [
         {"name": "celebrate", "version": "1.0.0", "description": "...",
-         "config": { "KEY": {"description": "...", "default": "", "scope": "container"|"frontend"|"both"} }},
+         "config": { "KEY": {"description": "...", "default": "", "scope": "container"|"frontend"|"both",
+                              "csp_connect_origin": false} }},
         ...
       ],
       "defaults": ["celebrate", "beep", ...],
@@ -32,7 +33,9 @@ adds a ``features_config:`` block in ``klangkd.yaml`` as an additional source.
 import json
 import logging
 import os
+from urllib.parse import urlsplit
 
+from .container.spec import split_csv
 from .settings import resolve_dynamic_config
 
 logger = logging.getLogger(__name__)
@@ -134,6 +137,21 @@ def _all_manifest_feature_names(manifest: dict) -> set[str]:
         and isinstance((name := f.get("name")), str)
         and name
     }
+
+
+def url_origin(url: str | None) -> str | None:
+    """The ``scheme://host[:port]`` origin of an absolute http(s) URL.
+
+    ``None`` for anything else (unset, a relative URL, a non-http(s)
+    scheme) — CSP sources are origins, so a value without a usable
+    origin contributes nothing to ``connect-src``.
+    """
+    if not url:
+        return None
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.netloc:
+        return None
+    return f"{parts.scheme}://{parts.netloc}"
 
 
 class Features:
@@ -383,6 +401,66 @@ class Features:
                 continue
             self._add_frontend_entries(result, config, features_config)
         return result
+
+    def _flagged_entries(self, config: dict, flag: str):
+        """(key, spec) pairs of one feature block's config entries that
+        carry *flag* truthy."""
+        for key, spec in config.items():
+            if isinstance(spec, dict) and spec.get(flag):
+                yield key, spec
+
+    def _flagged_config_entries(self, flag: str):
+        """(key, spec) pairs of every manifest config entry carrying
+        *flag* truthy, across all features."""
+        for feature in self._manifest.get("features", []):
+            if not isinstance(feature, dict):
+                continue
+            config = feature.get("config", {})
+            if not isinstance(config, dict):
+                continue
+            yield from self._flagged_entries(config, flag)
+
+    def connect_origins(self) -> list[str]:
+        """Remote origins the browser CSP must let the frontend fetch.
+
+        Two sources funnel through the same machinery (resolve →
+        ``scheme://host[:port]`` origin via :func:`url_origin` → de-dupe,
+        order-preserving):
+
+        1. The ``csp_connect_origins`` setting (``klangkd.yaml`` /
+           ``KLANGKD_CSP_CONNECT_ORIGINS``) — operator-declared URLs, the
+           escape hatch for remotes no feature declares up front (e.g. a
+           soliplex server added at runtime via the overlay).
+        2. Feature-declared keys: a feature whose frontend fetches a
+           deploy-configured remote browser-side declares
+           ``"csp_connect_origin": true`` on that config key in its
+           ``package.json``; the build carries the flag into
+           ``features.json``, and each flagged key's value is resolved
+           exactly as ``frontend_config`` resolves it (env, then the
+           ``features_config:`` block, then the feature default).
+
+        The caddy renderer appends the results to the browser site's
+        ``connect-src``. Unset values and non-absolute-URL values
+        contribute nothing — the policy stays first-party-only.
+        Configuration presence is the gate, not feature activation: the
+        operator configuring a URL signals intent (the widening only
+        permits fetches to that origin), and activation semantics belong
+        to the frontend (#1655).
+        """
+        features_config = self.app.state.settings.features_config
+        resolved = (
+            resolve_dynamic_config(
+                key,
+                spec.get("default", ""),
+                features_config=features_config,
+            )
+            for key, spec in self._flagged_config_entries("csp_connect_origin")
+        )
+        configured = split_csv(self.app.state.settings.csp_connect_origins)
+        urls = [*configured, *resolved]
+        return list(
+            dict.fromkeys(filter(None, (url_origin(url) for url in urls)))
+        )
 
     def features_enable(self) -> str | None:
         """The deploy's chosen active-feature list (``KLANGKD_FEATURES_ENABLE``).

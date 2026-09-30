@@ -851,6 +851,19 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **`csp_connect_origins` / `KLANGKD_CSP_CONNECT_ORIGINS`.**
+  Comma-separated URLs whose origins the browser site's
+  Content-Security-Policy admits in `connect-src`, for frontend features
+  that fetch a deploy-configured remote server browser-side. Fixes the
+  soliplex feature's "Failed to load providers" (its configured
+  `soliplex_url` was blocked by the first-party-only `connect-src
+'self'`): the soliplex URL now declares itself via the new
+  `csp_connect_origin` feature-config flag, and the setting covers
+  remotes no feature declares up front (e.g. soliplex servers added at
+  runtime via the overlay). Only the `scheme://host[:port]` origin of
+  each URL is used; reloadable on SIGHUP. See
+  [Configuration File](reference/klangkd-config.md).
+
 - **`KLANGKWS_FEATURE_GITEA_OAUTH_CLIENT_ID` (#3405).** With
   `KLANGKWS_FEATURE_GITEA_OAUTH_REDIRECT_URI` (the klangk origin
   registered as the OAuth redirect in the Gitea application), a bare

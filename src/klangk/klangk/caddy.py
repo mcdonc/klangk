@@ -54,6 +54,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Sequence
 
 import httpx
 
@@ -316,7 +317,9 @@ def inline_script_hash_tokens(html_text: str) -> list[str]:
     ]
 
 
-def csp_policy(frontend_dir: str | Path) -> str:
+def csp_policy(
+    frontend_dir: str | Path, connect_extra: Sequence[str] = ()
+) -> str:
     """The Content-Security-Policy served on the browser listener's paths.
 
     Locked to first-party resources: the SPA's scripts, styles, images,
@@ -335,12 +338,20 @@ def csp_policy(frontend_dir: str | Path) -> str:
     tokens are simply omitted — still no ``'unsafe-inline'`` (strictest
     posture; there is no UI to serve then).
 
+    *connect_extra* is the one sanctioned cross-origin widening: extra
+    ``connect-src`` origins for features that fetch a deploy-configured
+    remote browser-side (e.g. soliplex's knowledge-base server). The
+    feature layer — not this module — decides what belongs there
+    (``Features.connect_origins``); an empty *connect_extra* (the default)
+    yields the byte-identical first-party-only policy.
+
     Same-origin ``ws:``/``wss:`` upgrades of the page origin are covered by
     ``'self'`` (CSP3), so the workspace WebSocket needs no bare scheme-source
     — and a bare ``ws:``/``wss:`` would permit a compromised script to open
     websockets to any host on the internet. No ``unsafe-eval`` (the
-    beep/boingball features no longer JS-``eval``), no third-party origins
-    (Roboto Mono is self-hosted, so fonts.gstatic.com is gone).
+    beep/boingball features no longer JS-``eval``), and no third-party
+    origins beyond *connect_extra* (Roboto Mono is self-hosted, so
+    fonts.gstatic.com is gone).
     ``frame-ancestors 'none'`` + X-Frame-Options DENY is the clickjacking
     posture. ``worker-src 'self' blob:`` sanctions exactly one widening:
     same-origin ``blob:`` workers. A ``blob:`` worker inherits the document
@@ -392,13 +403,19 @@ def csp_policy(frontend_dir: str | Path) -> str:
         # Hash sources are quoted tokens: 'sha256-<b64>' (CSP3 grammar —
         # an unquoted sha256-… parses as a host-source and is ignored).
         script_src += " " + " ".join(f"'{t}'" for t in tokens)
+    # De-duplicated, order-preserving: a feature can declare the same
+    # origin as another (or 'self' resolves to nothing here), and CSP
+    # tolerates repeats but the policy reads cleaner without them.
+    connect_src = "connect-src 'self'" + "".join(
+        f" {o}" for o in dict.fromkeys(connect_extra)
+    )
     return (
         "default-src 'self'; "
         f"{script_src}; "
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data: blob:; "
         "font-src 'self'; "
-        "connect-src 'self'; "
+        f"{connect_src}; "
         "worker-src 'self' blob:; "
         "object-src 'none'; "
         "base-uri 'self'; "
@@ -1073,7 +1090,10 @@ class CaddyRenderer:
         Everything else inside the block (bind, request_body, CSP, ACLs,
         routes) is identical either way.
         """
-        csp = csp_policy(self.app.state.settings.frontend_dir)
+        csp = csp_policy(
+            self.app.state.settings.frontend_dir,
+            self._connect_origins(),
+        )
         listen_addr = self.app.state.settings.listen
         port = self.app.state.settings.port
         fqdn = self.app.state.settings.tls_hostname
@@ -1123,6 +1143,18 @@ class CaddyRenderer:
             f"{auth_local}"
             f"{catch_all}}}\n"
         )
+
+    def _connect_origins(self) -> tuple[str, ...]:
+        """Extra ``connect-src`` origins for the browser site's CSP.
+
+        ``Features.connect_origins`` — the merged feature-declared +
+        operator-declared (``csp_connect_origins`` setting) answer to
+        "which remote origins may the browser fetch?". ``getattr``: the
+        renderer is also driven from minimal mock apps (tests) that carry
+        settings only — no feature layer means no extra origins.
+        """
+        features = getattr(self.app.state, "features", None)
+        return tuple(features.connect_origins()) if features else ()
 
     def _browser_catch_all(self, upstream: str, deny_guard: str) -> str:
         """The browser-site catch-all, split by immediate-peer trust (#3276).

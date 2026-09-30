@@ -191,12 +191,17 @@ def manifest_config_entry(spec: dict) -> tuple[dict, bool]:
     """The manifest config entry for one declared key + whether it is
     container-scoped (eligible for container-env injection). Carries only
     the JSON-serializable, runtime-relevant shape: {description, default,
-    scope}."""
+    scope, csp_connect_origin}. A ``csp_connect_origin: true`` declaration
+    marks a key whose resolved value is an absolute http(s) URL whose
+    origin the browser CSP must allow in ``connect-src`` (a feature that
+    fetches a deploy-configured remote browser-side, e.g. soliplex's
+    server) — the runtime ``Features.connect_origins`` reads it."""
     scope = normalized_scope(spec)
     entry = {
         "description": spec.get("description", ""),
         "default": spec.get("default", ""),
         "scope": scope,
+        "csp_connect_origin": bool(spec.get("csp_connect_origin", False)),
     }
     return entry, scope in _CONTAINER_SCOPES
 
