@@ -7,8 +7,16 @@ scenario parked the tab on the backend's JSON error page failed on
 "No Flutter isolate found"). ``FmtkClient.exec`` carries the recovery:
 a gone isolate with the tab on the app origin arms a marker, a state
 that outlives the window restarts the flutter run transparently, and a
-parked-away tab never arms. This scenario pins all three legs against
-the live stack.
+parked-away tab never arms. The first scenario pins all three legs
+against the live stack.
+
+``Harness.restart_app`` is the manual counterpart of that recovery —
+callers reach for it when they find the app already dead (the flows
+nightly lost its whole network module ten runs running to this: the
+auth module's dying deep-link-booted instance, then a drain that died
+on the dead app before the restart could run). The second scenario
+pins that the pre-restart drain treats the gone-isolate state as
+"no window left to launder" and the restart proceeds.
 """
 
 from __future__ import annotations
@@ -17,6 +25,7 @@ import time
 
 from fmtkharness import (
     BACKEND_PORT,
+    FmtkClient,
     FmtkError,
     ISOLATE_GONE_MARK,
     WEDGE_RECOVERY_SECONDS,
@@ -82,4 +91,24 @@ def test_isolate_wedge_recovery(harness, app):
     cdp_wait_tab_url((proxy_origin(),), timeout=30)
     app.flutter.isolate_gone_since = time.monotonic() - (WEDGE_RECOVERY_SECONDS + 5)
     assert app.recover_if_wedged(gone_error()) is True
+    app.wait_for_login_page()
+
+
+def test_restart_app_survives_dead_app(harness, app, monkeypatch):
+    # the dead-instance state restart_app exists to recover: the drain
+    # must treat a gone isolate as "no window left to launder", not
+    # fail the restart it is part of. The gone failure is fabricated
+    # with the same synthetic error the wedge legs use — killing
+    # Chrome for real on CI takes the VM service down with it
+    # (connection refused), a different dead state than the nightly's
+    # (service answers, no isolate behind it).
+    at_login(harness, app)
+
+    def raise_gone(self):
+        raise gone_error()
+
+    monkeypatch.setattr(FmtkClient, "app_errors", raise_gone)
+    harness.restart_app()  # must not raise; stop + relaunch run
+    monkeypatch.undo()
+    assert app.flutter.isolate_gone_since is None
     app.wait_for_login_page()

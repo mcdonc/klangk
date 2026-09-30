@@ -2434,6 +2434,26 @@ class Harness:
             raise FmtkError("flutter run not launched (call boot() first)")
         return FmtkClient(self.flutter)
 
+    def drain_app_errors(self) -> list:
+        """The pre-restart error drain, tolerant of an already-dead app.
+
+        The drain exists so the outgoing instance cannot launder its
+        errors through the restart — but an app with no isolate (the
+        dead-instance state ``restart_app`` is the designated recovery
+        for; the flows nightly's network module hit it ten runs running
+        after the auth module's dying deep-link-booted instance) has no
+        error window left to launder: that state drains empty instead
+        of failing the restart it exists to perform. Same trade as
+        :meth:`FmtkClient.recover_if_wedged`-driven restarts: the
+        alternative is every subsequent test failing on a dead debug
+        connection (#3231)."""
+        try:
+            return self.client.app_errors()
+        except FmtkError as exc:
+            if ISOLATE_GONE_MARK in f"{exc}\n{exc.stderr}":
+                return []
+            raise
+
     def restart_app(self, at_path: str | None = None) -> None:
         """Stop and relaunch the debug app (fresh main() -> config
         re-fetch). The deterministic substitute for dwds hot restart,
@@ -2446,14 +2466,22 @@ class Harness:
 
         The app-error monitor is a rolling window that a restart would
         silently clear — drain it first so errors from the outgoing app
-        instance fail the test instead of being laundered away."""
-        errors = self.client.app_errors()
+        instance fail the test instead of being laundered away. An app
+        whose isolate is already gone drains empty (see
+        :meth:`drain_app_errors`): callers reach for this method to
+        recover exactly that state."""
+        errors = self.drain_app_errors()
         if errors:
             raise FmtkError(f"app errors before restart_app: {errors}")
         url_suffix = ""
         if at_path is not None:
             self.flutter.launch_serial += 1
             url_suffix = f"/?e2e_boot={self.flutter.launch_serial}#{at_path}"
+        # The wedge marker describes the outgoing instance — a restart
+        # supersedes it, and a stale armed marker would fire a spurious
+        # recovery against the fresh app (same reset recover_from_wedge
+        # performs).
+        self.flutter.isolate_gone_since = None
         self.flutter.stop()
         self.flutter.launch(url_suffix)
 
