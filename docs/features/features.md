@@ -108,6 +108,14 @@ server-side and surfaced to the UI as `soliplex_url` via `GET /api/v1/config`
 when the feature is active; nothing is injected into workspace containers (it
 is a browser-side feature).
 
+The browser-side feature keeps **one Soliplex server connected at a time**
+(#3480): connecting to another server — interactively or by auto-connecting
+to an open/no-auth one — disconnects the currently active server, so the
+deploy's `csp_connect_origins` allow-list stays minimal. Multi-room queries
+stay available through `soliplex_query`: `room_id` accepts a single room id,
+a list of ids, or `*` (every room), and several rooms are asked in parallel
+on the target server and aggregated into per-room-labeled sections.
+
 **Workspace-side caveat:** dormancy governs the **frontend** (the Dart UI and
 its tools). The workspace container bundles every compiled-in feature's
 `extension.ts` into `/opt/klangk/pi-agent/extensions/`, and Pi loads that
