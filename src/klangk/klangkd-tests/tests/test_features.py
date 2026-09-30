@@ -10,6 +10,7 @@ container-env key bridge, frontend-scope config values, the feature list for
 """
 
 import json
+import logging
 import types
 
 import pytest
@@ -1360,3 +1361,352 @@ class TestReconfigure:
         assert p.feature_list() == [
             {"name": "new-feature", "version": "1.0.0", "description": ""}
         ]
+
+
+class TestUrlOrigin:
+    """url_origin(): the connect-src source form of a config value —
+    scheme://host[:port], path dropped, or None when unusable."""
+
+    @pytest.mark.parametrize(
+        "url,expected",
+        [
+            (None, None),
+            ("", None),
+            ("https://rag.example.com", "https://rag.example.com"),
+            ("http://rag.example.com", "http://rag.example.com"),
+            (
+                "https://rag.example.com:8443/api/base",
+                "https://rag.example.com:8443",
+            ),
+            ("rag.example.com", None),  # no scheme: relative, not a CSP source
+            ("/soliplex", None),
+            ("ftp://rag.example.com", None),  # non-http(s) schemes never fetch
+            ("https://", None),  # no netloc
+            # Hostile / typo'd values: the origin is rebuilt from parsed
+            # parts against the CSP host-source grammar, never echoed —
+            # these must all reject (a passed-through quote would break
+            # out of the quoted Caddyfile header token and silently
+            # disable the whole policy; a semicolon would inject extra
+            # CSP directives).
+            ('https://rag.example.com"', None),
+            ("https://rag.example.com'", None),
+            ("https://ho{st}", None),
+            ("https://host;form-action", None),
+            ("https://ho st", None),
+            ("https://ho\u00fcnicode.example", None),
+            # Userinfo drops (invalid in a host-source; echoing it would
+            # also leak basic-auth credentials into a public header).
+            (
+                "https://user:secret@rag.example.com",
+                "https://rag.example.com",
+            ),
+            # IPv6: bracketed literal kept; a garbage colon-bearing host
+            # rejected.
+            ("http://[::1]:8443/x", "http://[::1]:8443"),
+            ("http://[::1]", "http://[::1]"),
+            ("http://[zz::1]", None),
+            # An invalid port is unusable as given; the origin survives
+            # without it rather than echoing the hostile raw netloc.
+            ("https://h:notaport", "https://h"),
+        ],
+    )
+    def test_origin_extraction(self, url, expected):
+        assert features.url_origin(url) == expected
+
+    def test_ipv6_host_helper(self):
+        # Direct: the bracketed CSP form for a literal, None for
+        # colon-bearing garbage. Python 3.14's urlsplit already rejects
+        # invalid bracketed hosts before we see them, so this guard is
+        # defense for inputs/toolchains that reach it.
+        assert features._ipv6_host("::1") == "[::1]"
+        assert features._ipv6_host("zz::1") is None
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            'https://rag.example.com"',
+            "https://host;form-action",
+            "https://ho{st}",
+        ],
+    )
+    def test_hostile_values_cannot_reach_the_policy(
+        self, tmp_path, monkeypatch, url
+    ):
+        # The security property, end to end through the real resolution
+        # path: whatever a hostile or typo'd config value is, the resolved
+        # connect_origins() contains nothing derived from it (an echoed
+        # quote would break out of the quoted Caddyfile header token and
+        # silently disable the whole CSP).
+        spec = {
+            "description": "",
+            "default": "",
+            "scope": "frontend",
+            "csp_connect_origin": True,
+        }
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [
+                    {
+                        "name": "soliplex",
+                        "version": "1",
+                        "description": "",
+                        "config": {"KLANGKWS_FEATURE_SOLIPLEX_URL": spec},
+                    }
+                ],
+                "defaults": [],
+                "container_env_keys": [],
+            },
+        )
+        monkeypatch.setenv("KLANGKWS_FEATURE_SOLIPLEX_URL", url)
+        assert _features(tmp_path).connect_origins() == []
+
+    def test_userinfo_never_reaches_the_policy(self, tmp_path, monkeypatch):
+        # A credential-bearing URL (basic-auth RAG endpoints) yields the
+        # bare origin — userinfo is invalid in a host-source and echoing
+        # it would leak the secret into a public response header.
+        spec = {
+            "description": "",
+            "default": "",
+            "scope": "frontend",
+            "csp_connect_origin": True,
+        }
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [
+                    {
+                        "name": "soliplex",
+                        "version": "1",
+                        "description": "",
+                        "config": {"KLANGKWS_FEATURE_SOLIPLEX_URL": spec},
+                    }
+                ],
+                "defaults": [],
+                "container_env_keys": [],
+            },
+        )
+        monkeypatch.setenv(
+            "KLANGKWS_FEATURE_SOLIPLEX_URL",
+            "https://user:secret@rag.example.com/path",
+        )
+        assert _features(tmp_path).connect_origins() == [
+            "https://rag.example.com"
+        ]
+
+    def test_flagged_non_prefixed_key_skipped(self, tmp_path, caplog):
+        # Defense-in-depth: a (build-trusted) manifest key without the
+        # KLANGKWS_FEATURE_ prefix resolves nothing, same guard as
+        # frontend_config applies.
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [
+                    {
+                        "name": "x",
+                        "version": "1",
+                        "description": "",
+                        "config": {
+                            "SOLIPLEX_URL": {
+                                "description": "",
+                                "default": "https://x.example",
+                                "scope": "frontend",
+                                "csp_connect_origin": True,
+                            }
+                        },
+                    }
+                ],
+                "defaults": [],
+                "container_env_keys": [],
+            },
+        )
+        with caplog.at_level(logging.WARNING):
+            assert _features(tmp_path).connect_origins() == []
+        assert "missing KLANGKWS_FEATURE_ prefix" in caplog.text
+
+
+class TestConnectOrigins:
+    """connect_origins(): the feature-owned answer to "which deploy-
+    configured remote origins may the browser fetch?" — every config entry
+    flagged csp_connect_origin, its value resolved like frontend_config
+    (env > features_config: > default), reduced to its origin."""
+
+    def _manifest_with_flag(self, tmp_path, flag=True, settings_env=None):
+        spec = {
+            "description": "Soliplex RAG API endpoint URL",
+            "default": "",
+            "scope": "frontend",
+            "csp_connect_origin": flag,
+        }
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [
+                    {
+                        "name": "soliplex",
+                        "version": "1",
+                        "description": "",
+                        "config": {"KLANGKWS_FEATURE_SOLIPLEX_URL": spec},
+                    }
+                ],
+                "defaults": [],
+                "container_env_keys": [],
+            },
+        )
+        return _features(tmp_path, env=settings_env)
+
+    def test_no_manifest_returns_empty(self, tmp_path):
+        assert _features(tmp_path).connect_origins() == []
+
+    def test_flagged_key_resolved_from_env(self, tmp_path, monkeypatch):
+        # resolve_dynamic_config reads the process env, so the env source is
+        # monkeypatched (same as TestContainerEnv).
+        monkeypatch.setenv(
+            "KLANGKWS_FEATURE_SOLIPLEX_URL",
+            "https://rag.enfoldsystems.net/api",
+        )
+        p = self._manifest_with_flag(tmp_path)
+        # The path drops: CSP sources are origins.
+        assert p.connect_origins() == ["https://rag.enfoldsystems.net"]
+
+    def test_unflagged_key_contributes_nothing(self, tmp_path):
+        # Same shape, no flag → the policy stays first-party-only.
+        p = self._manifest_with_flag(tmp_path, flag=False)
+        assert p.connect_origins() == []
+
+    def test_unresolved_value_contributes_nothing(self, tmp_path):
+        # Unset env + empty default → no origin.
+        p = self._manifest_with_flag(tmp_path)
+        assert p.connect_origins() == []
+
+    def test_features_config_short_key_resolves(self, tmp_path):
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [
+                    {
+                        "name": "soliplex",
+                        "version": "1",
+                        "description": "",
+                        "config": {
+                            "KLANGKWS_FEATURE_SOLIPLEX_URL": {
+                                "description": "",
+                                "default": "",
+                                "scope": "frontend",
+                                "csp_connect_origin": True,
+                            }
+                        },
+                    }
+                ],
+                "defaults": [],
+                "container_env_keys": [],
+            },
+        )
+        cfg = tmp_path / "klangkd.yaml"
+        cfg.write_text(
+            "features_config:\n"
+            '  soliplex_url: "https://rag.enfoldsystems.net"\n'
+        )
+        settings = make_settings(
+            {"KLANGKD_FRONTEND_DIR": str(tmp_path)}, config_file=str(cfg)
+        )
+        p = features.Features(
+            types.SimpleNamespace(
+                state=types.SimpleNamespace(settings=settings)
+            )
+        )
+        assert p.connect_origins() == ["https://rag.enfoldsystems.net"]
+
+    def test_malformed_entries_skipped(self, tmp_path):
+        # Non-dict feature / config / spec entries degrade to nothing —
+        # the same guards frontend_config applies.
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [
+                    "not-a-dict",
+                    {"name": "x", "config": "not-a-dict"},
+                    {"name": "y", "config": {"KEY": "not-a-dict"}},
+                ],
+                "defaults": [],
+                "container_env_keys": [],
+            },
+        )
+        assert _features(tmp_path).connect_origins() == []
+
+    def test_duplicate_origins_deduped_in_order(self, tmp_path, monkeypatch):
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [
+                    {
+                        "name": "a",
+                        "version": "1",
+                        "description": "",
+                        "config": {
+                            "KLANGKWS_FEATURE_A_URL": {
+                                "description": "",
+                                "default": "",
+                                "scope": "frontend",
+                                "csp_connect_origin": True,
+                            }
+                        },
+                    },
+                    {
+                        "name": "b",
+                        "version": "1",
+                        "description": "",
+                        "config": {
+                            "KLANGKWS_FEATURE_B_URL": {
+                                "description": "",
+                                "default": "https://shared.example.com",
+                                "scope": "frontend",
+                                "csp_connect_origin": True,
+                            }
+                        },
+                    },
+                ],
+                "defaults": [],
+                "container_env_keys": [],
+            },
+        )
+        p = _features(tmp_path)
+        monkeypatch.setenv(
+            "KLANGKWS_FEATURE_A_URL", "https://shared.example.com/x"
+        )
+        # Both features' keys resolve to the same origin → one entry.
+        assert p.connect_origins() == ["https://shared.example.com"]
+
+    def test_setting_origins_merge_with_feature_declared(
+        self, tmp_path, monkeypatch
+    ):
+        # The csp_connect_origins setting (KLANGKD_CSP_CONNECT_ORIGINS) and
+        # the feature-declared key go through the same machinery: origin
+        # extraction, unusable values dropped, duplicates collapsed with
+        # the operator-declared entries first.
+        monkeypatch.setenv(
+            "KLANGKWS_FEATURE_SOLIPLEX_URL",
+            "https://rag.enfoldsystems.net/api",
+        )
+        p = self._manifest_with_flag(
+            tmp_path,
+            settings_env={
+                "KLANGKD_CSP_CONNECT_ORIGINS": (
+                    "https://ops.example.com/base, not-a-url, ,"
+                    " https://ops.example.com/base"
+                )
+            },
+        )
+        assert p.connect_origins() == [
+            "https://ops.example.com",
+            "https://rag.enfoldsystems.net",
+        ]
+
+    def test_setting_alone_widens(self, tmp_path):
+        # No feature flag anywhere — the operator setting still widens
+        # connect-src (the escape hatch for runtime-added servers).
+        p = _features(
+            tmp_path,
+            env={"KLANGKD_CSP_CONNECT_ORIGINS": "https://ops.example.com"},
+        )
+        assert p.connect_origins() == ["https://ops.example.com"]

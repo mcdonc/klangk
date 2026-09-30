@@ -1282,6 +1282,17 @@ class KlangkSettings(BaseSettings):
     # limit without a restart.
     api_rate_limit: int | None = 0
     cors_origins: str | None = None
+    # csp_connect_origins: comma-separated URLs whose origins the browser
+    # site's Content-Security-Policy allows in connect-src — for frontend
+    # features that fetch deploy-configured remote servers browser-side
+    # (e.g. soliplex's knowledge-base server). Feature-declared origins
+    # (a config key flagged csp_connect_origin in the feature's package.json)
+    # go through the same machinery (Features.connect_origins) and merge
+    # with this list — the operator setting covers servers a feature can't
+    # declare up front (e.g. soliplex servers added at runtime via the
+    # overlay). Reloadable on SIGHUP; applies on the next proxy config
+    # render.
+    csp_connect_origins: str = ""
     # dns_servers: comma-separated DNS nameserver IPs passed to workspace
     # containers via podman --dns (container_dns_config() → create_container).
     # Pairs with dns_search (#2055): dns_servers is the ``nameserver`` line and
