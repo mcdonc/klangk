@@ -2699,7 +2699,8 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   room outlives it used to die). In a multi-room fan-out each room's
   completed `## server/room` section streams as it finishes instead of only
   at the end. Every room carries a 3-minute deadline that returns a labeled
-  error, and keepalives stop at 10 minutes of total call time so a hung
+  error (the server-side run finishes on its own — the client cannot cancel
+  it), and keepalives stop at 10 minutes of total call time so a hung
   call terminates rather than streaming forever.
 - **Frontend builds now require Flutter 3.47 / Dart 3.13 (#3479).**
   The `pdfrx` constraint was raised to `^2.6.5` because

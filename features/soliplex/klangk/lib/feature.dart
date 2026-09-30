@@ -20,13 +20,18 @@ const defaultKeepaliveInterval = Duration(seconds: 20);
 
 /// Default per-room deadline for one RAG + LLM query (#3485). A room that
 /// misses it returns an error (per-room in a fan-out) instead of hanging the
-/// call — this is the primary bound that keeps every call finite.
+/// call — this is the primary bound that keeps every call finite. The
+/// deadline bounds only the caller's wait: the server-side RAG + LLM run
+/// keeps running to completion on its own, because the client has no way to
+/// cancel it.
 const defaultQueryDeadline = Duration(minutes: 3);
 
 /// Default total-duration cap on keepalive emission (#3485). After this much
 /// call time the ticker goes silent on purpose, so the bridge idle timeout
 /// closes the stream — the backstop for a hang the per-room deadline somehow
-/// misses (room resolution, session setup, a deadline that fails to fire).
+/// misses (room parsing, `"*"` expansion, session setup, a deadline that
+/// fails to fire). The ticker spans the whole call, so every one of those
+/// phases is inside the cap.
 const defaultKeepaliveCeiling = Duration(minutes: 10);
 
 /// Outcome of querying one room in a multiroom fan-out: either the answer
@@ -79,7 +84,7 @@ class KeepaliveTicker {
   void start() {
     if (_sink == null || _timer != null) return;
     _elapsed.start();
-    _sink?.call('');
+    _sink('');
     _timer = Timer.periodic(interval, (_) => _tick());
   }
 
@@ -568,7 +573,8 @@ class SoliplexFeature extends ToolPlugin with ChangeNotifier {
   /// streams token-by-token through [onChunk]; with several, per-room deltas
   /// are dropped (a concurrent interleave is unreadable) and each room's
   /// completed block streams through [onChunk] the moment it finishes, while
-  /// a [KeepaliveTicker] bridges the silent phases (#3485).
+  /// the call's [KeepaliveTicker] bridges every silent phase — including room
+  /// parsing and `"*"` expansion, before any room is asked (#3485).
   Future<String> _runQuery(
     Map<String, dynamic> request,
     ToolChunkSink? onChunk,
@@ -576,22 +582,35 @@ class SoliplexFeature extends ToolPlugin with ChangeNotifier {
     final server = _serverArg(request);
     final question = (request['question'] as String?)?.trim() ?? '';
     if (question.isEmpty) return 'Error: question is required';
-    final List<String> rooms;
+    // ONE ticker spans the whole call: room parsing, "*" expansion (a
+    // listRooms round-trip), and the dispatch below. The room handlers rely
+    // on it — starting it only inside them would leave the expansion window
+    // silent, the same bug this fixes (#3485).
+    final ticker = KeepaliveTicker(
+      onChunk,
+      interval: keepaliveInterval,
+      ceiling: keepaliveCeiling,
+    )..start();
     try {
-      final parsed = _parseRoomsArg(request['room_id']) ?? ['search'];
-      rooms = (await _expandRooms(server, parsed)).toSet().toList();
-    } on ArgumentError catch (e) {
-      return 'Error: ${e.message}';
-    } catch (e) {
-      // A `*` expansion can fail (unknown server / listRooms error). Surface
-      // it as a validation-style error rather than a half-built fan-out.
-      return 'Error expanding rooms: $e';
+      final List<String> rooms;
+      try {
+        final parsed = _parseRoomsArg(request['room_id']) ?? ['search'];
+        rooms = (await _expandRooms(server, parsed)).toSet().toList();
+      } on ArgumentError catch (e) {
+        return 'Error: ${e.message}';
+      } catch (e) {
+        // A `*` expansion can fail (unknown server / listRooms error). Surface
+        // it as a validation-style error rather than a half-built fan-out.
+        return 'Error expanding rooms: $e';
+      }
+      if (rooms.isEmpty) return 'Error: no rooms resolved from room_id';
+      if (rooms.length == 1) {
+        return await _queryOneRoom(server, rooms.single, question, onChunk);
+      }
+      return await _queryManyRooms(server, rooms, question, onChunk);
+    } finally {
+      ticker.stop();
     }
-    if (rooms.isEmpty) return 'Error: no rooms resolved from room_id';
-    if (rooms.length == 1) {
-      return _queryOneRoom(server, rooms.single, question, onChunk);
-    }
-    return _queryManyRooms(server, rooms, question, onChunk);
   }
 
   /// Parse the `room_id` argument: one room id, several ids comma-separated,
@@ -653,21 +672,16 @@ class SoliplexFeature extends ToolPlugin with ChangeNotifier {
 
   /// Ask [question] in a single [roomId] on [server], streaming deltas through
   /// [onChunk] when present. Seeds the thread history so a later
-  /// soliplex_reply has context. The [KeepaliveTicker] emits the initial
-  /// keepalive before the (possibly slow) session + thread-creation phase and
-  /// bridges silent-but-active stretches; [queryDeadline] bounds the room so
-  /// a hung server returns an error instead of stalling the call (#3485).
+  /// soliplex_reply has context. The caller's ([_runQuery]) KeepaliveTicker
+  /// bridges the silent session + thread-creation phase and silent-but-active
+  /// stretches; [queryDeadline] bounds the room so a hung server returns an
+  /// error instead of stalling the call (#3485).
   Future<String> _queryOneRoom(
     String server,
     String roomId,
     String question,
     ToolChunkSink? onChunk,
   ) async {
-    final ticker = KeepaliveTicker(
-      onChunk,
-      interval: keepaliveInterval,
-      ceiling: keepaliveCeiling,
-    )..start();
     try {
       final session = await registry.session(server);
       final result = await SoliplexClient(
@@ -687,18 +701,19 @@ class SoliplexFeature extends ToolPlugin with ChangeNotifier {
           'soliplex_reply(server, room_id, thread_id, message)]';
     } on TimeoutException {
       await _refreshAuthState();
-      return _deadlineError('querying room "$roomId" on "$server"');
+      return 'Error: ${_deadlineMessage('room "$roomId" on "$server"')}';
     } catch (e) {
       await _refreshAuthState();
       return 'Error querying Soliplex: $e';
-    } finally {
-      ticker.stop();
     }
   }
 
-  /// Deadline error text shared by every streaming query path (#3485).
-  String _deadlineError(String what) =>
-      'Error: Soliplex $what did not answer within '
+  /// Deadline message body shared by every query path (#3485). Callers that
+  /// return it directly prepend `Error: `; fan-out callers store it in a
+  /// [FanOutResult.error], whose block formatter adds the prefix — so it is
+  /// never doubled.
+  String _deadlineMessage(String what) =>
+      'Soliplex $what did not answer within '
       '${queryDeadline.inSeconds}s (per-call deadline)';
 
   /// Run ONE question against MANY rooms on ONE server in parallel and
@@ -708,20 +723,15 @@ class SoliplexFeature extends ToolPlugin with ChangeNotifier {
   /// TOLERANT), and per-room thread history is seeded so a later
   /// soliplex_reply has context. Each room's completed block streams through
   /// [onChunk] the moment it finishes (#3485) — incremental display in
-  /// completion order — while the [KeepaliveTicker] keeps the bridge alive
-  /// through silent phases and [queryDeadline] bounds every room.
+  /// completion order — while the caller's ([_runQuery]) KeepaliveTicker
+  /// keeps the bridge alive through silent phases and [queryDeadline] bounds
+  /// every room.
   Future<String> _queryManyRooms(
     String server,
     List<String> rooms,
     String question,
     ToolChunkSink? onChunk,
   ) async {
-    final ticker = KeepaliveTicker(
-      onChunk,
-      interval: keepaliveInterval,
-      ceiling: keepaliveCeiling,
-    )..start();
-
     Future<FanOutResult> askRoom(String room) async {
       try {
         final session = await registry.session(server);
@@ -749,7 +759,7 @@ class SoliplexFeature extends ToolPlugin with ChangeNotifier {
         final result = FanOutResult(
           server: server,
           room: room,
-          error: _deadlineError('room "$room"'),
+          error: _deadlineMessage('room "$room" on "$server"'),
         );
         onChunk?.call(formatFanOutBlock(result));
         return result;
@@ -760,13 +770,9 @@ class SoliplexFeature extends ToolPlugin with ChangeNotifier {
       }
     }
 
-    try {
-      final results = await Future.wait(rooms.map(askRoom));
-      await _refreshAuthState();
-      return formatFanOut(question, results);
-    } finally {
-      ticker.stop();
-    }
+    final results = await Future.wait(rooms.map(askRoom));
+    await _refreshAuthState();
+    return formatFanOut(question, results);
   }
 
   Future<String> _reply(Map<String, dynamic> request) =>
@@ -815,7 +821,7 @@ class SoliplexFeature extends ToolPlugin with ChangeNotifier {
       return '$result\n\n[soliplex server: $server, thread_id: $threadId]';
     } on TimeoutException {
       await _refreshAuthState();
-      return _deadlineError('replying in thread "$threadId" on "$server"');
+      return 'Error: ${_deadlineMessage('thread "$threadId" on "$server"')}';
     } catch (e) {
       await _refreshAuthState();
       return 'Error replying to Soliplex thread: $e';

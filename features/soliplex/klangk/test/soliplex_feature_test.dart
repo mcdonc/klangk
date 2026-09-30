@@ -1147,8 +1147,8 @@ void main() {
       // The initial keepalive is synchronous — it covers the silent warm-up
       // before the first AG-UI event without waiting one interval.
       expect(chunks, ['']);
-      await Future<void>.delayed(const Duration(milliseconds: 35));
-      expect(chunks.length, greaterThan(2));
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+      expect(chunks.length, greaterThan(3));
       ticker.stop();
       final after = chunks.length;
       await Future<void>.delayed(const Duration(milliseconds: 30));
@@ -1207,7 +1207,7 @@ void main() {
           chunks.add,
         );
         expect(chunks.first, '');
-        expect(chunks.where((c) => c.isEmpty).length, greaterThan(2));
+        expect(chunks.where((c) => c.isEmpty).length, greaterThan(3));
         expect(out, contains('Error querying Soliplex'));
       },
     );
@@ -1253,7 +1253,7 @@ void main() {
             return http.Response('unexpected ${req.url}', 404);
           }),
           keepaliveInterval: const Duration(milliseconds: 10),
-          queryDeadline: const Duration(milliseconds: 80),
+          queryDeadline: const Duration(milliseconds: 500),
           keepaliveCeiling: const Duration(seconds: 5),
         );
         final out = await feature.streamingHandlers['soliplex_query']!(
@@ -1267,6 +1267,9 @@ void main() {
         expect(blocks.first, startsWith('## default/kb\nError:'));
         expect(blocks.last, startsWith('## default/docs\nError:'));
         expect(blocks.last, contains('did not answer within'));
+        // Exactly one Error: prefix — the deadline message feeds
+        // formatFanOutBlock's own prefix (#3485 review round 1).
+        expect(blocks.last, isNot(contains('Error: Error')));
         // The final aggregate carries both rooms regardless of stream order.
         expect(out, contains('Asked 2 room(s): "q"'));
         expect(out, contains('## default/kb\nError:'));

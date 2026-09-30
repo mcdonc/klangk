@@ -317,7 +317,9 @@ export default function (pi: any) {
     description:
       "Continue an existing Soliplex conversation thread (multi-turn). Use the " +
       "server + thread_id returned by a prior soliplex_query. The room keeps the " +
-      "thread history, so earlier turns stay in context. Long answers stream.",
+      "thread history, so earlier turns stay in context. Long answers stream " +
+      "with keepalives bridging silent phases; a reply carries the same " +
+      "3-minute deadline as soliplex_query.",
     parameters: Type.Object({
       room_id: Type.String({ description: "Room id of the thread." }),
       message: Type.String({ description: "The follow-up message." }),
