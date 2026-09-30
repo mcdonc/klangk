@@ -777,8 +777,10 @@ class _CopyButtonState extends State<_CopyButton> {
   Future<void> _copy() async {
     // Web helper first for insecure-context (plain-HTTP) support; falls
     // back to Clipboard.setData when it reports "not handled". The
-    // confirmation state only shows when a write path actually succeeded —
-    // a silent clipboard failure must not be reported as "Copied!".
+    // confirmation state shows only when a write path reports success —
+    // though the engine fallback (which resolves rather than throws) can
+    // still no-op on the web in an insecure context; the execCommand
+    // branch ahead of it is the real defense there.
     var ok = await copyToClipboard(widget.text);
     if (!ok) {
       try {
