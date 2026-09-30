@@ -259,8 +259,9 @@ export default function (pi: any) {
       "Sources); each section also streams as it finishes, in completion " +
       "order. A failed room shows an Error line while the others still " +
       "return. Keepalives bridge silent phases (RAG retrieval, model " +
-      "warm-up), every room carries a 3-minute deadline, and keepalives stop " +
-      "at 10 minutes of total call time so a hung call terminates.",
+      "warm-up), every room carries a 6-minute deadline, and keepalives stop " +
+      "after 30 minutes of total call time, which ends any call still " +
+      "running — hung, or a fan-out larger than the cap's worth of waves.",
     parameters: Type.Object({
       room_id: Type.String({
         description:
@@ -320,7 +321,7 @@ export default function (pi: any) {
       "server + thread_id returned by a prior soliplex_query. The room keeps the " +
       "thread history, so earlier turns stay in context. Long answers stream " +
       "with keepalives bridging silent phases; a reply carries the same " +
-      "3-minute deadline as soliplex_query.",
+      "6-minute deadline as soliplex_query.",
     parameters: Type.Object({
       room_id: Type.String({ description: "Room id of the thread." }),
       message: Type.String({ description: "The follow-up message." }),

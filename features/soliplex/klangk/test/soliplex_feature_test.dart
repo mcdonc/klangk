@@ -1366,5 +1366,45 @@ void main() {
         );
       },
     );
+    test(
+      'a room hanging past its deadline does not consume the next room\'s clock',
+      () async {
+        // Concurrency 1: rooms run in strict waves, each racing its OWN
+        // per-room deadline (armed when the room's query starts). "hang"
+        // never answers and burns its full (tiny) deadline; "ok" runs
+        // afterwards and must still fail with its OWN fast error, not a
+        // deadline error — its clock was not shortened by hang's wait.
+        final feature = SoliplexFeature(
+          registry: registryWithAsync((req) async {
+            if (req.url.path.endsWith('/api/v1/config')) {
+              return _json({'soliplex_url': 'https://api'});
+            }
+            if (req.url.path.contains('/api/v1/rooms/hang/agui')) {
+              await Completer<void>().future;
+            }
+            if (req.url.path.contains('/api/v1/rooms/ok/agui')) {
+              return http.Response('boom', 500); // fails fast, own error
+            }
+            return http.Response('unexpected ${req.url}', 404);
+          }),
+          keepaliveInterval: const Duration(milliseconds: 50),
+          queryDeadline: const Duration(milliseconds: 100),
+          keepaliveCeiling: const Duration(seconds: 5),
+          fanOutConcurrency: 1,
+        );
+        final out = await feature.handlers['soliplex_query']!({
+          'question': 'q',
+          'room_id': 'hang,ok',
+        });
+        expect(out, contains('## default/hang\nError: Soliplex room "hang"'));
+        expect(out, contains('did not answer within'));
+        expect(
+          out,
+          contains(
+            '## default/ok\nError: Exception: Failed to create thread: 500',
+          ),
+        );
+      },
+    );
   });
 }

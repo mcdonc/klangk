@@ -24,15 +24,18 @@ const defaultKeepaliveInterval = Duration(seconds: 20);
 /// deadline bounds only the caller's wait: the server-side RAG + LLM run
 /// keeps running to completion on its own, because the client has no way to
 /// cancel it.
-const defaultQueryDeadline = Duration(minutes: 3);
+const defaultQueryDeadline = Duration(minutes: 6);
 
 /// Default total-duration cap on keepalive emission (#3485). After this much
 /// call time the ticker goes silent on purpose, so the bridge idle timeout
-/// closes the stream — the backstop for a hang the per-room deadline somehow
-/// misses (room parsing, `"*"` expansion, session setup, a deadline that
-/// fails to fire). The ticker spans the whole call, so every one of those
-/// phases is inside the cap.
-const defaultKeepaliveCeiling = Duration(minutes: 10);
+/// closes the stream. That ends BOTH kinds of over-long call: a hang the
+/// per-room deadline somehow misses (room parsing, `"*"` expansion, session
+/// setup, a deadline that fails to fire), and a healthy fan-out whose waves
+/// need more total time than the cap — with 3-wide waves and a 6-minute
+/// per-room deadline, a fan-out of more than ~15 slow rooms (or ~30 at the
+/// typical 45–60s per room) ends early at the cap and the final aggregate
+/// is lost. The ticker spans the whole call, so every phase is inside it.
+const defaultKeepaliveCeiling = Duration(minutes: 30);
 
 /// Default number of rooms asked in parallel in a fan-out (#3485). One
 /// Soliplex server answers a room in roughly 45–60s; asked for many at once
@@ -800,7 +803,7 @@ class SoliplexFeature extends ToolPlugin with ChangeNotifier {
         final result = FanOutResult(
           server: server,
           room: room,
-          error: _deadlineMessage('room "$room" on "$server"'),
+          error: _deadlineMessage('room "$room"'),
         );
         onChunk?.call(formatFanOutBlock(result));
         return result;
