@@ -37,6 +37,15 @@ operators or integrators to act when upgrading.
 
 - **`csp_connect_origins` / `KLANGKD_CSP_CONNECT_ORIGINS`.** Comma-separated URLs whose origins the browser site's Content-Security-Policy admits in `connect-src`, for frontend features that fetch a deploy-configured remote server browser-side. The soliplex feature's configured `soliplex_url` now declares itself via the new `csp_connect_origin` feature-config flag, fixing its "Failed to load providers" (fetches to the configured server were blocked by the first-party-only `connect-src 'self'`). The setting covers additional remotes the operator lists — each origin must be listed in advance, including soliplex servers added at runtime via the overlay. Only the `scheme://host[:port]` origin of each URL is used; reloadable on SIGHUP. See [Configuration File](reference/klangkd-config.md).
 
+### Changed
+
+- **Soliplex keeps one server connected at a time (#3480).** Connecting to
+  a Soliplex server — interactive login or an open/no-auth server's Connect —
+  disconnects the currently active server, and the overlay states the rule.
+  The `soliplex_query_all` tool is removed; `soliplex_query` accepts several
+  comma-separated room ids or `"*"` in `room_id` and returns one
+  aggregated, per-room answer from the target server.
+
 ### Fixed
 
 - **Frontend builds now require Flutter 3.47 / Dart 3.13 (#3479).**
