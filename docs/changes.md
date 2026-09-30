@@ -2684,6 +2684,12 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Frontend builds now require Flutter 3.47 / Dart 3.13 (#3479).**
+  The `pdfrx` constraint was raised to `^2.6.5` because
+  `pdfrx_engine 0.4.3` — which `pdfrx 2.4.x` still admits — no
+  longer compiles under the current Dart toolchain. Environments
+  whose `pubspec.lock` pinned `pdfrx 2.4.4` get a re-resolve to the
+  fixed `pdfrx_engine 0.6.1` on the next `flutter pub get`.
 - **Soliplex web login works against fragment-based auth callbacks
   (#3476).** Soliplex `soliplex#1415` moved the post-IdP `return_to`
   tokens from the query string into the URL fragment; the feature's
