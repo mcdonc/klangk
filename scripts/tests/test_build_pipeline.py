@@ -426,6 +426,17 @@ def declared_container_keys(manifest: dict) -> set:
     }
 
 
+def flagged_csp_specs(manifest: dict) -> list:
+    """(feature name, key, spec) for config entries flagged
+    csp_connect_origin."""
+    return [
+        (f["name"], key, spec)
+        for f in manifest["features"]
+        for key, spec in f["config"].items()
+        if spec["csp_connect_origin"]
+    ]
+
+
 class TestManifestContract:
     """The real features.json satisfies the runtime's shape contract."""
 
@@ -478,15 +489,22 @@ class TestManifestContract:
     def test_csp_connect_origin_only_on_soliplex_url(self, tmp_path, monkeypatch):
         # The soliplex server URL is the one shipped key whose origin the
         # browser CSP must allow in connect-src (the feature fetches it
-        # browser-side); every other key keeps the flag false.
+        # browser-side); every other key keeps the flag false. A flagged
+        # key must also ship an empty default — a non-empty default would
+        # widen the CSP on every deploy with zero operator action (env /
+        # features_config: is the operator's choice; the default is the
+        # feature's).
         manifest = self._build_manifest(tmp_path, monkeypatch)
-        flagged = {
-            key
-            for f in manifest["features"]
-            for key, spec in f["config"].items()
-            if spec["csp_connect_origin"]
-        }
-        assert flagged == {"KLANGKWS_FEATURE_SOLIPLEX_URL"}
+        flagged = flagged_csp_specs(manifest)
+        assert [(name, key) for name, key, _ in flagged] == [
+            ("soliplex", "KLANGKWS_FEATURE_SOLIPLEX_URL")
+        ]
+        for _name, _key, spec in flagged:
+            assert spec["default"] == "", (
+                "a csp_connect_origin-flagged key ships a non-empty default — "
+                "the default would widen the CSP on every deploy; ship an "
+                "empty default and let the operator set the value"
+            )
 
     def test_defaults_are_default_features_constant(self, tmp_path, monkeypatch):
         """The manifest's defaults list == DEFAULT_FEATURES in

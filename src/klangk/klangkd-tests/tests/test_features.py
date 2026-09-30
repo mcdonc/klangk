@@ -10,6 +10,7 @@ container-env key bridge, frontend-scope config values, the feature list for
 """
 
 import json
+import logging
 import types
 
 import pytest
@@ -1381,10 +1382,147 @@ class TestUrlOrigin:
             ("/soliplex", None),
             ("ftp://rag.example.com", None),  # non-http(s) schemes never fetch
             ("https://", None),  # no netloc
+            # Hostile / typo'd values: the origin is rebuilt from parsed
+            # parts against the CSP host-source grammar, never echoed —
+            # these must all reject (a passed-through quote would break
+            # out of the quoted Caddyfile header token and silently
+            # disable the whole policy; a semicolon would inject extra
+            # CSP directives).
+            ('https://rag.example.com"', None),
+            ("https://rag.example.com'", None),
+            ("https://ho{st}", None),
+            ("https://host;form-action", None),
+            ("https://ho st", None),
+            ("https://ho\u00fcnicode.example", None),
+            # Userinfo drops (invalid in a host-source; echoing it would
+            # also leak basic-auth credentials into a public header).
+            (
+                "https://user:secret@rag.example.com",
+                "https://rag.example.com",
+            ),
+            # IPv6: bracketed literal kept; a garbage colon-bearing host
+            # rejected.
+            ("http://[::1]:8443/x", "http://[::1]:8443"),
+            ("http://[::1]", "http://[::1]"),
+            ("http://[zz::1]", None),
+            # An invalid port is unusable as given; the origin survives
+            # without it rather than echoing the hostile raw netloc.
+            ("https://h:notaport", "https://h"),
         ],
     )
     def test_origin_extraction(self, url, expected):
         assert features.url_origin(url) == expected
+
+    def test_ipv6_host_helper(self):
+        # Direct: the bracketed CSP form for a literal, None for
+        # colon-bearing garbage. Python 3.14's urlsplit already rejects
+        # invalid bracketed hosts before we see them, so this guard is
+        # defense for inputs/toolchains that reach it.
+        assert features._ipv6_host("::1") == "[::1]"
+        assert features._ipv6_host("zz::1") is None
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            'https://rag.example.com"',
+            "https://host;form-action",
+            "https://ho{st}",
+        ],
+    )
+    def test_hostile_values_cannot_reach_the_policy(
+        self, tmp_path, monkeypatch, url
+    ):
+        # The security property, end to end through the real resolution
+        # path: whatever a hostile or typo'd config value is, the resolved
+        # connect_origins() contains nothing derived from it (an echoed
+        # quote would break out of the quoted Caddyfile header token and
+        # silently disable the whole CSP).
+        spec = {
+            "description": "",
+            "default": "",
+            "scope": "frontend",
+            "csp_connect_origin": True,
+        }
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [
+                    {
+                        "name": "soliplex",
+                        "version": "1",
+                        "description": "",
+                        "config": {"KLANGKWS_FEATURE_SOLIPLEX_URL": spec},
+                    }
+                ],
+                "defaults": [],
+                "container_env_keys": [],
+            },
+        )
+        monkeypatch.setenv("KLANGKWS_FEATURE_SOLIPLEX_URL", url)
+        assert _features(tmp_path).connect_origins() == []
+
+    def test_userinfo_never_reaches_the_policy(self, tmp_path, monkeypatch):
+        # A credential-bearing URL (basic-auth RAG endpoints) yields the
+        # bare origin — userinfo is invalid in a host-source and echoing
+        # it would leak the secret into a public response header.
+        spec = {
+            "description": "",
+            "default": "",
+            "scope": "frontend",
+            "csp_connect_origin": True,
+        }
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [
+                    {
+                        "name": "soliplex",
+                        "version": "1",
+                        "description": "",
+                        "config": {"KLANGKWS_FEATURE_SOLIPLEX_URL": spec},
+                    }
+                ],
+                "defaults": [],
+                "container_env_keys": [],
+            },
+        )
+        monkeypatch.setenv(
+            "KLANGKWS_FEATURE_SOLIPLEX_URL",
+            "https://user:secret@rag.example.com/path",
+        )
+        assert _features(tmp_path).connect_origins() == [
+            "https://rag.example.com"
+        ]
+
+    def test_flagged_non_prefixed_key_skipped(self, tmp_path, caplog):
+        # Defense-in-depth: a (build-trusted) manifest key without the
+        # KLANGKWS_FEATURE_ prefix resolves nothing, same guard as
+        # frontend_config applies.
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [
+                    {
+                        "name": "x",
+                        "version": "1",
+                        "description": "",
+                        "config": {
+                            "SOLIPLEX_URL": {
+                                "description": "",
+                                "default": "https://x.example",
+                                "scope": "frontend",
+                                "csp_connect_origin": True,
+                            }
+                        },
+                    }
+                ],
+                "defaults": [],
+                "container_env_keys": [],
+            },
+        )
+        with caplog.at_level(logging.WARNING):
+            assert _features(tmp_path).connect_origins() == []
+        assert "missing KLANGKWS_FEATURE_ prefix" in caplog.text
 
 
 class TestConnectOrigins:

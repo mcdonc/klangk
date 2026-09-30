@@ -30,9 +30,11 @@ secret). Today the value source is the server's env; a future issue (#1659)
 adds a ``features_config:`` block in ``klangkd.yaml`` as an additional source.
 """
 
+import ipaddress
 import json
 import logging
 import os
+import re
 from urllib.parse import urlsplit
 
 from .container.spec import split_csv
@@ -139,19 +141,74 @@ def _all_manifest_feature_names(manifest: dict) -> set[str]:
     }
 
 
+# The CSP host-source grammar admits reg-names (letters, digits, `.`, `-`)
+# and bracketed IPv6 literals — nothing else. Everything outside this set
+# is rejected (not sanitized): an origin with quotes, braces, semicolons,
+# whitespace, or userinfo would either be ignored by browsers or, worse,
+# break out of the quoted `header Content-Security-Policy "..."` token in
+# the rendered Caddyfile (a stray quote turns the header into caddy's
+# find-and-replace form, silently disabling the whole policy).
+_SAFE_HOST = re.compile(r"^[A-Za-z0-9.-]+$")
+
+
+def _ipv6_host(host: str) -> str | None:
+    """The bracketed CSP form of an IPv6 literal, or ``None`` when *host*
+    is not one (``:`` in a hostname is otherwise never a legal reg-name)."""
+    try:
+        ipaddress.IPv6Address(host)
+    except ValueError:
+        return None
+    return f"[{host}]"
+
+
+def _csp_host(parts) -> str | None:
+    """The CSP host-source form of a parsed URL's host.
+
+    Built from ``parts.hostname`` — **not** ``parts.netloc`` — so userinfo
+    (``user:pass@host``, invalid in a host-source and a credential leak into
+    a public response header) drops by construction. Bracketed for IPv6,
+    ``None`` for anything the CSP grammar cannot express safely.
+    """
+    host = parts.hostname
+    if host is None:
+        return None
+    if ":" in host:
+        return _ipv6_host(host)
+    return host if _SAFE_HOST.match(host) else None
+
+
+def _port_suffix(parts) -> str:
+    """``:<port>`` for an explicit valid port, ``""`` otherwise."""
+    try:
+        port = parts.port
+    except ValueError:  # non-numeric / out-of-range port
+        return ""
+    return "" if port is None else f":{port}"
+
+
 def url_origin(url: str | None) -> str | None:
     """The ``scheme://host[:port]`` origin of an absolute http(s) URL.
 
-    ``None`` for anything else (unset, a relative URL, a non-http(s)
-    scheme) — CSP sources are origins, so a value without a usable
-    origin contributes nothing to ``connect-src``.
+    The value is **rebuilt from the parsed parts** (scheme, hostname,
+    port) against the CSP host-source grammar — never echoed from the
+    input — so hostile or typo'd values (embedded quotes, braces,
+    semicolons, whitespace, userinfo) can neither widen the policy nor
+    mangle the Caddyfile header token it is served through. ``None`` for
+    anything that is not a safely expressible absolute http(s) origin —
+    such values contribute nothing to ``connect-src``.
     """
     if not url:
         return None
-    parts = urlsplit(url)
-    if parts.scheme not in ("http", "https") or not parts.netloc:
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        # RFC 3986-invalid netloc (Python's urlsplit rejects e.g. a bad
+        # bracketed host outright) — nothing usable here either.
         return None
-    return f"{parts.scheme}://{parts.netloc}"
+    host = _csp_host(parts)
+    if parts.scheme not in ("http", "https") or host is None:
+        return None
+    return f"{parts.scheme}://{host}{_port_suffix(parts)}"
 
 
 class Features:
@@ -404,9 +461,15 @@ class Features:
 
     def _flagged_entries(self, config: dict, flag: str):
         """(key, spec) pairs of one feature block's config entries that
-        carry *flag* truthy."""
+        carry *flag* truthy. Keys keep the feature-config prefix guard
+        ``frontend_config`` applies — a flagged non-prefixed key in a
+        (build-trusted) manifest resolves nothing."""
         for key, spec in config.items():
-            if isinstance(spec, dict) and spec.get(flag):
+            if (
+                isinstance(spec, dict)
+                and spec.get(flag)
+                and self._frontend_key_ok(key)
+            ):
                 yield key, spec
 
     def _flagged_config_entries(self, flag: str):
