@@ -33,6 +33,8 @@ operators or integrators to act when upgrading.
 
 ## \[Unreleased]
 
+## \[v2.0a6] - 2026-09-30
+
 ### Added
 
 - **`csp_connect_origins` / `KLANGKD_CSP_CONNECT_ORIGINS`.** Comma-separated URLs whose origins the browser site's Content-Security-Policy admits in `connect-src`, for frontend features that fetch a deploy-configured remote server browser-side. The soliplex feature's configured `soliplex_url` now declares itself via the new `csp_connect_origin` feature-config flag, fixing its "Failed to load providers" (fetches to the configured server were blocked by the first-party-only `connect-src 'self'`). The setting covers additional remotes the operator lists — each origin must be listed in advance, including soliplex servers added at runtime via the overlay. Only the `scheme://host[:port]` origin of each URL is used; reloadable on SIGHUP. See [Configuration File](reference/klangkd-config.md).
