@@ -23,6 +23,11 @@ rotation procedures):
 - ``src/containers/host/Dockerfile``
     - python:3.14-slim: digest
     - Caddy Cloudsmith repo key: SHA-256 of the fetched key file
+    - dependency versions: ``uv.lock`` exported to pip constraints by
+      ``scripts/build-host-image.sh`` (``--constraint`` on the wheel install)
+- ``src/containers/host/Dockerfile.fips``
+    - cryptography GitHub tag tarball (crypto-relink fallback, used when
+      PyPI ships no sdist for the locked version): SHA-256 ARG
 - ``src/containers/network/Dockerfile`` — alpine:3.21: digest
 - ``src/containers/{workspace,host}/Dockerfile.fips`` and
   ``src/containers/nix-seed/Dockerfile`` — debian:trixie-slim builders
@@ -43,7 +48,9 @@ _ROOT = Path(__file__).resolve().parents[2]
 _WORKSPACE_DF = _ROOT / "src/containers/workspace/Dockerfile"
 _WORKSPACE_BASE_DF = _ROOT / "src/containers/workspace/Dockerfile.base"
 _HOST_DF = _ROOT / "src/containers/host/Dockerfile"
+_HOST_FIPS_DF = _HOST_DF.with_name("Dockerfile.fips")
 _NETWORK_DF = _ROOT / "src/containers/network/Dockerfile"
+_HOST_BUILD_SCRIPT = _ROOT / "scripts/build-host-image.sh"
 
 # Every Dockerfile that participates in image builds. FROM lines must be
 # digest-pinned, an ARG reference, or a local build-stage alias — never a
@@ -253,6 +260,53 @@ def assert_caddy_sources_inline(text: str) -> None:
     assert "debian.deb.txt" not in text, (
         "Caddy sources list must not be fetched from the network (#2063)"
     )
+
+
+def test_host_image_pip_install_uses_lock_constraints():
+    """The host image's pip install resolves inside uv.lock's pins — a
+    free resolve ships different dependency versions per build (the
+    cryptography 50.0.2 wheels-only release broke a tagged build)."""
+    text = _HOST_DF.read_text()
+    assert "pip install --constraint /tmp/constraints.txt /tmp/klangk-*.whl" in text, (
+        "host image pip install must resolve inside uv.lock's pins"
+    )
+
+
+def test_build_script_exports_lock_constraints():
+    script = _HOST_BUILD_SCRIPT.read_text()
+    assert "uv export --frozen" in script, (
+        "build-host-image.sh must export the lock as pip constraints"
+    )
+    # --no-emit-workspace keeps the klangk/klangksidecar members out: their
+    # `-e` lines are invalid in a constraints file and the wheel installs
+    # separately.
+    assert "--no-emit-workspace" in script
+    assert "--output-file host-image-constraints.txt" in script, (
+        "the exported constraints file must be the one the Dockerfile COPYs"
+    )
+
+
+def test_fips_crypto_relink_verifies_fallback_tarball():
+    text = _HOST_FIPS_DF.read_text()
+    assert re.search(
+        r"\$\{CRYPTOGRAPHY_SRC_SHA256\}\s+/tmp/cryptography-src\.tar\.gz"
+        r"[\s\S]*\| sha256sum -c -",
+        text,
+    ), "the GitHub tag fallback must be sha256-verified before the build"
+    assert _HEX64.match(_arg(_HOST_FIPS_DF, "CRYPTOGRAPHY_SRC_SHA256")), (
+        "CRYPTOGRAPHY_SRC_SHA256 must be a 64-hex-char sha256"
+    )
+
+
+def test_fips_crypto_relink_prefers_pypi_sdist():
+    text = _HOST_FIPS_DF.read_text()
+    assert "--no-binary cryptography" in text, (
+        "the PyPI sdist path must stay preferred over the fallback"
+    )
+    assert (
+        "https://github.com/pyca/cryptography/archive/refs/tags/"
+        "${version}.tar.gz" in text
+    ), "fallback must fetch the tag matching the installed version"
 
 
 class TestAptRepoKeyPins:
