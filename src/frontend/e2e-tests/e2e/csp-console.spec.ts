@@ -2,10 +2,18 @@ import { test, expect, Page } from "@playwright/test";
 import {
   API_BASE,
   createAndOpenWorkspace,
+  createWorkspace,
+  dismissAccessibility,
+  registerUser,
   seedFile,
   openFilesTab,
   clickFileRow,
   terminalType,
+  TEST_PASSWORD,
+  waitForFile,
+  waitForFlutter,
+  fv,
+  vp,
 } from "./helpers";
 
 // #3219 — runtime CSP / Trusted Types enforcement. The served policy drops
@@ -321,6 +329,178 @@ test.describe("CSP / Trusted Types (#3219)", () => {
         externalAttempts.length ? externalAttempts.join("\n") : "(none)",
         "external requests under a fully self-contained frontend",
       ).toBe("(none)");
+      expect(violations.join("\n---\n") || "(none)").toBe("(none)");
+    } finally {
+      await cleanup();
+    }
+  }, 300_000);
+
+  // #3491 — audit of every cut/copy/paste Dart path against the served
+  // CSP. Clipboard work uses browser facilities the CSP does not govern
+  // (the async Clipboard API, the native `paste` ClipboardEvent, and the
+  // execCommand fallback) — none is a fetch directive or a Trusted Types
+  // sink — so this spec proves that empirically: each facility is driven
+  // hard under the real policy while the console watch stays armed, and
+  // any violation (or any clipboard op quietly failing) fails the suite.
+  test("clipboard: cut/copy/paste paths stay violation-free under the served CSP", async ({
+    page,
+    request,
+  }) => {
+    const violations: string[] = [];
+    watchViolations(page, violations);
+    watchExternalRequests(page, violations);
+    await initResourceBuffer(page);
+
+    // Chromium gates the async Clipboard API behind permissions; Firefox
+    // (this project runs there too) instead allows it via the user prefs
+    // set in playwright.config.ts. grantPermissions throws there — skip.
+    try {
+      await page
+        .context()
+        .grantPermissions(["clipboard-read", "clipboard-write"]);
+    } catch {
+      /* firefox — prefs already allow */
+    }
+
+    const seedClipboard = (t: string) =>
+      page.evaluate((text) => navigator.clipboard.writeText(text), t);
+    const readClipboard = () =>
+      page.evaluate(() => navigator.clipboard.readText());
+
+    // WebSocket watch for the terminal phase. Attached before ANY
+    // navigation: the app may create its socket during login (before the
+    // workspace route), and page.on("websocket") only fires for sockets
+    // created after the handler is registered — a later attach misses
+    // frames on a reused socket and the terminal wait hangs (#3065 race,
+    // seen live on firefox). terminal_seen latches so the wait below
+    // resolves immediately for a frame that lands before it is armed.
+    let terminalSeen = false;
+    page.on("websocket", (ws: { on: Function }) => {
+      ws.on("framereceived", (frame: { payload: string | Buffer }) => {
+        if (frame.payload.toString().includes("terminal_started")) {
+          terminalSeen = true;
+        }
+      });
+    });
+
+    const email = `csp-clip-${Date.now()}@test.example.com`;
+    const { headers } = await registerUser(request, email);
+    const { workspaceId, cleanup } = await createWorkspace(
+      request,
+      headers,
+      "csp-clip",
+    );
+
+    try {
+      // --- text-field cut/copy (engine Clipboard.setData →
+      // navigator.clipboard.writeText) and paste into the engine's text
+      // host (native paste event into the hidden input). All on the login
+      // form, whose coordinates the login helpers already calibrate.
+      await page.goto("/");
+      await waitForFlutter(page);
+      await dismissAccessibility(page);
+      const { width, height } = vp(page);
+      const cx = width / 2;
+      const f = fv(page);
+
+      // Type a probe, select-all, copy — the clipboard must receive it.
+      await f.click({ position: { x: cx, y: height * 0.46 }, force: true });
+      await page.waitForTimeout(200);
+      await page.keyboard.type("csp-cut-copy-probe");
+      await page.keyboard.press("ControlOrMeta+KeyA");
+      await page.keyboard.press("ControlOrMeta+KeyC");
+      await expect
+        .poll(() => readClipboard(), { timeout: 10_000 })
+        .toBe("csp-cut-copy-probe");
+
+      // Cut empties the field and writes the same selection.
+      await page.keyboard.press("ControlOrMeta+KeyX");
+      await expect
+        .poll(() => readClipboard(), { timeout: 10_000 })
+        .toBe("csp-cut-copy-probe");
+
+      // Paste the login email (seeded, like an externally-copied value),
+      // then finish typing the password and log in — a successful login
+      // proves the pasted bytes reached the field.
+      await seedClipboard(email);
+      await page.keyboard.press("ControlOrMeta+KeyV");
+      await page.waitForTimeout(200);
+      await f.click({ position: { x: cx, y: height * 0.56 }, force: true });
+      await page.waitForTimeout(200);
+      await page.keyboard.type(TEST_PASSWORD);
+      await f.click({ position: { x: cx, y: height * 0.64 }, force: true });
+      await expect(page).toHaveTitle(/Workspaces/i, { timeout: 30_000 });
+
+      // --- open the workspace; wait for container + PTY like openWorkspace
+      // (its own loginViaUI is skipped — the session is already live). The
+      // 240s budget starts HERE, counted from navigation, not from test
+      // start (the login phase above must not eat into it).
+      await page.goto(`/#/workspace/${workspaceId}`, { waitUntil: "load" });
+      await waitForFlutter(page);
+      if (!terminalSeen) {
+        await expect
+          .poll(async () => terminalSeen, { timeout: 240_000 })
+          .toBe(true);
+      }
+      await dismissAccessibility(page);
+
+      // --- OSC 52 from the pane app must NOT write the browser clipboard
+      // (tmux `set-clipboard external` swallows pane-app sequences, and
+      // flterm wires no clipboard callback) — the clipboard-exfiltration
+      // guard of #2694. A successful write here would also be a CSP/TT
+      // question; it must simply stay inert.
+      await seedClipboard("osc52-sentinel");
+      const b64 = Buffer.from("OSC52-EXFIL").toString("base64");
+      await terminalType(page, `printf '\\033]52;c;${b64}\\007'`);
+      await page.waitForTimeout(1500);
+      expect(await readClipboard()).toBe("osc52-sentinel");
+
+      // --- terminal copy-on-select: tmux copy-pipe → bridge
+      // clipboard_write → setClipboardText → navigator.clipboard.writeText.
+      // Fill the screen first so the echoed marker sits in the bottom rows,
+      // then drag across the bottom-center of the PTY (the region that
+      // demonstrably lands on the terminal — a drag at the top of the
+      // viewport hits the header/tab strips and selects nothing).
+      const marker = `CSPCOPY-${Date.now()}`;
+      await terminalType(page, `clear; seq 1 60; echo ${marker}`);
+      await page.waitForTimeout(1000);
+      const dragStartX = Math.round(width / 2) - 300;
+      const dragEndX = Math.round(width / 2) + 300;
+      const startY = height - 150;
+      const endY = height - 80;
+      await page.mouse.move(dragStartX, startY);
+      await page.mouse.down();
+      for (let i = 1; i <= 10; i++) {
+        const x = dragStartX + ((dragEndX - dragStartX) * i) / 10;
+        const y = startY + ((endY - startY) * i) / 10;
+        await page.mouse.move(x, y);
+        await page.waitForTimeout(50);
+      }
+      await page.mouse.up();
+      await expect
+        .poll(() => readClipboard(), { timeout: 15_000 })
+        .toContain(marker);
+
+      // --- terminal paste: the native `paste` ClipboardEvent consumed by
+      // installPasteListener → PTY. Decisive via the marker file.
+      const pastePath = "/home/klangk/.csp-paste";
+      await seedClipboard(`echo pasted-under-csp > ${pastePath}`);
+      await f.click({
+        position: { x: width / 2, y: height / 2 },
+        force: true,
+      });
+      await page.waitForTimeout(500);
+      await page.keyboard.press("ControlOrMeta+KeyV");
+      await page.waitForTimeout(300);
+      await page.keyboard.press("Enter");
+      await waitForFile(request, workspaceId, pastePath, headers);
+      const readResp = await request.get(
+        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=${encodeURIComponent(pastePath)}`,
+        { headers },
+      );
+      expect((await readResp.json()).content).toContain("pasted-under-csp");
+
+      await page.waitForTimeout(1500); // let the console settle
       expect(violations.join("\n---\n") || "(none)").toBe("(none)");
     } finally {
       await cleanup();

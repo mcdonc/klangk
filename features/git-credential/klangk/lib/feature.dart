@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
 import 'open_url.dart';
+import 'copy_to_clipboard.dart';
 import 'git_auth_callback_page.dart';
 import 'window_messaging.dart';
 
@@ -774,7 +775,11 @@ class _CopyButtonState extends State<_CopyButton> {
   bool _copied = false;
 
   Future<void> _copy() async {
-    await Clipboard.setData(ClipboardData(text: widget.text));
+    // Web helper first for insecure-context (plain-HTTP) support; falls
+    // back to Clipboard.setData when it reports "not handled".
+    if (!await copyToClipboard(widget.text)) {
+      await Clipboard.setData(ClipboardData(text: widget.text));
+    }
     if (!mounted) return;
     setState(() => _copied = true);
     Future.delayed(const Duration(seconds: 2), () {

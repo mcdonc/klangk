@@ -163,24 +163,7 @@ void Function() installPageKeyListener(bool Function() shouldSuppress) {
   return () => web.document.removeEventListener('keydown', handler, true.toJS);
 }
 
-/// Reads the system clipboard as plain text via the async Clipboard API.
-///
-/// Used only by the right-click "Paste" menu item: a synthetic button click is
-/// not a native paste gesture, so no `paste` event fires and [installPasteListener]
-/// can't cover it. On Firefox this may surface the browser's paste-confirmation
-/// UI; the keyboard path stays prompt-free via the native event. Returns null
-/// if the clipboard is empty or the read is denied.
-Future<String?> readClipboardText() async {
-  try {
-    final text = await web.window.navigator.clipboard.readText().toDart;
-    return text.toDart;
-  } catch (e) {
-    debugPrint('[WebHelpers] clipboard read failed: $e');
-    return null;
-  }
-}
-
-/// Write [text] to the system clipboard.
+/// Write [text] to the system clipboard (browser).
 ///
 /// Prefers the async Clipboard API (`navigator.clipboard.writeText`), which
 /// is secure-context-only (HTTPS / `localhost`). Over plain HTTP to a remote

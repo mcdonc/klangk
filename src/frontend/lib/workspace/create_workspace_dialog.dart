@@ -5,6 +5,8 @@ import 'package:flutter/services.dart';
 
 import '../auth/auth_service.dart';
 import '../theme/colors.dart';
+import '../utils/web_helpers_stub.dart'
+    if (dart.library.js_interop) '../utils/web_helpers_web.dart';
 import 'marking_banner.dart' show classificationBannerMaxLength;
 import 'workspace_list_page.dart'
     show validateMountSpec, validateAllowedDomainSpec;
@@ -740,8 +742,19 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                       semanticLabel: 'Copy mount',
                     ),
                     tooltip: 'Copy',
-                    onPressed: () =>
-                        Clipboard.setData(ClipboardData(text: e.value)),
+                    onPressed: () async {
+                      // Route through the web helper so copy also works over
+                      // plain HTTP (insecure context), where the engine's
+                      // `navigator.clipboard` path is unavailable and a bare
+                      // Clipboard.setData would silently no-op (#2166 class).
+                      // Its false return (non-web, or the copy genuinely
+                      // failed) falls back to Clipboard.setData.
+                      if (!await setClipboardText(e.value)) {
+                        await Clipboard.setData(
+                          ClipboardData(text: e.value),
+                        );
+                      }
+                    },
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
                   ),
@@ -814,9 +827,12 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                       semanticLabel: 'Copy environment variable',
                     ),
                     tooltip: 'Copy',
-                    onPressed: () => Clipboard.setData(
-                      ClipboardData(text: '${e.value.key}=${e.value.value}'),
-                    ),
+                    onPressed: () async {
+                      final text = '${e.value.key}=${e.value.value}';
+                      if (!await setClipboardText(text)) {
+                        await Clipboard.setData(ClipboardData(text: text));
+                      }
+                    },
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
                   ),
@@ -900,8 +916,13 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                       semanticLabel: 'Copy allowed domain',
                     ),
                     tooltip: 'Copy',
-                    onPressed: () =>
-                        Clipboard.setData(ClipboardData(text: e.value)),
+                    onPressed: () async {
+                      if (!await setClipboardText(e.value)) {
+                        await Clipboard.setData(
+                          ClipboardData(text: e.value),
+                        );
+                      }
+                    },
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
                   ),
