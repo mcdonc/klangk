@@ -197,6 +197,50 @@ class TestPrefixedKeysStillEmit:
         assert env_keys == ["KLANGKWS_FEATURE_SHARED_URL"]
         assert "KLANGKWS_FEATURE_SHARED_URL" in features[0]["config"]
 
+    def test_csp_connect_origin_flag_carried_to_entry(self, tmp_path):
+        # A feature declaring csp_connect_origin on a key (e.g. soliplex's
+        # server URL — the frontend fetches it browser-side) gets the flag
+        # in its manifest entry; Features.connect_origins reads it at
+        # runtime to widen the browser CSP's connect-src. Absent → false.
+        p = _make_feature(
+            tmp_path,
+            "soliplex",
+            {
+                "KLANGKWS_FEATURE_SOLIPLEX_URL": {
+                    "scope": "frontend",
+                    "default": "",
+                    "description": "Soliplex RAG API endpoint URL",
+                    "csp_connect_origin": True,
+                }
+            },
+        )
+        q = _make_feature(
+            tmp_path,
+            "plain",
+            {
+                "KLANGKWS_FEATURE_PLAIN_URL": {
+                    "scope": "frontend",
+                    "default": "",
+                }
+            },
+        )
+        features, _ = import_dart_features.collect_feature_metadata(
+            [p, q], str(tmp_path)
+        )
+        by_name = {f["name"]: f for f in features}
+        assert (
+            by_name["soliplex"]["config"]["KLANGKWS_FEATURE_SOLIPLEX_URL"][
+                "csp_connect_origin"
+            ]
+            is True
+        )
+        assert (
+            by_name["plain"]["config"]["KLANGKWS_FEATURE_PLAIN_URL"][
+                "csp_connect_origin"
+            ]
+            is False
+        )
+
 
 class TestPrefixConstantDrift:
     """The build script's prefix constant must match the runtime copy in

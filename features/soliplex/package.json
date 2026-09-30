@@ -12,7 +12,8 @@
       "KLANGKWS_FEATURE_SOLIPLEX_URL": {
         "description": "Soliplex RAG API endpoint URL",
         "default": "",
-        "scope": "frontend"
+        "scope": "frontend",
+        "csp_connect_origin": true
       }
     }
   }
