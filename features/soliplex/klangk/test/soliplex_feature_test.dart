@@ -1302,4 +1302,69 @@ void main() {
       expect(out, contains('did not answer within'));
     });
   });
+
+  group('bounded fan-out concurrency (#3485)', () {
+    test('runBounded preserves input order, not completion order', () async {
+      final out = await runBounded<int, int>(
+        [1, 2, 3],
+        // Room 1 is slowest; results must still come back in input order.
+        (i) async => Future<void>.delayed(Duration(milliseconds: 30 * (4 - i)))
+            .then((_) => i * 10),
+        3,
+      );
+      expect(out, [10, 20, 30]);
+    });
+
+    test('runBounded(…, 1) runs strictly serially', () async {
+      final log = <int>[];
+      await runBounded<int, int>([1, 2, 3], (i) async {
+        log.add(i); // start
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        log.add(-i); // finish
+        return i;
+      }, 1);
+      expect(log, [1, -1, 2, -2, 3, -3]);
+    });
+
+    test(
+      'fan-out asks at most fanOutConcurrency rooms at once and queues waves',
+      () async {
+        var inFlight = 0;
+        var maxInFlight = 0;
+        final feature = SoliplexFeature(
+          registry: registryWithAsync((req) async {
+            if (req.url.path.endsWith('/api/v1/config')) {
+              return _json({'soliplex_url': 'https://api'});
+            }
+            if (req.url.path.contains('/api/v1/rooms/') &&
+                req.url.path.contains('/agui')) {
+              inFlight++;
+              maxInFlight = maxInFlight < inFlight ? inFlight : maxInFlight;
+              await Future<void>.delayed(const Duration(milliseconds: 20));
+              inFlight--;
+            }
+            // No-runs → every room fails fast into a per-room error entry.
+            return _json({'thread_id': 't', 'runs': <String, dynamic>{}});
+          }),
+          keepaliveInterval: const Duration(milliseconds: 50),
+          queryDeadline: const Duration(seconds: 5),
+        );
+        final rooms = List.generate(9, (i) => 'r$i');
+        final out = await feature.handlers['soliplex_query']!({
+          'question': 'q',
+          'room_id': rooms.join(','),
+        });
+        // 9 rooms, default concurrency 3: never more than 3 POSTs at once.
+        expect(maxInFlight, lessThanOrEqualTo(3));
+        expect(maxInFlight, greaterThan(1)); // genuinely parallel waves
+        // The aggregate keeps input order regardless of completion order.
+        expect(
+          out,
+          stringContainsInOrder([
+            for (final r in rooms) '## default/$r',
+          ]),
+        );
+      },
+    );
+  });
 }

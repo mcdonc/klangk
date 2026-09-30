@@ -253,7 +253,8 @@ export default function (pi: any) {
       "thread_id — pass BOTH to soliplex_reply to continue that conversation " +
       "(multi-turn). Pass room_id as a single room id, several ids " +
       'comma-separated ("kb,docs"), or "*" for every room on the server; ' +
-      "several rooms are asked in parallel and the result has a `## " +
+      "several rooms are asked 3 at a time (the server answers serially when " +
+      "many are asked at once) and the result has a `## " +
       "server/room` section per room with that room's answer (and its " +
       "Sources); each section also streams as it finishes, in completion " +
       "order. A failed room shows an Error line while the others still " +

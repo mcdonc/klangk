@@ -34,6 +34,12 @@ const defaultQueryDeadline = Duration(minutes: 3);
 /// phases is inside the cap.
 const defaultKeepaliveCeiling = Duration(minutes: 10);
 
+/// Default number of rooms asked in parallel in a fan-out (#3485). One
+/// Soliplex server answers a room in roughly 45–60s; asked for many at once
+/// it falls back to serial processing and every room misses the deadline —
+/// so the fan-out asks this many at a time and queues the rest in waves.
+const defaultFanOutConcurrency = 3;
+
 /// Outcome of querying one room in a multiroom fan-out: either the answer
 /// (with its Sources block + thread id, for continuation) or a captured
 /// per-room error message. A failed room carries [error] != null and never
@@ -105,6 +111,35 @@ class KeepaliveTicker {
     _timer = null;
     _elapsed.stop();
   }
+}
+
+/// Run [task] over every element of [items] with at most [concurrency]
+/// tasks in flight at once, returning results in [items] order (not
+/// completion order). Bounded fan-out (#3485): a Soliplex server asked for
+/// many rooms at once falls back to answering serially and every room misses
+/// the per-call deadline; asking a few at a time keeps each wave inside it.
+/// Order preservation keeps the final aggregate stable regardless of which
+/// wave a room landed in.
+Future<List<R>> runBounded<I, R>(
+  List<I> items,
+  Future<R> Function(I) task,
+  int concurrency,
+) async {
+  if (items.isEmpty) return <R>[];
+  final results = List<R?>.filled(items.length, null);
+  var next = 0;
+  Future<void> worker() async {
+    while (next < items.length) {
+      final i = next++;
+      results[i] = await task(items[i]);
+    }
+  }
+
+  final workers = List.generate(concurrency.clamp(1, items.length), (_) {
+    return worker();
+  });
+  await Future.wait(workers);
+  return results.cast<R>();
 }
 
 /// Render ONE fan-out result as its labeled `## server/room` block. PURE (no
@@ -188,6 +223,10 @@ class SoliplexFeature extends ToolPlugin with ChangeNotifier {
   final Duration queryDeadline;
   final Duration keepaliveCeiling;
 
+  /// Maximum rooms asked in parallel in a fan-out (#3485); see
+  /// [defaultFanOutConcurrency]. Tests inject 1 to force strict waves.
+  final int fanOutConcurrency;
+
   bool _authenticated = false;
   bool _loggingIn = false;
   String? _loginError;
@@ -210,6 +249,7 @@ class SoliplexFeature extends ToolPlugin with ChangeNotifier {
     this.keepaliveInterval = defaultKeepaliveInterval,
     this.queryDeadline = defaultQueryDeadline,
     this.keepaliveCeiling = defaultKeepaliveCeiling,
+    this.fanOutConcurrency = defaultFanOutConcurrency,
   }) : registry = registry ?? soliplexServers {
     _refreshAuthState();
   }
@@ -716,16 +756,17 @@ class SoliplexFeature extends ToolPlugin with ChangeNotifier {
       'Soliplex $what did not answer within '
       '${queryDeadline.inSeconds}s (per-call deadline)';
 
-  /// Run ONE question against MANY rooms on ONE server in parallel and
-  /// aggregate into a single labeled block ([formatFanOut]). Each room is
-  /// wrapped so a thrown error (server down, 401, no run, deadline) becomes a
-  /// [FanOutResult] error entry rather than failing the batch (PARTIAL-FAILURE
-  /// TOLERANT), and per-room thread history is seeded so a later
-  /// soliplex_reply has context. Each room's completed block streams through
-  /// [onChunk] the moment it finishes (#3485) — incremental display in
-  /// completion order — while the caller's ([_runQuery]) KeepaliveTicker
-  /// keeps the bridge alive through silent phases and [queryDeadline] bounds
-  /// every room.
+  /// Run ONE question against MANY rooms on ONE server in bounded parallel
+  /// ([fanOutConcurrency] at a time, [runBounded]) and aggregate into a single
+  /// labeled block ([formatFanOut]). Each room is wrapped so a thrown error
+  /// (server down, 401, no run, deadline) becomes a [FanOutResult] error entry
+  /// rather than failing the batch (PARTIAL-FAILURE TOLERANT), and per-room
+  /// thread history is seeded so a later soliplex_reply has context. Each
+  /// room's completed block streams through [onChunk] the moment it finishes
+  /// (#3485) — incremental display in completion order — while the caller's
+  /// ([_runQuery]) KeepaliveTicker keeps the bridge alive through silent
+  /// phases and [queryDeadline] bounds every room (each wave races its own
+  /// per-room clock, so queued rooms get the full deadline too).
   Future<String> _queryManyRooms(
     String server,
     List<String> rooms,
@@ -770,7 +811,7 @@ class SoliplexFeature extends ToolPlugin with ChangeNotifier {
       }
     }
 
-    final results = await Future.wait(rooms.map(askRoom));
+    final results = await runBounded(rooms, askRoom, fanOutConcurrency);
     await _refreshAuthState();
     return formatFanOut(question, results);
   }
