@@ -12,6 +12,10 @@ and a version tag derived from git state (release tag, branch name,
 or commit). Only the version tag is pushed to GHCR — `:latest` is
 never pushed to the registry. The version is baked into
 `/home/klangk/version.json` and served at `GET /api/v1/version`.
+The image's Python dependencies install under `uv.lock` constraints
+(the script exports the lock to `host-image-constraints.txt` and the
+Dockerfile passes it to `pip install --constraint`), so every build
+of the same commit installs the same dependency versions.
 
 ## Custom Image with Features
 
@@ -130,18 +134,19 @@ or MITM cannot swap those inputs undetected, and a mismatch fails the
 build loudly. (Known residuals beyond that scope are listed under
 "Accepted residuals" below.)
 
-| Artifact                                         | Where the pin lives                                                                | Verify/rotate on bump                                                                                                                           |
-| ------------------------------------------------ | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| Workspace base image                             | `WORKSPACE_BASE_IMAGE` ARG in `src/containers/workspace/Dockerfile`                | automatic — the base-image workflow's auto-PR rewrites the ARG with the new `repo@digest`                                                       |
-| Pi agent npm tarball                             | `PI_AGENT_SHA512` in `src/containers/workspace/Dockerfile`                         | `npm view @earendil-works/pi-coding-agent@<ver> dist.integrity` (base64 sha512 → hex)                                                           |
-| uv                                               | `UV_SHA256_AMD64` / `UV_SHA256_ARM64` in `src/containers/workspace/Dockerfile`     | `sha256sum` of each arch tarball, or the `.sha256` sidecars in the GitHub release                                                               |
-| process-compose                                  | `PROCESS_COMPOSE_SHA256_AMD64` / `_ARM64` in `src/containers/workspace/Dockerfile` | `sha256sum` of each arch tarball                                                                                                                |
-| Debian base (workspace, FIPS builders, nix-seed) | digest in `src/containers/workspace/Dockerfile.base` (pre-existing)                | `docker buildx imagetools inspect debian:trixie-slim (read the Digest: line)`; keep the three aligned builders in sync                          |
-| python host base                                 | digest in `src/containers/host/Dockerfile`                                         | `docker buildx imagetools inspect python:3.14-slim (read the Digest: line)`                                                                     |
-| Alpine (network sidecar)                         | digest in `src/containers/network/Dockerfile`                                      | `docker buildx imagetools inspect alpine:3.21 (read the Digest: line)`                                                                          |
-| NodeSource repo key                              | `NODESOURCE_KEY_SHA256` in `Dockerfile.base`                                       | `sha256sum` of the fetched `gpgkey/nodesource-repo.gpg.key` (after cross-checking the new key's fingerprint against NodeSource's docs)          |
-| GitHub CLI repo key                              | `GITHUBCLI_KEYRING_SHA256` in `Dockerfile.base`                                    | `sha256sum` of the fetched `githubcli-archive-keyring.gpg` (fingerprint in the Dockerfile comment)                                              |
-| Caddy repo key (Cloudsmith)                      | `CADDY_REPO_KEY_SHA256` in `src/containers/host/Dockerfile`                        | `sha256sum` of the fetched `gpg.key` (fingerprint in the Dockerfile comment; cross-check <https://cloudsmith.io/~caddy/repos/stable/pub-keys/>) |
+| Artifact                                               | Where the pin lives                                                                | Verify/rotate on bump                                                                                                                           |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Workspace base image                                   | `WORKSPACE_BASE_IMAGE` ARG in `src/containers/workspace/Dockerfile`                | automatic — the base-image workflow's auto-PR rewrites the ARG with the new `repo@digest`                                                       |
+| Pi agent npm tarball                                   | `PI_AGENT_SHA512` in `src/containers/workspace/Dockerfile`                         | `npm view @earendil-works/pi-coding-agent@<ver> dist.integrity` (base64 sha512 → hex)                                                           |
+| uv                                                     | `UV_SHA256_AMD64` / `UV_SHA256_ARM64` in `src/containers/workspace/Dockerfile`     | `sha256sum` of each arch tarball, or the `.sha256` sidecars in the GitHub release                                                               |
+| process-compose                                        | `PROCESS_COMPOSE_SHA256_AMD64` / `_ARM64` in `src/containers/workspace/Dockerfile` | `sha256sum` of each arch tarball                                                                                                                |
+| Debian base (workspace, FIPS builders, nix-seed)       | digest in `src/containers/workspace/Dockerfile.base` (pre-existing)                | `docker buildx imagetools inspect debian:trixie-slim (read the Digest: line)`; keep the three aligned builders in sync                          |
+| python host base                                       | digest in `src/containers/host/Dockerfile`                                         | `docker buildx imagetools inspect python:3.14-slim (read the Digest: line)`                                                                     |
+| Alpine (network sidecar)                               | digest in `src/containers/network/Dockerfile`                                      | `docker buildx imagetools inspect alpine:3.21 (read the Digest: line)`                                                                          |
+| NodeSource repo key                                    | `NODESOURCE_KEY_SHA256` in `Dockerfile.base`                                       | `sha256sum` of the fetched `gpgkey/nodesource-repo.gpg.key` (after cross-checking the new key's fingerprint against NodeSource's docs)          |
+| GitHub CLI repo key                                    | `GITHUBCLI_KEYRING_SHA256` in `Dockerfile.base`                                    | `sha256sum` of the fetched `githubcli-archive-keyring.gpg` (fingerprint in the Dockerfile comment)                                              |
+| Caddy repo key (Cloudsmith)                            | `CADDY_REPO_KEY_SHA256` in `src/containers/host/Dockerfile`                        | `sha256sum` of the fetched `gpg.key` (fingerprint in the Dockerfile comment; cross-check <https://cloudsmith.io/~caddy/repos/stable/pub-keys/>) |
+| cryptography GitHub tag tarball (FIPS relink fallback) | `CRYPTOGRAPHY_SRC_SHA256` in `src/containers/host/Dockerfile.fips`                 | `sha256sum` of the `<locked-version>` tag archive; recompute on every `uv.lock` cryptography bump                                               |
 
 Notes:
 
@@ -166,8 +171,11 @@ over-read):
 - **PyPI/npm dependency closures.** `pip install` of the klangk wheel's
   deps (host image, network sidecar) and npm's resolution of the Pi
   agent tarball's deps rely on the registry's metadata-bound integrity
-  records. Pinning the full transitive closure would require
-  `--require-hashes` lockfiles maintained outside this repo's wheels.
+  records. The host image's dependency _versions_ are pinned to
+  `uv.lock` via constraints (no version drift between builds), but the
+  artifacts themselves are trusted through TLS plus the registry's own
+  integrity records — `--require-hashes` pinning of the full transitive
+  closure is not maintained in this repo.
 - **nix-seed sandbox** (`src/containers/nix-seed/Dockerfile`): the nix
   installer is still piped to `sh` and the devenv flake ref is mutable.
   It is a build sandbox whose output is a content-addressed `/nix` store;

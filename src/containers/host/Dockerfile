@@ -69,8 +69,15 @@ FROM base
 # Flutter web build at klangk/frontend (#1600), so there's no separate
 # frontend COPY either. (build-host-image.sh builds the wheel on the host
 # via devenv/flutter; the final image depends on no devenv state.)
+# Dependency versions come from uv.lock: build-host-image.sh exports the
+# lock to host-image-constraints.txt and pip resolves inside those pins,
+# so every build of the same commit installs the same dependency set —
+# and Dockerfile.fips's crypto-relinker rebuilds exactly the locked
+# cryptography from source.
+COPY host-image-constraints.txt /tmp/constraints.txt
 COPY src/klangk/dist/klangk-*.whl /tmp/
-RUN pip install /tmp/klangk-*.whl && rm /tmp/klangk-*.whl
+RUN pip install --constraint /tmp/constraints.txt /tmp/klangk-*.whl && \
+    rm -f /tmp/klangk-*.whl /tmp/constraints.txt
 
 # Startup scripts and config
 COPY --chown=klangk:klangk src/containers/host/entrypoint.sh /home/klangk/bin/entrypoint

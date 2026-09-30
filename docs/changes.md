@@ -4207,3 +4207,12 @@ users(id)`, so the decider handler passing the decider's email violated the
   maps onto its non-loopback side) and documents the browser-bridge
   `ui_ready` fix that left every bridge request failing until a
   reconnect.
+- **Host image Python dependencies install under `uv.lock` constraints.**
+  Image builds resolved the newest matching versions from PyPI at build
+  time, so two builds of the same commit could ship different dependency
+  sets — the v2.0a6 host-image build failed when the wheels-only
+  `cryptography` 50.0.2 upload landed mid-retry and its FIPS source rebuild
+  found no sdist. `build-host-image` exports the lock to pip constraints,
+  and the FIPS host image's `cryptography` relink builds from a
+  sha256-pinned GitHub tag tarball when PyPI publishes no source release
+  for the locked version.

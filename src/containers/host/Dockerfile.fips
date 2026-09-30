@@ -75,16 +75,43 @@ RUN ./Configure enable-fips --prefix=/opt/ossl-fips --libdir=lib && \
 # source against the distro libssl — the library the activation
 # config points at the provider. trixie's rustc (1.85) satisfies
 # cryptography's MSRV (1.83). Toolchain stays in this stage only.
+#
+# Source: the PyPI sdist when upstream ships one, else the pyca/cryptography
+# GitHub tag tarball, sha256-pinned below — cryptography ≥ 50.0.2 publishes
+# wheels only, so a source release cannot be assumed. The host image
+# installs under uv.lock constraints, so ${version} below is the locked
+# version and the pin matches it (a stale pin fails the sha256 check
+# loudly instead of building unverified source).
 FROM $HOST_IMAGE AS crypto-relinker
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential libssl-dev pkg-config rustc cargo && \
     rm -rf /var/lib/apt/lists/*
-RUN version="$(python3 -c \
-        'import importlib.metadata as m; print(m.version("cryptography"))')" && \
-    mkdir -p /wheels && \
-    pip wheel --no-cache-dir --no-deps --no-binary cryptography \
-        "cryptography==${version}" -w /wheels
+# sha256 of https://github.com/pyca/cryptography/archive/refs/tags/50.0.0.tar.gz
+# (the version uv.lock pins). Bump procedure: whenever the cryptography entry
+# in uv.lock moves, recompute —
+#   curl -fsSL https://github.com/pyca/cryptography/archive/refs/tags/<ver>.tar.gz | sha256sum
+# The tarball only downloads when PyPI ships no sdist for the locked version,
+# so the pin can lag a lock bump silently while sdists exist; the first
+# sdist-less release surfaces a stale pin as a sha256 mismatch. GitHub
+# occasionally regenerates auto-created tag archives; a mismatch right after
+# such a regeneration is re-pinned the same way after cross-checking the tag.
+ARG CRYPTOGRAPHY_SRC_SHA256=173ac75ea60351540a237b8d4fde5d89b5d6645545771dfe3c9abe8b637f2b35
+RUN set -eux; \
+    version="$(python3 -c \
+        'import importlib.metadata as m; print(m.version("cryptography"))')"; \
+    mkdir -p /wheels; \
+    if ! pip wheel --no-cache-dir --no-deps --no-binary cryptography \
+        "cryptography==${version}" -w /wheels; then \
+        echo "no PyPI sdist for cryptography ${version} — building the pinned GitHub tag tarball" >&2; \
+        curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
+            -o /tmp/cryptography-src.tar.gz \
+            "https://github.com/pyca/cryptography/archive/refs/tags/${version}.tar.gz"; \
+        echo "${CRYPTOGRAPHY_SRC_SHA256}  /tmp/cryptography-src.tar.gz" \
+            | sha256sum -c -; \
+        pip wheel --no-cache-dir --no-deps \
+            /tmp/cryptography-src.tar.gz -w /wheels; \
+    fi
 
 # --- Stage 2: host image + FIPS activation ----------------------------------
 FROM $HOST_IMAGE
