@@ -20,6 +20,17 @@ bash "$SCRIPT_DIR/flutterbuildweb.sh"
 rm -rf src/klangk/dist
 bash "$SCRIPT_DIR/build_wheel.sh"
 
+# Exact dependency pins for the host image's `pip install` (uv.lock
+# exported as pip constraints). pip resolves PyPI freely without this, so
+# two builds of the same commit can ship different dependency versions —
+# and src/containers/host/Dockerfile.fips's crypto-relinker then needs a
+# source release for whatever version won the race. --no-emit-workspace
+# drops the klangk/klangksidecar members themselves (the wheel installs
+# separately); --no-hashes keeps the file valid as a pip constraints file.
+uv export --frozen --format requirements.txt --no-dev \
+  --no-emit-workspace --no-hashes \
+  --output-file host-image-constraints.txt
+
 bash "$SCRIPT_DIR/build-workspace-image.sh"
 bash "$SCRIPT_DIR/build-network-sidecar.sh"
 

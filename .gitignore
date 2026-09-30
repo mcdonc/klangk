@@ -27,6 +27,8 @@ features/**/klangk/build/
 src/klangk/klangk/frontend/
 # Wheel build output (scripts/build_wheel.sh -> src/klangk/dist/).
 src/klangk/dist/
+# Host-image pip constraints (scripts/build-host-image.sh -> uv export).
+host-image-constraints.txt
 src/frontend/.flutter-plugins
 src/frontend/.flutter-plugins-dependencies
 src/frontend/pubspec_overrides.yaml
