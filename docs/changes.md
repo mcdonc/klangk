@@ -2794,6 +2794,12 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Frontend builds now require Flutter 3.47 / Dart 3.13 (#3479).**
+  The `pdfrx` constraint was raised to `^2.6.5` because
+  `pdfrx_engine 0.4.3` — which `pdfrx 2.4.x` still admits — no
+  longer compiles under the current Dart toolchain. Environments
+  whose `pubspec.lock` pinned `pdfrx 2.4.4` get a re-resolve to the
+  fixed `pdfrx_engine 0.6.1` on the next `flutter pub get`.
 - **Environment-variable reference page (#3339).** The table on
   `docs/reference/environment.md` listed every variable twice: a stale
   copy of the table (missing five variables added since, carrying an
