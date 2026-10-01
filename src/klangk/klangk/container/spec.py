@@ -466,7 +466,7 @@ def build_env(
     if banner:
         env_vars.append(f"KLANGKWS_TERMINAL_BANNER={banner}")
 
-    # Runtime SSL/CA trust (#1181): point OpenSSL/Python/curl/Node
+    # Runtime SSL/CA trust (#1181): point OpenSSL/Python/curl/git/Node
     # at the bundle the entrypoint builds from the mounted certs.
     # Appended before feature/extra env so a deployer can override if
     # ever needed. Emitted only when a trustable cert dir is present.

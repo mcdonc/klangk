@@ -27,9 +27,10 @@ mkdir -p /tmp/klangk
 # at /opt/klangk/ssl when it contains .pem/.crt CAs (or the staged approved-CA
 # dir when KLANGKD_TRUSTED_CA_DIR is set, #3198), and sets
 # SSL_CERT_FILE / REQUESTS_CA_BUNDLE / CURL_CA_BUNDLE /
-# NODE_EXTRA_CA_CERTS to point at this bundle. Those vars REPLACE the
-# default trust store, so the bundle must contain the system CAs too --
-# a custom-only bundle would break public-internet TLS (npm/pip/git).
+# GIT_SSL_CAINFO / NODE_EXTRA_CA_CERTS to point at this bundle. Those vars
+# REPLACE the default trust store, so the bundle must contain the system
+# CAs too -- a custom-only bundle would break public-internet TLS
+# (npm/pip/git).
 # Concatenate system bundle first, then custom certs, on the writable
 # /tmp tmpfs (the entrypoint runs as non-root UID 1000). Built BEFORE
 # the readiness sentinel so every later process -- shells, podman exec,
