@@ -169,7 +169,7 @@ docker run -d \
 
 Rotating a cert is just a file change plus a workspace/backend restart — no image rebuild.
 
-> **Why a merged bundle?** `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE` / `CURL_CA_BUNDLE` / `GIT_SSL_CAINFO` _replace_ the default trust store rather than add to it. Klangk therefore prepends the system CAs before your custom certs. (`NODE_EXTRA_CA_CERTS` is additive, but pointing it at the same merged bundle is harmless.)
+> **Why a merged bundle?** `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE` / `CURL_CA_BUNDLE` / `GIT_SSL_CAINFO` _replace_ the default trust store rather than add to it. Klangk therefore prepends the system CAs before your custom certs. (`NODE_EXTRA_CA_CERTS` is additive, but pointing it at the same merged bundle is harmless.) The exported vars also outrank per-user toolchain configuration — a `GIT_SSL_CAINFO` set this way beats an `http.sslCAInfo` in `.gitconfig`, just as `CURL_CA_BUNDLE` beats `~/.curlrc` — so a CA that users need belongs in `<KLANGKD_CUSTOMIZE_DIR>/certs/`, not in individual toolchain configs.
 
 #### Restricting trusted CAs to an approved baseline
 
