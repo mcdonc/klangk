@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -758,13 +759,27 @@ void main() {
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pump();
 
-      // The only copy icon on screen is this chip's copy button.
+      // The only copy icon on screen is this chip's copy button. Record
+      // the clipboard platform-channel call so the assertion is real.
+      String? copied;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') {
+            copied = call.arguments['text'] as String?;
+          }
+          return null;
+        },
+      );
       final copyIcon = find.byIcon(Icons.copy);
       await tester.ensureVisible(copyIcon);
       await tester.tap(copyIcon);
       await tester.pump();
-      // Tapping copy fired the chip's onPressed (Clipboard.setData) —
-      // the chip is otherwise unchanged.
+      // The button wrote the exact allowed-domain spec (VM: the web helper
+      // stub reports "not handled", so this exercises the
+      // Clipboard.setData fallback carrying the same payload the web path
+      // writes), and the chip is otherwise unchanged.
+      expect(copied, 'example.com:443');
       expect(find.text('example.com:443'), findsOneWidget);
     });
 

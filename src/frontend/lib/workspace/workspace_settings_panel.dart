@@ -1450,7 +1450,14 @@ class _SettingsFormState extends State<_SettingsForm> {
           IconButton(
             icon: const Icon(Icons.copy, size: 16),
             tooltip: 'Copy',
-            onPressed: () => Clipboard.setData(ClipboardData(text: onCopy)),
+            // Web helper first for insecure-context (plain-HTTP) support —
+            // same #2166 treatment as the create-dialog copy buttons; the
+            // false return falls back to Clipboard.setData.
+            onPressed: () async {
+              if (!await setClipboardText(onCopy)) {
+                await Clipboard.setData(ClipboardData(text: onCopy));
+              }
+            },
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(),
           ),
