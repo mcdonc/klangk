@@ -99,12 +99,13 @@ class TestSslEnvVars:
     def test_empty_without_dir(self):
         assert ssl_trust.ssl_env_vars(None) == []
 
-    def test_all_four_toolchain_vars(self):
+    def test_all_toolchain_vars(self):
         vars_ = ssl_trust.ssl_env_vars("/some/dir")
         assert vars_ == [
             "SSL_CERT_FILE=/tmp/klangk/ca-bundle.crt",
             "REQUESTS_CA_BUNDLE=/tmp/klangk/ca-bundle.crt",
             "CURL_CA_BUNDLE=/tmp/klangk/ca-bundle.crt",
+            "GIT_SSL_CAINFO=/tmp/klangk/ca-bundle.crt",
             "NODE_EXTRA_CA_CERTS=/tmp/klangk/ca-bundle.crt",
         ]
 

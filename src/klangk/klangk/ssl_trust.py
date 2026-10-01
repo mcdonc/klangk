@@ -14,9 +14,10 @@ A deployer drops ``.pem``/``.crt`` CA certificates into
   CAs.  Called once at startup (:func:`klangk.main.lifespan`).
 
 **Both bundles are *merged* (system CAs + custom certs).** The
-``SSL_CERT_FILE`` / ``REQUESTS_CA_BUNDLE`` / ``CURL_CA_BUNDLE`` vars *replace*
-the default trust store rather than augment it, so a custom-only bundle would
-break public-internet TLS (``npm``/``pip``/``git``, public OIDC, Gmail SMTP).
+``SSL_CERT_FILE`` / ``REQUESTS_CA_BUNDLE`` / ``CURL_CA_BUNDLE`` /
+``GIT_SSL_CAINFO`` vars *replace* the default trust store rather than augment
+it, so a custom-only bundle would break public-internet TLS (``npm``/``pip``/
+``git``, public OIDC, Gmail SMTP).
 ``NODE_EXTRA_CA_CERTS`` is additive, but pointing it at the merged bundle is
 harmless (Node de-duplicates).
 
@@ -60,11 +61,13 @@ SSL_MOUNT_DEST = "/opt/klangk/ssl"
 SSL_BUNDLE_DEST = "/tmp/klangk/ca-bundle.crt"
 # Toolchains whose trust we redirect at the merged bundle.  SSL_CERT_FILE is
 # OpenSSL / the stdlib ``ssl`` module / smtplib; REQUESTS_CA_BUNDLE is
-# ``requests``; CURL_CA_BUNDLE is curl; NODE_EXTRA_CA_CERTS is Node.
+# ``requests``; CURL_CA_BUNDLE is curl; GIT_SSL_CAINFO is git (which honors
+# none of the others); NODE_EXTRA_CA_CERTS is Node.
 SSL_TRUST_VARS = (
     "SSL_CERT_FILE",
     "REQUESTS_CA_BUNDLE",
     "CURL_CA_BUNDLE",
+    "GIT_SSL_CAINFO",
     "NODE_EXTRA_CA_CERTS",
 )
 

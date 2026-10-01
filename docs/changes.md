@@ -35,6 +35,15 @@ operators or integrators to act when upgrading.
 
 ### Fixed
 
+- **`git` inside workspaces trusts the deployer CA bundle (#3495).** The
+  runtime CA-trust injection (#1181) now also exports `GIT_SSL_CAINFO`
+  pointing at the merged bundle (system CAs plus
+  `<KLANGKD_CUSTOMIZE_DIR>/certs/`), so HTTPS clones from servers whose
+  certificates chain to a deployer CA succeed with no per-user
+  configuration — previously they failed with `certificate signer not
+trusted`. Existing workspaces pick this up when they are next recreated
+  (a start after a stop); the backend applies its copy at startup.
+
 - **Drag-and-drop file upload works under the served CSP.** Every
   drag-and-drop upload failed silently on deployments serving the
   browser Content-Security-Policy: the upload reads each dropped file
