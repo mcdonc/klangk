@@ -851,6 +851,13 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **HTML files render in the Files tab.** Opening an `.html` or `.htm`
+  file shows the rendered page in a sandboxed frame: markup and inline CSS
+  display, while the page's scripts, form submission and navigation stay
+  off, and images or fonts it loads from other sites are blocked by the
+  site's Content-Security-Policy. Preview is the default mode for these
+  files; the source stays available in View, Edit and Raw.
+
 - **`csp_connect_origins` / `KLANGKD_CSP_CONNECT_ORIGINS`.** Comma-separated URLs whose origins the browser site's Content-Security-Policy admits in `connect-src`, for frontend features that fetch a deploy-configured remote server browser-side. The soliplex feature's configured `soliplex_url` now declares itself via the new `csp_connect_origin` feature-config flag, fixing its "Failed to load providers" (fetches to the configured server were blocked by the first-party-only `connect-src 'self'`). The setting covers additional remotes the operator lists — each origin must be listed in advance, including soliplex servers added at runtime via the overlay. Only the `scheme://host[:port]` origin of each URL is used; reloadable on SIGHUP. See [Configuration File](reference/klangkd-config.md).
 
 - **`KLANGKWS_FEATURE_GITEA_OAUTH_CLIENT_ID` (#3405).** With
