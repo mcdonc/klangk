@@ -140,26 +140,39 @@ def _stub_version_script(tmp_path, body: str) -> None:
     (scripts / "generate-version.sh").write_text(body)
 
 
+def _run_version_script(mod, tmp_path):
+    """materialized_version_file()'s parsed payload (None stays None),
+    with best-effort temp cleanup."""
+    import json
+
+    path = mod.materialized_version_file(tmp_path)
+    if path is None:
+        return None
+    try:
+        return json.loads(path.read_text())
+    finally:
+        path.unlink(missing_ok=True)
+
+
 def test_hook_materializes_version_from_git(tmp_path) -> None:
     """The wheel's packaged version.json comes from generate-version.sh
     output (#3517) — the same single definition the devenv seed and the
     host image's baked /home/klangk/version.json use."""
-    import json
-
     mod = _hook_module()
     _stub_version_script(
         tmp_path,
         '#!/usr/bin/env bash\nprintf \'%s\' \'{"version":"9.9.9","commit":"abc"}\'\n',
     )
-    path = mod.materialized_version_file(tmp_path)
-    assert path is not None and path.is_file()
-    assert json.loads(path.read_text())["version"] == "9.9.9"
+    assert _run_version_script(mod, tmp_path) == {
+        "version": "9.9.9",
+        "commit": "abc",
+    }
 
 
 def test_hook_skips_version_generation_when_script_absent(tmp_path) -> None:
-    """A wheel built from an sdist extraction has no repo, no scripts/ —
-    the hook yields None and the runtime falls back to the dev block
-    (#3517)."""
+    """A checkout without scripts/generate-version.sh (an sdist
+    extraction) yields None — the hook's lenient path; the runtime falls
+    back to the dev block (#3517)."""
     assert _hook_module().materialized_version_file(tmp_path) is None
 
 
@@ -168,4 +181,41 @@ def test_hook_skips_version_generation_when_script_fails(tmp_path) -> None:
     build proceeds without the packaged copy."""
     mod = _hook_module()
     _stub_version_script(tmp_path, "#!/usr/bin/env bash\nexit 1\n")
+    assert _run_version_script(mod, tmp_path) is None
+
+
+def test_hook_rejects_unknown_version(tmp_path) -> None:
+    """generate-version.sh emits {"version":"unknown"} when git metadata
+    is absent; the hook rejects it so such a wheel reports dev instead of
+    a misleading unknown (#3517)."""
+    mod = _hook_module()
+    _stub_version_script(
+        tmp_path,
+        "#!/usr/bin/env bash\n"
+        'printf \'%s\' \'{"version":"unknown","commit":"unknown"}\'\n',
+    )
+    assert _run_version_script(mod, tmp_path) is None
+
+
+def test_hook_rejects_non_json_output(tmp_path) -> None:
+    """Non-JSON script output is not force-included as version.json
+    (#3517)."""
+    mod = _hook_module()
+    _stub_version_script(tmp_path, "#!/usr/bin/env bash\necho 'oops'\n")
+    assert _run_version_script(mod, tmp_path) is None
+
+
+def test_hook_is_lenient_when_interpreter_is_missing(tmp_path, monkeypatch) -> None:
+    """A missing bash binary degrades to None instead of crashing the
+    wheel build (#3517) — same lenient contract as a failing script."""
+    mod = _hook_module()
+    _stub_version_script(
+        tmp_path,
+        "#!/usr/bin/env bash\nprintf '%s' '{\"version\":\"9.9.9\"}'\n",
+    )
+
+    def raise_no_bash(*args, **kwargs):
+        raise FileNotFoundError("no bash")
+
+    monkeypatch.setattr(mod.subprocess, "run", raise_no_bash)
     assert mod.materialized_version_file(tmp_path) is None

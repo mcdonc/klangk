@@ -39,6 +39,7 @@ from klangk import (
 from klangk.container import ContainerRegistry
 from klangk.exceptions import ConfigurationError, EX_CONFIG
 from klangk.lifecycle import broadcast_container_status, _app_version
+from klangk import version as _version_mod
 from _helpers import make_settings
 from klangk.wshandler.session import WebSocketState
 
@@ -1426,7 +1427,8 @@ class TestAppLifecycleAudit:
         assert len(rows) == 1
         assert rows[0]["detail"]["source"] == "SIGHUP"
 
-    def test_app_version_dev_without_version_file(self):
+    def test_app_version_dev_without_version_file(self, monkeypatch):
+        monkeypatch.setattr(_version_mod, "packaged_version", lambda: None)
         assert _app_version(types.SimpleNamespace(version_file=None)) == "dev"
 
     def test_app_version_reads_the_version_file(self, tmp_path):
@@ -1437,14 +1439,20 @@ class TestAppLifecycleAudit:
             == "1.2.3"
         )
 
-    def test_app_version_missing_file_falls_back_to_dev(self, tmp_path):
+    def test_app_version_missing_file_falls_back_to_dev(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr(_version_mod, "packaged_version", lambda: None)
         path = tmp_path / "absent.json"
         assert (
             _app_version(types.SimpleNamespace(version_file=str(path)))
             == "dev"
         )
 
-    def test_app_version_unparseable_file_falls_back_to_dev(self, tmp_path):
+    def test_app_version_unparseable_file_falls_back_to_dev(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr(_version_mod, "packaged_version", lambda: None)
         path = tmp_path / "version.json"
         path.write_text("{not json")
         assert (
@@ -1452,10 +1460,13 @@ class TestAppLifecycleAudit:
             == "dev"
         )
 
-    def test_app_version_non_dict_file_falls_back_to_dev(self, tmp_path):
+    def test_app_version_non_dict_file_falls_back_to_dev(
+        self, tmp_path, monkeypatch
+    ):
         # Valid JSON of the wrong shape must not raise out of the
         # lifespan (the detail dict is built before record_best_effort
         # can swallow anything — an exception here would block boot).
+        monkeypatch.setattr(_version_mod, "packaged_version", lambda: None)
         path = tmp_path / "version.json"
         path.write_text('["1.2.3"]')
         assert (
@@ -1466,9 +1477,7 @@ class TestAppLifecycleAudit:
     def test_app_version_blank_string_reports_dev(self, tmp_path, monkeypatch):
         # A version file that parses but carries an empty/missing
         # version string reports dev, not "" (#3517).
-        from klangk import version as version_mod
-
-        monkeypatch.setattr(version_mod, "packaged_version", lambda: None)
+        monkeypatch.setattr(_version_mod, "packaged_version", lambda: None)
         path = tmp_path / "version.json"
         path.write_text('{"version": "", "commit": "abc"}')
         assert (

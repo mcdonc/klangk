@@ -19,9 +19,10 @@ in an installed wheel:
   carries its build identity even when the runtime's ``version_file``
   setting is unset (a deployed host whose operator ``klangkd.yaml`` mounts
   over the image's config and omits the key). Included when the script is
-  present and succeeds; a wheel built from an sdist extraction (no repo,
-  no scripts/) proceeds without it and the runtime falls back to the dev
-  block.
+  present and yields a real version; an absent script, a missing
+  interpreter, or a failing/unusable script yields nothing and the wheel
+  ships without the packaged copy (the runtime falls back to the dev
+  block).
 
 For the **sdist** target the hook force-includes the repo-root ``README.md``
 as a real file at ``README.md`` — the fallback source the metadata hook
@@ -36,6 +37,7 @@ above the project root. This hook force-includes via absolute paths in
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import tempfile
@@ -52,24 +54,48 @@ _VERSION_DEST = "klangk/version.json"
 def materialized_version_file(repo: Path) -> Path | None:
     """A temp file holding ``generate-version.sh`` output, or ``None``.
 
-    Lenient on purpose (#3517): a missing script (sdist extraction — no
-    repo, no scripts/) or a failing script yields ``None`` and the
-    wheel ships without the packaged copy; the runtime chain then
-    falls back to the dev block, mirroring how editable builds proceed
-    without the gitignored frontend artifact.
+    Lenient on purpose (#3517): a missing script (an sdist extraction has
+    no repo, no scripts/), a missing interpreter, or a
+    failing/unusable script yields ``None`` and the wheel ships without
+    the packaged copy; the runtime chain then falls back to the dev
+    block, mirroring how editable builds proceed without the gitignored
+    frontend artifact. ``generate-version.sh`` also emits ``unknown``
+    when git metadata is absent — that output is rejected here so such
+    a wheel reports ``dev`` instead of a misleading ``unknown``.
     """
     script = repo / "scripts" / "generate-version.sh"
     if not script.is_file():
         return None
-    result = subprocess.run(
-        ["bash", str(script)], capture_output=True, text=True
-    )
-    if result.returncode != 0 or not result.stdout.strip():
+    try:
+        result = subprocess.run(
+            ["bash", str(script)], capture_output=True, text=True
+        )
+    except OSError:
+        return None
+    payload = _usable_version_output(result)
+    if payload is None:
         return None
     fd, name = tempfile.mkstemp(prefix="klangk-version-", suffix=".json")
     with os.fdopen(fd, "w") as f:
-        f.write(result.stdout)
+        f.write(payload)
     return Path(name)
+
+
+def _usable_version_output(result) -> str | None:
+    """The script's stdout when it names a real version, else ``None``."""
+    if result.returncode != 0:
+        return None
+    try:
+        info = json.loads(result.stdout)
+    except ValueError:
+        return None
+    if not isinstance(info, dict) or info.get("version") in (
+        None,
+        "",
+        "unknown",
+    ):
+        return None
+    return result.stdout
 
 
 class PackageDataHook(BuildHookInterface):
@@ -111,6 +137,7 @@ class PackageDataHook(BuildHookInterface):
             version_src = materialized_version_file(repo)
             if version_src is not None:
                 force[str(version_src)] = _VERSION_DEST
+                self._version_tmp = str(version_src)
 
         # --- Flutter web build: gitignored, conditional + required for wheel.---
         frontend_src = repo / "src" / "frontend" / "build" / "web"
@@ -128,3 +155,16 @@ class PackageDataHook(BuildHookInterface):
             "scripts/flutterbuildweb.sh before building the wheel "
             "(the release wheel must ship the compiled UI; #1600)."
         )
+
+    def finalize(
+        self, version: str, build_data: dict[str, Any], artifact: str
+    ) -> None:
+        """Remove the generated version temp file (best effort, #3517)."""
+        path = getattr(self, "_version_tmp", None)
+        if path is None:
+            return
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        self._version_tmp = None

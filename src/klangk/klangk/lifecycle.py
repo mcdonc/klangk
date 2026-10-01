@@ -33,9 +33,9 @@ from . import static
 from .auth import PASSWORD_CLASSES, password_class_counts
 from .bind_safety import enforce_no_auth_bind_safety
 from .exceptions import ConfigurationError
+from .logger import configure as configure_logging
 from .settings import KlangkSettings
 from .version import version_info
-from .logger import configure as configure_logging
 from .model import (
     ACTION_ALLOW,
     ACTION_DENY,

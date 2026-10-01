@@ -31,6 +31,7 @@ from klangk import util as util_mod
 from klangk import netfilter as netfilter_mod
 from klangk import oidc as oidc_mod
 from klangk import features as features_mod
+from klangk import version as version_mod
 from klangk.model.container_events import (
     CAUSE_API,
     CAUSE_AUTO_START,
@@ -565,7 +566,12 @@ class TestVersion:
         assert "features" in data
 
     async def test_version_no_file(self, client, app, monkeypatch):
+        # No source resolves: the setting is unset and the wheel-packaged
+        # copy is stubbed absent (the test venv runs editable; without the
+        # stub these asserts would depend on that environment detail,
+        # #3517).
         monkeypatch.setattr(app.state.settings, "version_file", None)
+        monkeypatch.setattr(version_mod, "packaged_version", lambda: None)
         resp = await client.get("/api/v1/version")
         assert resp.status_code == 200
         data = resp.json()
@@ -574,22 +580,24 @@ class TestVersion:
         assert data["built_at"] is None
         assert "features" in data
 
-    async def test_version_missing_file_falls_back_to_dev(
+    async def test_version_missing_file_reports_dev_without_packaged_copy(
         self, client, app, tmp_path, monkeypatch
     ):
-        # #3329: an unreadable version file falls through to the dev
-        # block instead of 500ing (the same tolerance the app.start
-        # audit row's version field applies).
+        # #3329/#3517: an unreadable version file falls through to the
+        # packaged copy (stubbed absent here — see test below) and then
+        # the dev block instead of 500ing (the same tolerance the
+        # app.start audit row's version field applies).
         monkeypatch.setattr(
             app.state.settings,
             "version_file",
             str(tmp_path / "absent.json"),
         )
+        monkeypatch.setattr(version_mod, "packaged_version", lambda: None)
         resp = await client.get("/api/v1/version")
         assert resp.status_code == 200
         assert resp.json()["version"] == "dev"
 
-    async def test_version_non_dict_file_falls_back_to_dev(
+    async def test_version_non_dict_file_reports_dev_without_packaged_copy(
         self, client, app, tmp_path, monkeypatch
     ):
         monkeypatch.setattr(
@@ -597,6 +605,7 @@ class TestVersion:
             "version_file",
             str(tmp_path / "version.json"),
         )
+        monkeypatch.setattr(version_mod, "packaged_version", lambda: None)
         (tmp_path / "version.json").write_text('["2026.01.01"]')
         resp = await client.get("/api/v1/version")
         assert resp.status_code == 200
@@ -608,8 +617,6 @@ class TestVersion:
         # #3517: a deployed host whose operator klangkd.yaml mounts over
         # the image's config and omits version_file still reports the
         # build baked into the wheel, not the dev block.
-        from klangk import version as version_mod
-
         monkeypatch.setattr(app.state.settings, "version_file", None)
         monkeypatch.setattr(
             version_mod,
