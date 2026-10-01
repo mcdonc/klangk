@@ -2232,12 +2232,15 @@ void main() {
   group('copy buttons', () {
     testWidgets('tapping a mount copy button writes to clipboard',
         (tester) async {
-      // Stub the clipboard platform channel so Clipboard.setData is a no-op
-      // (otherwise it throws without a real platform).
+      // Stub the clipboard platform channel, recording the payload so the
+      // assertion below is real (otherwise it throws without a platform).
+      String? copied;
       tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
         SystemChannels.platform,
         (call) async {
-          if (call.method == 'Clipboard.setData') return null;
+          if (call.method == 'Clipboard.setData') {
+            copied = call.arguments['text'] as String?;
+          }
           return null;
         },
       );
@@ -2248,6 +2251,11 @@ void main() {
       await tester.tap(find.byIcon(Icons.copy).first);
       await tester.pump();
 
+      // The mount row's copy button wrote the exact mount spec (VM: the
+      // web helper stub reports "not handled", so this exercises the
+      // Clipboard.setData fallback with the same payload the web path
+      // writes).
+      expect(copied, '/host:/cont');
       // Reaching here without throwing means the copy onPressed ran.
       expect(find.byIcon(Icons.copy), findsNWidgets(2));
     });

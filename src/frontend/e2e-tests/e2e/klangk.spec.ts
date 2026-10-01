@@ -257,43 +257,51 @@ test.describe("Klangk E2E", () => {
       }
 
       const { width, height } = vp(page);
-      const f = fv(page);
 
-      // Type a known string so we have something to select
-      await f.click({
-        position: { x: width / 2, y: height / 2 },
-        force: true,
-      });
-      await page.waitForTimeout(500);
-      await page.keyboard.type("echo COPYTEST123");
-      await page.keyboard.press("Enter");
-      await page.waitForTimeout(500);
+      // Fill the ENTIRE PTY screen with marker lines so the drag's
+      // selection lands on one regardless of which row the release hits
+      // (the old fixed-row drag at y=130 sat at the top edge of the PTY
+      // and produced no mouse events at all in the current layout).
+      await terminalType(
+        page,
+        "clear; for i in $(seq 60); do echo COPYTEST123-$i; done",
+      );
+      await page.waitForTimeout(1000);
 
-      // Select the output by dragging across the first line of output.
-      // The "COPYTEST123" should be on the second line (first is the command).
-      // Drag from left to right across the output area.
-      const startX = 10;
-      const endX = 200;
-      const lineY = 130; // approximate Y of the output line
-      await page.mouse.move(startX, lineY);
+      // Drag across the bottom-center of the PTY, clear of the tmux
+      // status bar at the very bottom. On mouse-up tmux's copy-pipe
+      // auto-copies the selection (see csp-console.spec.ts for the same
+      // flow under the CSP watch).
+      const startX = Math.round(width / 2) - 200;
+      const endX = Math.round(width / 2) + 200;
+      const startY = height - 150;
+      await page.mouse.move(startX, startY);
       await page.mouse.down();
-      await page.mouse.move(endX, lineY, { steps: 10 });
+      for (let i = 1; i <= 10; i++) {
+        const x = startX + ((endX - startX) * i) / 10;
+        const y = startY + (60 * i) / 10;
+        await page.mouse.move(x, y);
+        await page.waitForTimeout(50);
+      }
       await page.mouse.up();
       await page.waitForTimeout(300);
 
-      // Read clipboard — should contain the selected text.
-      // WebKit doesn't support clipboard.readText() even with
-      // grantPermissions, so skip verification there.
-      try {
-        const clipText = await page.evaluate(() =>
-          navigator.clipboard.readText(),
-        );
-        expect(clipText).toContain("COPYTEST123");
-      } catch {
+      // Read clipboard — it must contain the selected marker. WebKit
+      // doesn't support clipboard.readText() even with grantPermissions,
+      // so skip verification ONLY there (the previous catch-all skip made
+      // this assertion vacuous on chromium too).
+      const browser = page.context().browser()?.browserType().name() ?? "";
+      if (browser === "webkit") {
         console.warn(
-          "Clipboard readText() denied — skipping verification (expected on WebKit)",
+          "Clipboard readText() unavailable on WebKit — skipping verification",
         );
+        return;
       }
+      await expect
+        .poll(() => page.evaluate(() => navigator.clipboard.readText()), {
+          timeout: 15_000,
+        })
+        .toContain("COPYTEST123");
     } finally {
       await cleanup();
     }
