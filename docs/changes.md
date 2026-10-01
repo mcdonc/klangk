@@ -33,6 +33,8 @@ operators or integrators to act when upgrading.
 
 ## \[Unreleased]
 
+## \[v2.0a9] - 2026-10-01
+
 ### Added
 
 - **HTML files render in the Files tab.** Opening an `.html` or `.htm`
