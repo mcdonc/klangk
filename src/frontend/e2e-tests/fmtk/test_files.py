@@ -24,6 +24,7 @@ from fmtkharness import (
     ADMIN_EMAIL,
     FIXTURE_PASSWORD,
     FmtkError,
+    cdp_eval,
     http_api,
     http_login,
     node_labels,
@@ -254,3 +255,37 @@ def test_cache_invalidation_after_terminal_touch(harness, app):
     # the cache TTL is 20s — force refresh to see the new file
     app.tap_label("Refresh file list")
     app.wait_for_text(TOUCH_FILE, 15000)
+
+
+def test_drag_and_drop_upload(harness, app):
+    """Drop-to-upload under the served CSP (the blob: regression).
+
+    A real OS drag cannot be synthesized — Chromium leaves the entries
+    API empty for synthetic drags, and desktop_drop requires it — so the
+    drop payload is injected at the Dart boundary instead: a ``blob:``
+    object URL (the exact artifact a real drop yields) fed to the live
+    ``FileDropZoneState.uploadFiles``. The served ``connect-src`` must
+    admit ``blob:`` or the ``readAsBytes`` fetch of that URL dies
+    silently and the file never lands — the production failure mode.
+    """
+    served = harness.proxy.served_csp() or ""
+    assert "connect-src 'self' blob:" in served, served
+
+    navigate_to_test_dir(app)
+    name = f"fmtk-drop-{uuid.uuid4().hex[:6]}.txt"
+    blob = cdp_eval(
+        "URL.createObjectURL(new File(['fmtk e2e drop'], '%s',"
+        " {type: 'text/plain'}))" % name
+    )
+    assert isinstance(blob, str) and blob.startswith("blob:"), blob
+    result = app.drop_zone_eval(
+        "st!.uploadFiles(DropDoneDetails("
+        # A real drop yields a WebDropItem whose uri is the blob: URL and
+        # whose name is the filename; mirror that split explicitly —
+        # DropItemFile's derived name from a blob: URL is empty.
+        f"files: [DropItemFile('{blob}', name: '{name}')],"
+        " localPosition: Offset.zero, globalPosition: Offset.zero));"
+        " return 'uploaded';"
+    )
+    assert result == "uploaded", result
+    app.wait_for_text(name, 30000)

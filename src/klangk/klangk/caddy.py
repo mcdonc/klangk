@@ -343,7 +343,12 @@ def csp_policy(
     remote browser-side (e.g. soliplex's knowledge-base server). The
     feature layer — not this module — decides what belongs there
     (``Features.connect_origins``); an empty *connect_extra* (the default)
-    yields the byte-identical first-party-only policy.
+    yields the byte-identical first-party-only policy apart from the
+    scheme-source below. ``connect-src`` also admits ``blob:``: the
+    drag-and-drop upload reads each dropped file from a blob: object URL
+    the same-origin page itself created (see the ``connect_src`` comment
+    for the full chain), and the origin-keyed blob URL store means no
+    third-party URL is fetchable through the scheme-source.
 
     Same-origin ``ws:``/``wss:`` upgrades of the page origin are covered by
     ``'self'`` (CSP3), so the workspace WebSocket needs no bare scheme-source
@@ -406,7 +411,14 @@ def csp_policy(
     # De-duplicated, order-preserving: a feature can declare the same
     # origin as another (or 'self' resolves to nothing here), and CSP
     # tolerates repeats but the policy reads cleaner without them.
-    connect_src = "connect-src 'self'" + "".join(
+    # ``blob:`` adds no remote fetch surface: the blob URL store is
+    # origin-keyed, so only URLs the same-origin page itself created are
+    # fetchable (a constructed ``blob:https://other/...`` string never
+    # resolves). The drag-and-drop upload path reads each dropped file
+    # from exactly such a URL (desktop_drop hands the app a blob: object
+    # URL; DropItem.readAsBytes fetches it), so ``connect-src 'self'``
+    # alone silently killed every upload.
+    connect_src = "connect-src 'self' blob:" + "".join(
         f" {o}" for o in dict.fromkeys(connect_extra)
     )
     return (

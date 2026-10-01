@@ -666,11 +666,14 @@ class TestCspBlock:
         policy = csp_policy(frontend_fixture(tmp_path))
         assert "require-trusted-types-for 'script'" in policy
 
-    def test_connect_src_default_is_self_only(self, tmp_path):
-        # No feature-declared origins → byte-identical first-party policy.
+    def test_connect_src_default_is_self_plus_blob(self, tmp_path):
+        # No feature-declared origins → first-party-only policy. blob: is
+        # part of that: the drag-and-drop upload reads dropped files from
+        # blob: object URLs, and a fetch of a blob: URL is gated by
+        # connect-src — 'self' alone silently killed every upload.
         policy = csp_policy(frontend_fixture(tmp_path))
         connect_src = policy.split("connect-src ", 1)[1].split(";", 1)[0]
-        assert connect_src == "'self'"
+        assert connect_src == "'self' blob:"
 
     def test_connect_src_widened_by_connect_extra(self, tmp_path):
         # The one sanctioned cross-origin widening: origins contributed by
@@ -681,7 +684,7 @@ class TestCspBlock:
             ("https://rag.example.com", "https://rag.example.com"),
         )
         connect_src = policy.split("connect-src ", 1)[1].split(";", 1)[0]
-        assert connect_src == "'self' https://rag.example.com"
+        assert connect_src == "'self' blob: https://rag.example.com"
 
     def test_worker_src_allows_same_origin_blob(self, tmp_path):
         policy = csp_policy(frontend_fixture(tmp_path))
@@ -786,7 +789,10 @@ class TestCspBlock:
         )
         cf = renderer.render_config("unix//s", "/d/a.sock")
         browser = cf[cf.index("http://:8997 {") :]
-        assert "connect-src 'self' https://rag.enfoldsystems.net;" in browser
+        assert (
+            "connect-src 'self' blob: https://rag.enfoldsystems.net;"
+            in browser
+        )
 
     def test_egress_site_has_no_headers(self, tmp_path):
         s = make_settings(
