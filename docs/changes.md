@@ -33,6 +33,8 @@ operators or integrators to act when upgrading.
 
 ## \[Unreleased]
 
+## \[v2.0a8] - 2026-10-01
+
 ### Fixed
 
 - **Workspace and sidecar images refresh after a host upgrade (#3496).**
