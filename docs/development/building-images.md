@@ -134,28 +134,30 @@ or MITM cannot swap those inputs undetected, and a mismatch fails the
 build loudly. (Known residuals beyond that scope are listed under
 "Accepted residuals" below.)
 
-| Artifact                                               | Where the pin lives                                                                | Verify/rotate on bump                                                                                                                           |
-| ------------------------------------------------------ | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| Workspace base image                                   | `WORKSPACE_BASE_IMAGE` ARG in `src/containers/workspace/Dockerfile`                | automatic — the base-image workflow's auto-PR rewrites the ARG with the new `repo@digest`                                                       |
-| Pi agent npm tarball                                   | `PI_AGENT_SHA512` in `src/containers/workspace/Dockerfile`                         | `npm view @earendil-works/pi-coding-agent@<ver> dist.integrity` (base64 sha512 → hex)                                                           |
-| uv                                                     | `UV_SHA256_AMD64` / `UV_SHA256_ARM64` in `src/containers/workspace/Dockerfile`     | `sha256sum` of each arch tarball, or the `.sha256` sidecars in the GitHub release                                                               |
-| process-compose                                        | `PROCESS_COMPOSE_SHA256_AMD64` / `_ARM64` in `src/containers/workspace/Dockerfile` | `sha256sum` of each arch tarball                                                                                                                |
-| Debian base (workspace, FIPS builders, nix-seed)       | digest in `src/containers/workspace/Dockerfile.base` (pre-existing)                | `docker buildx imagetools inspect debian:trixie-slim (read the Digest: line)`; keep the three aligned builders in sync                          |
-| python host base                                       | digest in `src/containers/host/Dockerfile`                                         | `docker buildx imagetools inspect python:3.14-slim (read the Digest: line)`                                                                     |
-| Alpine (network sidecar)                               | digest in `src/containers/network/Dockerfile`                                      | `docker buildx imagetools inspect alpine:3.21 (read the Digest: line)`                                                                          |
-| NodeSource repo key                                    | `NODESOURCE_KEY_SHA256` in `Dockerfile.base`                                       | `sha256sum` of the fetched `gpgkey/nodesource-repo.gpg.key` (after cross-checking the new key's fingerprint against NodeSource's docs)          |
-| GitHub CLI repo key                                    | `GITHUBCLI_KEYRING_SHA256` in `Dockerfile.base`                                    | `sha256sum` of the fetched `githubcli-archive-keyring.gpg` (fingerprint in the Dockerfile comment)                                              |
-| Caddy repo key (Cloudsmith)                            | `CADDY_REPO_KEY_SHA256` in `src/containers/host/Dockerfile`                        | `sha256sum` of the fetched `gpg.key` (fingerprint in the Dockerfile comment; cross-check <https://cloudsmith.io/~caddy/repos/stable/pub-keys/>) |
-| cryptography GitHub tag tarball (FIPS relink fallback) | `CRYPTOGRAPHY_SRC_SHA256` in `src/containers/host/Dockerfile.fips`                 | `sha256sum` of the `<locked-version>` tag archive; recompute on every `uv.lock` cryptography bump                                               |
+| Artifact                                               | Where the pin lives                                                                 | Verify/rotate on bump                                                                                                                   |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Workspace base image                                   | `WORKSPACE_BASE_IMAGE` ARG in `src/containers/workspace/Dockerfile`                 | automatic — the base-image workflow's auto-PR rewrites the ARG with the new `repo@digest`                                               |
+| Pi agent npm tarball                                   | `PI_AGENT_SHA512` in `src/containers/workspace/Dockerfile`                          | `npm view @earendil-works/pi-coding-agent@<ver> dist.integrity` (base64 sha512 → hex)                                                   |
+| uv                                                     | `UV_SHA256_AMD64` / `UV_SHA256_ARM64` in `src/containers/workspace/Dockerfile`      | `sha256sum` of each arch tarball, or the `.sha256` sidecars in the GitHub release                                                       |
+| process-compose                                        | `PROCESS_COMPOSE_SHA256_AMD64` / `_ARM64` in `src/containers/workspace/Dockerfile`  | `sha256sum` of each arch tarball                                                                                                        |
+| Debian base (workspace, FIPS builders, nix-seed)       | digest in `src/containers/workspace/Dockerfile.base` (pre-existing)                 | `docker buildx imagetools inspect debian:trixie-slim (read the Digest: line)`; keep the three aligned builders in sync                  |
+| python host base                                       | digest in `src/containers/host/Dockerfile`                                          | `docker buildx imagetools inspect python:3.14-slim (read the Digest: line)`                                                             |
+| Alpine (network sidecar)                               | digest in `src/containers/network/Dockerfile`                                       | `docker buildx imagetools inspect alpine:3.21 (read the Digest: line)`                                                                  |
+| NodeSource repo key                                    | `NODESOURCE_KEY_SHA256` in `Dockerfile.base`                                        | `sha256sum` of the fetched `gpgkey/nodesource-repo.gpg.key` (after cross-checking the new key's fingerprint against NodeSource's docs)  |
+| GitHub CLI repo key                                    | `GITHUBCLI_KEYRING_SHA256` in `Dockerfile.base`                                     | `sha256sum` of the fetched `githubcli-archive-keyring.gpg` (fingerprint in the Dockerfile comment)                                      |
+| Caddy release tarball                                  | `CADDY_VERSION` + `CADDY_SHA256_AMD64`/`_ARM64` in `src/containers/host/Dockerfile` | fetch the release's asset digests from <https://api.github.com/repos/caddyserver/caddy/releases/latest>; update all three ARGs together |
+| cryptography GitHub tag tarball (FIPS relink fallback) | `CRYPTOGRAPHY_SRC_SHA256` in `src/containers/host/Dockerfile.fips`                  | `sha256sum` of the `<locked-version>` tag archive; recompute on every `uv.lock` cryptography bump                                       |
 
 Notes:
 
-- The apt **sources lists** (NodeSource, GitHub CLI, Caddy) are written
+- The apt **sources lists** (NodeSource, GitHub CLI) are written
   inline in the Dockerfiles, not fetched — the GPG key is the only
   network-sourced trust input, and apt's own signature verification then
-  covers the package indexes and `.deb`s. Caddy itself is intentionally
-  not version-pinned so rebuilds pick up security patches; its integrity
-  rests on the pinned repo key.
+  covers the package indexes and `.deb`s. Caddy installs from the
+  version- and digest-pinned GitHub release tarball (#3502): the Caddy
+  apt repo on Cloudsmith signed its `InRelease` with an expired subkey,
+  which Debian trixie's apt rejects. A pinned Caddy no longer picks up
+  security patches on rebuild — bump the three ARGs to ship one.
 - Deps of the Pi agent tarball are still resolved by npm at build time
   (integrity-checked by npm against registry metadata, as usual).
 - `scripts/tests/test_supply_chain_pins.py` holds contract tests asserting

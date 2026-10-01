@@ -90,7 +90,7 @@ echo "  port:        $PORT"
 echo "  venv:        $VENV_DIR"
 echo "  data_dir:    $DATA_DIR"
 echo "  state_dir:   $STATE_DIR"
-echo "  caddy:       $(command -v caddy || echo '(NOT FOUND — apt install caddy')"
+echo "  caddy:       $(command -v caddy || echo '(NOT FOUND — install from the pinned GitHub release, see docs/development/building-images.md')"
 echo
 
 # 1. Fresh isolated venv + install the wheel (with deps — this is the real

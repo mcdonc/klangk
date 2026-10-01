@@ -679,9 +679,9 @@ operators or integrators to act when upgrading.
   auto-PR pinning the digest. The uv and process-compose release tarballs are
   SHA-256-verified per architecture before extraction (no more `curl | sh` /
   `curl | tar` pipes), the Pi agent npm tarball is fetched directly and
-  SHA-512-verified, and the NodeSource / GitHub CLI / Caddy apt repo keys are
-  hash-verified before entering a keyring (Caddy's sources list is written
-  inline). Pins live in the Dockerfiles; rotation procedures and known residuals
+  SHA-512-verified, and the NodeSource / GitHub CLI repo keys are
+  hash-verified before entering a keyring. Pins live in the Dockerfiles;
+  rotation procedures and known residuals
   are documented in [Building Images](development/building-images.md).
 
 - **Browser-delegate requests are bound to the caller's workspace
@@ -2691,6 +2691,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Host image builds again; Caddy installs from its GitHub release
+  (#3502).** The Caddy apt repo on Cloudsmith publishes an InRelease
+  signed with an expired subkey, which Debian trixie's apt refuses, so
+  every host-image build (including the v2.0a8 release) failed at
+  `apt-get update`. The host image now installs Caddy from the official
+  release tarball, version- and per-arch-SHA-256-pinned; the apt repo,
+  its key pin, and the `apt-transport-https`/`gnupg` packages that served
+  only it are gone.
 - **`git` inside workspaces trusts the deployer CA bundle (#3495).** The
   runtime CA-trust injection (#1181) now also exports `GIT_SSL_CAINFO`
   pointing at the merged bundle (system CAs plus
