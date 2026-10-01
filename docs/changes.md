@@ -679,9 +679,9 @@ operators or integrators to act when upgrading.
   auto-PR pinning the digest. The uv and process-compose release tarballs are
   SHA-256-verified per architecture before extraction (no more `curl | sh` /
   `curl | tar` pipes), the Pi agent npm tarball is fetched directly and
-  SHA-512-verified, and the NodeSource / GitHub CLI / Caddy apt repo keys are
-  hash-verified before entering a keyring (Caddy's sources list is written
-  inline). Pins live in the Dockerfiles; rotation procedures and known residuals
+  SHA-512-verified, and the NodeSource / GitHub CLI repo keys are
+  hash-verified before entering a keyring. Pins live in the Dockerfiles;
+  rotation procedures and known residuals
   are documented in [Building Images](development/building-images.md).
 
 - **Browser-delegate requests are bound to the caller's workspace

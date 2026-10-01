@@ -267,10 +267,15 @@ def test_caddy_tarball_is_version_pinned_and_verified():
 def test_caddy_tarball_arch_digest_mapping_is_pinned():
     """The case arms map each architecture to its own digest ARG, and the
     two ARGs differ — a swapped arm or a pasted-twice digest otherwise
-    only fails at a later arm64 build."""
+    only fails at a later arm64 build (no CI workflow builds the host
+    image on arm64)."""
     text = _HOST_DF.read_text()
-    assert 'CADDY_SHA256="$CADDY_SHA256_AMD64"' in text
-    assert 'CADDY_SHA256="$CADDY_SHA256_ARM64"' in text
+    assert re.search(r'amd64\)\s+CADDY_SHA256="\$CADDY_SHA256_AMD64"', text), (
+        "the amd64 case arm must select CADDY_SHA256_AMD64"
+    )
+    assert re.search(r'arm64\)\s+CADDY_SHA256="\$CADDY_SHA256_ARM64"', text), (
+        "the arm64 case arm must select CADDY_SHA256_ARM64"
+    )
     assert _arg(_HOST_DF, "CADDY_SHA256_AMD64") != _arg(_HOST_DF, "CADDY_SHA256_ARM64")
 
 
@@ -353,7 +358,7 @@ def test_nodesource_and_githubcli_keys_are_verified():
     assert _HEX64.match(_arg(_WORKSPACE_BASE_DF, "GITHUBCLI_KEYRING_SHA256"))
 
 
-def test_no_unverified_key_fetches_in_base_or_host():
+def test_no_unverified_key_fetches_in_base():
     """Every gpg key fetch in the base image lands in a file that a
     pinned-hash check reads before the key enters a keyring."""
     text = _WORKSPACE_BASE_DF.read_text()
