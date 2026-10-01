@@ -2711,6 +2711,12 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   release tarball, version- and per-arch-SHA-256-pinned; the apt repo,
   its key pin, and the `apt-transport-https`/`gnupg` packages that served
   only it are gone.
+- **The Files tab keeps working after a session token refresh.** The
+  file viewer now signs its requests with the session's current access
+  token, so directory listings, file reads, and uploads keep working
+  after the periodic token refresh. Previously the tab kept the token
+  from page load and failed once it rotated, with "Cannot list this
+  directory: Token has been revoked" and then "Invalid token".
 - **`git` inside workspaces trusts the deployer CA bundle (#3495).** The
   runtime CA-trust injection (#1181) now also exports `GIT_SSL_CAINFO`
   pointing at the merged bundle (system CAs plus
