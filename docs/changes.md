@@ -37,6 +37,15 @@ operators or integrators to act when upgrading.
 
 ### Fixed
 
+- **Host image builds again; Caddy installs from its GitHub release
+  (#3502).** The Caddy apt repo on Cloudsmith publishes an InRelease
+  signed with an expired subkey, which Debian trixie's apt refuses, so
+  every host-image build (including this release's) failed at
+  `apt-get update`. The host image now installs Caddy from the official
+  release tarball, version- and per-arch-SHA-256-pinned; the apt repo,
+  its key pin, and the `apt-transport-https`/`gnupg` packages that served
+  only it are gone.
+
 - **Workspace and sidecar images refresh after a host upgrade (#3496).**
   The host container now loads its embedded workspace and network-sidecar
   images at every start instead of only when the image name is missing, so
@@ -938,9 +947,9 @@ trusted`. Existing workspaces pick this up when they are next recreated
   auto-PR pinning the digest. The uv and process-compose release tarballs are
   SHA-256-verified per architecture before extraction (no more `curl | sh` /
   `curl | tar` pipes), the Pi agent npm tarball is fetched directly and
-  SHA-512-verified, and the NodeSource / GitHub CLI / Caddy apt repo keys are
-  hash-verified before entering a keyring (Caddy's sources list is written
-  inline). Pins live in the Dockerfiles; rotation procedures and known residuals
+  SHA-512-verified, and the NodeSource / GitHub CLI repo keys are
+  hash-verified before entering a keyring. Pins live in the Dockerfiles;
+  rotation procedures and known residuals
   are documented in [Building Images](development/building-images.md).
 
 - **Browser-delegate requests are bound to the caller's workspace
