@@ -324,7 +324,8 @@ required for the common case.
 1. Make the sidecar image available to podman:
    - **All-in-one host image** (`scripts/build-host-image.sh`): nothing to
      do — the sidecar image is embedded as a tarball in the host image and
-     `podman load`ed on first startup.
+     `podman load`ed at every host start, so upgrading the host image also
+     refreshes the sidecar tag in the persistent podman store (#3496).
    - **Published image**: pull `ghcr.io/mcdonc/klangk/klangk-network-sidecar`
      (immutable `vX.Y.Z` release tags, or `<calver>-<commit>` tags from the
      continuous `image-network-sidecar.yml` builds) and retag it to the

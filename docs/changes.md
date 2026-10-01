@@ -35,6 +35,16 @@ operators or integrators to act when upgrading.
 
 ### Fixed
 
+- **Workspace and sidecar images refresh after a host upgrade (#3496).**
+  The host container now loads its embedded workspace and network-sidecar
+  images at every start instead of only when the image name is missing, so
+  upgrading the host image also upgrades the images new workspaces run —
+  a tag left in the persistent podman store by an older klangk version no
+  longer keeps serving the old workspace image. Workspaces that were
+  already running keep their image until restarted, and the images an
+  upgrade displaces are garbage-collected once no workspace still uses
+  them.
+
 - **`git` inside workspaces trusts the deployer CA bundle (#3495).** The
   runtime CA-trust injection (#1181) now also exports `GIT_SSL_CAINFO`
   pointing at the merged bundle (system CAs plus
