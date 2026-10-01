@@ -2286,6 +2286,13 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
   The tarball stays sha512-pinned and verified at image build, so the
   upgrade changes no supply-chain posture.
 
+- **Workspace pinned tooling updated: uv 0.12.21 and process-compose
+  1.122.0 (#3512).** uv moves from 0.11.23 to 0.12.21 (verified against
+  Python 3.13 in the image: venv creation, installs, and `uv run` all
+  work) and the process-compose supervisor moves from 1.120.0 to
+  1.122.0. Both tarballs stay per-architecture sha256-verified at image
+  build.
+
 - **Soliplex keeps one server connected at a time (#3480).** Connecting to
   a Soliplex server — interactive login or an open/no-auth server's Connect —
   disconnects the currently active server, and the overlay states the rule.

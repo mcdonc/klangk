@@ -66,9 +66,9 @@ COPY builtin-extensions/ /opt/klangk/pi-agent/extensions/
 #
 # Bump: set UV_VERSION, then refresh both pins with sha256sum of each arch
 # tarball (or the .sha256 sidecar files published alongside the release).
-ARG UV_VERSION=0.11.23
-ARG UV_SHA256_AMD64=e12c4cda2fe8c305510a78380a88f2c32a27e90cdcd123cefd2873388f0ebb5f
-ARG UV_SHA256_ARM64=1873a77350f6621279ae1a0d2227f2bd8b67131598f14a7eb0ba2215d3da2c98
+ARG UV_VERSION=0.12.21
+ARG UV_SHA256_AMD64=23f02075b652bb1df64178cfae41b5caf160822e720e2663568f3f5d63bc52c0
+ARG UV_SHA256_ARM64=030b69227b40af8c1981b7301793dc66e71ed3c796ea8688209dd268bd91ec51
 RUN set -eu; \
     case "$(dpkg --print-architecture)" in \
       amd64) target=x86_64-unknown-linux-gnu; sha="$UV_SHA256_AMD64" ;; \
@@ -92,9 +92,9 @@ RUN set -eu; \
 #
 # Bump: set PROCESS_COMPOSE_VERSION, then refresh both pins with sha256sum
 # of each arch tarball.
-ARG PROCESS_COMPOSE_VERSION=1.120.0
-ARG PROCESS_COMPOSE_SHA256_AMD64=3792e1ed9f383832eb2362154444e8564fbc8e7e8e7cff8754c68aea5eca086e
-ARG PROCESS_COMPOSE_SHA256_ARM64=c5f4fcfc63e849279ac531bce2394a918fb28746339088a7d3d02bb5fb218a68
+ARG PROCESS_COMPOSE_VERSION=1.122.0
+ARG PROCESS_COMPOSE_SHA256_AMD64=9b6dbc38324c0b0481f1cd1dd828ffdc78117129ec797678f4bf8c4023311281
+ARG PROCESS_COMPOSE_SHA256_ARM64=52fa7d5a2d5e0db470faec5976204fc215ed7e3d13689e930cf522becfb63778
 RUN set -eu; \
     ARCH="$(dpkg --print-architecture)"; \
     case "$ARCH" in \
