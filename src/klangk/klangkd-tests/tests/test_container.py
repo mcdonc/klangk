@@ -176,6 +176,7 @@ class TestSslCertDir:
             "SSL_CERT_FILE=/tmp/klangk/ca-bundle.crt",
             "REQUESTS_CA_BUNDLE=/tmp/klangk/ca-bundle.crt",
             "CURL_CA_BUNDLE=/tmp/klangk/ca-bundle.crt",
+            "GIT_SSL_CAINFO=/tmp/klangk/ca-bundle.crt",
             "NODE_EXTRA_CA_CERTS=/tmp/klangk/ca-bundle.crt",
         ]
 
@@ -3483,6 +3484,7 @@ class TestStartContainer:
         assert "SSL_CERT_FILE=/tmp/klangk/ca-bundle.crt" in env
         assert "REQUESTS_CA_BUNDLE=/tmp/klangk/ca-bundle.crt" in env
         assert "CURL_CA_BUNDLE=/tmp/klangk/ca-bundle.crt" in env
+        assert "GIT_SSL_CAINFO=/tmp/klangk/ca-bundle.crt" in env
         assert "NODE_EXTRA_CA_CERTS=/tmp/klangk/ca-bundle.crt" in env
 
     async def test_no_ssl_trust_when_cert_dir_unset(self, workspace):

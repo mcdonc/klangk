@@ -2691,6 +2691,17 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **`git` inside workspaces trusts the deployer CA bundle (#3495).** The
+  runtime CA-trust injection (#1181) now also exports `GIT_SSL_CAINFO`
+  pointing at the merged bundle (system CAs plus
+  `<KLANGKD_CUSTOMIZE_DIR>/certs/`), alongside `SSL_CERT_FILE`,
+  `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, and `NODE_EXTRA_CA_CERTS`.
+  `git` honors none of those variables, so an HTTPS clone from a server
+  whose certificate chains to a custom CA failed with `certificate
+signer not trusted` (surfacing as the username/token prompt instead
+  of the Gitea OAuth login). Clones now succeed with no per-user
+  configuration; picked up by workspaces created after a restart.
+
 - **Drag-and-drop file upload works under the served CSP.** Every
   drag-and-drop upload failed silently on deployments serving the
   browser Content-Security-Policy: the upload reads each dropped file
