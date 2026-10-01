@@ -7,33 +7,33 @@ FROM python:3.14-slim@sha256:cae66f2ef0ec51a9891263eeee7f987dacf0a9879e8aa9353d5
 # Rebased onto the 3.14 interpreter base for the toolchain upgrade
 # (#2844); digest-only rebuilds also pick up security patches (e.g.
 # CVE-2026-45447 openssl).
-# The reverse proxy is Caddy (klangkd's default engine since #1559), installed
-# from the official Caddy apt repo (not in Debian's default repos). nginx is
-# gone — klangkd renders a Caddyfile and drives Caddy over its admin API.
+# The reverse proxy is Caddy (klangkd's default engine since #1559; nginx
+# is gone — klangkd renders a Caddyfile and drives Caddy over its admin
+# API). It is installed from the official GitHub release tarball, not from
+# the Caddy apt repo on Cloudsmith: that repo publishes an InRelease
+# signed with an expired subkey (531A6B20FA058A70 of the repo's key),
+# which Debian trixie's apt — whose OpenPGP verifier sqv enforces key
+# liveness — refuses, breaking every host-image build until Cloudsmith
+# re-signs (#3502). No keyring change on this side can repair a repo
+# signed with a dead subkey.
 #
-# Supply-chain posture (#2063): the Cloudsmith GPG key is trusted only after
-# its SHA-256 is verified against the pin below — an unverified fetch lets a
-# MITM/compromised CDN choose which key signs the repo. The apt sources list
-# is written inline (not fetched), so the key is the only network-sourced
-# trust input; apt then GPG-verifies the package indexes and debs with it.
-#
-# Key provenance (for independent verification): the repo's primary key
-# fingerprint is 6576 0C51 EDEA 2017 CEA2  CA15 155B 6D79 CA56 EA34,
-# published at https://cloudsmith.io/~caddy/repos/stable/pub-keys/
-#
-# Bump: if Cloudsmith rotates the key, re-download gpg.key, recompute its
-# sha256, and update this ARG (after cross-checking the new fingerprint
-# against the pub-keys page above).
-ARG CADDY_REPO_KEY_SHA256=783dfee04b19e851a928cd87b34710213ebbe7628f98d9f34595ab83be578c00
+# Supply-chain posture (#2063): the URL is fixed by the pinned version and
+# the tarball's SHA-256 is verified per architecture before install — an
+# unverified fetch never reaches /usr/bin. The digests are the release's
+# asset digests (GitHub's hash of the exact bytes served). Bump: pick the
+# new version, fetch its amd64/arm64 digests from
+# https://api.github.com/repos/caddyserver/caddy/releases/latest, and
+# update all three ARGs together.
+ARG CADDY_VERSION=2.11.4
+ARG CADDY_SHA256_AMD64=527fbf917c39189a1e3b31d34fa955601680b2d5c8055d2a87b8b9588dec7bb9
+ARG CADDY_SHA256_ARM64=52d42ae12b3462097e9868da6dfed3c9648ae12edd3b3638102312af84cb6904
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      apt-transport-https \
       bash \
       ca-certificates \
       catatonit \
       coreutils \
       curl \
       fuse-overlayfs \
-      gnupg \
       gzip \
       iproute2 \
       passt \
@@ -44,16 +44,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       supervisor \
       tar \
       uidmap \
-    && curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
-        -o /tmp/caddy-stable.key \
-    && echo "${CADDY_REPO_KEY_SHA256}  /tmp/caddy-stable.key" | sha256sum -c - \
-    && gpg --dearmor --yes \
-        -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg /tmp/caddy-stable.key \
-    && rm -f /tmp/caddy-stable.key \
-    && echo 'deb [signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main' \
-        > /etc/apt/sources.list.d/caddy-stable.list \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends caddy \
+    && CADDY_ARCH="$(dpkg --print-architecture)" \
+    && case "$CADDY_ARCH" in \
+         amd64) CADDY_SHA256="$CADDY_SHA256_AMD64" ;; \
+         arm64) CADDY_SHA256="$CADDY_SHA256_ARM64" ;; \
+         *) echo "unsupported architecture $CADDY_ARCH" >&2; exit 1 ;; \
+       esac \
+    && curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
+         "https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}/caddy_${CADDY_VERSION}_linux_${CADDY_ARCH}.tar.gz" \
+         -o /tmp/caddy.tar.gz \
+    && echo "${CADDY_SHA256}  /tmp/caddy.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/caddy.tar.gz -C /tmp caddy \
+    && install -m 0755 /tmp/caddy /usr/bin/caddy \
+    && rm -f /tmp/caddy.tar.gz /tmp/caddy \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user matching devenv convention (uid 1000)
