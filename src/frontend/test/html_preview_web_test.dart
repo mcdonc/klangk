@@ -42,8 +42,44 @@ void main() {
     configurePreviewFrame(frame, page);
     expect(frame.getAttribute('sandbox'), '');
     expect(frame.sandbox.length, 0);
-    expect(frame.getAttribute('srcdoc'), page);
+    expect(frame.getAttribute('srcdoc'), endsWith(page));
     expect(frame.referrerPolicy, 'no-referrer');
+  });
+
+  test('the page is preceded by a restrictive CSP', () {
+    final frame = web.HTMLIFrameElement();
+    configurePreviewFrame(frame, page);
+    final doc = frame.getAttribute('srcdoc')!;
+    expect(doc, startsWith('<meta http-equiv="Content-Security-Policy"'));
+    expect(doc, contains("default-src 'none'"));
+    expect(doc, endsWith(page));
+  });
+
+  test('the CSP follows a leading doctype so the page keeps standards mode',
+      () {
+    const withDoctype = '<!DOCTYPE html><html><body><h1>T</h1></body></html>';
+    final frame = web.HTMLIFrameElement();
+    configurePreviewFrame(frame, withDoctype);
+    expect(
+      frame.getAttribute('srcdoc'),
+      startsWith('<!DOCTYPE html><meta http-equiv="Content-Security-Policy"'),
+    );
+  });
+
+  test('the sandbox is set before the document', () {
+    final frame = web.HTMLIFrameElement();
+    final observer = web.MutationObserver(
+      ((JSArray<web.MutationRecord> _, web.MutationObserver __) {}).toJS,
+    )..observe(frame, web.MutationObserverInit(attributes: true));
+    configurePreviewFrame(frame, page);
+    final names = observer
+        .takeRecords()
+        .toDart
+        .map((r) => r.attributeName)
+        .where((n) => n == 'sandbox' || n == 'srcdoc')
+        .toList();
+    observer.disconnect();
+    expect(names, ['sandbox', 'srcdoc']);
   });
 
   test('a script in the previewed page does not run', () async {

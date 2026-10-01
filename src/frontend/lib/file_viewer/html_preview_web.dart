@@ -1,7 +1,10 @@
 import 'dart:js_interop';
+import 'dart:js_interop_unsafe';
 
 import 'package:flutter/widgets.dart';
 import 'package:web/web.dart' as web;
+
+import 'html_preview_document.dart';
 
 /// The browser can display HTML files in a sandboxed iframe.
 const bool htmlPreviewSupported = true;
@@ -30,7 +33,11 @@ web.TrustedTypePolicy _previewPolicy() =>
       ),
     );
 
-/// Sandboxes [frame] and loads [html] into it.
+/// Whether this browser has the Trusted Types API.
+bool _hasTrustedTypes() =>
+    !(web.window as JSObject)['trustedTypes'].isUndefinedOrNull;
+
+/// Sandboxes [frame] and loads [html] into it, behind [htmlPreviewCsp].
 ///
 /// The sandbox attribute is set before `srcdoc`, so the document is never
 /// parsed without it.
@@ -42,7 +49,10 @@ void configurePreviewFrame(web.HTMLIFrameElement frame, String html) {
     ..style.width = '100%'
     ..style.height = '100%'
     ..style.backgroundColor = 'white';
-  frame.srcdoc = _previewPolicy().createHTML(html, null);
+  final document = previewDocument(html);
+  frame.srcdoc = _hasTrustedTypes()
+      ? _previewPolicy().createHTML(document, null)
+      : document.toJS;
 }
 
 /// A sandboxed iframe displaying [html].
