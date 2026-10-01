@@ -33,6 +33,17 @@ operators or integrators to act when upgrading.
 
 ## \[Unreleased]
 
+### Fixed
+
+- **Drag-and-drop file upload works under the served CSP.** Every
+  drag-and-drop upload failed silently on deployments serving the
+  browser Content-Security-Policy: the upload reads each dropped file
+  through a `blob:` object URL, and `connect-src 'self'` blocks `blob:`
+  fetches. The policy now admits `blob:` in `connect-src` — no remote
+  fetch surface is added, since only URLs the same-origin page itself
+  created are fetchable that way. Picked up on the next proxy config
+  render (a klangkd restart or SIGHUP).
+
 ## \[v2.0a7] - 2026-09-30
 
 ### Fixed

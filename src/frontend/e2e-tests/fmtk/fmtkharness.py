@@ -148,6 +148,24 @@ def proxy_origin() -> str:
     return f"http://127.0.0.1:{PROXY_PORT}"
 
 
+def flutter_web_sdk() -> Path:
+    """The flutter SDK's flutter_web_sdk dir (canvaskit lives under it).
+
+    Resolved through the resolved flutter binary — the devenv wrapper
+    resolves to a store path whose bin/.. is the SDK root (parents[1]
+    of the binary).
+    """
+    flutter_bin = Path(os.path.realpath(shutil.which("flutter") or ""))
+    sdk_root = flutter_bin.parents[1]
+    web_sdk = sdk_root / "bin/cache/flutter_web_sdk"
+    if not web_sdk.is_dir():
+        raise FmtkError(
+            f"flutter web sdk not found at {web_sdk} — canvaskit cannot "
+            "be served locally (local-asset contract)"
+        )
+    return web_sdk
+
+
 class FmtkError(RuntimeError):
     """A fmtk CLI call returned ok=false (message + details).
 
@@ -1239,11 +1257,80 @@ def port_holders(port: str) -> list[int]:
 
 
 class Proxy:
-    """The origin-splitting caddy fmtk-up fronts the debug run with."""
+    """The origin-splitting caddy fmtk-up fronts the debug run with.
+
+    The proxy also serves the app a Content-Security-Policy
+    (``scripts/fmtk_csp.py`` — the production policy plus the two
+    dev-server relaxations), so the e2e suites exercise the browser
+    features under a real policy instead of a headerless harness. A
+    ``connect-src`` regression the strict posture would have caught
+    (the drag-and-drop upload's ``blob:`` object-URL fetch) shipped
+    silently while the harness served no CSP at all.
+    """
 
     def __init__(self, backend: Backend) -> None:
         self.backend = backend
         self.config_path = STATE_DIR / "proxy.Caddyfile"
+
+    @staticmethod
+    def csp() -> str:
+        """The policy to serve (single definition: scripts/fmtk_csp.py).
+
+        Rendered in a subprocess so fmtk-up.sh (bash) and this harness
+        emit byte-identical headers.
+        """
+        return subprocess.run(
+            [sys.executable, str(REPO_ROOT / "scripts/fmtk_csp.py")],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+
+    def config(self) -> str:
+        csp = self.csp()
+        canvaskit_root = flutter_web_sdk()
+        return (
+            f"http://:{PROXY_PORT} {{\n"
+            "\tbind 127.0.0.1\n"
+            f'\theader Content-Security-Policy "{csp}"\n'
+            "\thandle /api/* {\n"
+            f"\t\treverse_proxy 127.0.0.1:{BACKEND_PORT}\n"
+            "\t}\n"
+            "\thandle /ws {\n"
+            f"\t\treverse_proxy 127.0.0.1:{BACKEND_PORT}\n"
+            "\t}\n"
+            "\thandle /ws/* {\n"
+            f"\t\treverse_proxy 127.0.0.1:{BACKEND_PORT}\n"
+            "\t}\n"
+            # The dev-server bootstrap pins canvasKitBaseUrl to the
+            # relative canvaskit/ (local-asset contract); serve the
+            # flutter SDK's copy at that path — a built frontend ships
+            # its own.
+            "\thandle /canvaskit/* {\n"
+            f"\t\troot * {canvaskit_root}\n"
+            "\t\tfile_server\n"
+            "\t}\n"
+            "\thandle {\n"
+            f"\t\treverse_proxy 127.0.0.1:{FLUTTER_PORT}\n"
+            "\t}\n"
+            "}\n"
+        )
+
+    def served_csp(self) -> str | None:
+        """The CSP header the proxy currently serves on app responses."""
+        req = urllib.request.Request(f"http://127.0.0.1:{PROXY_PORT}/")
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return resp.headers.get("Content-Security-Policy")
+        except urllib.error.HTTPError as err:
+            # A dead flutter dev server behind the proxy answers 502 —
+            # the header (and the policy question) is still readable off
+            # the error response.
+            return err.headers.get("Content-Security-Policy")
+        except (urllib.error.URLError, OSError):
+            # A hung proxy: treat the served policy as unknown so the
+            # caller re-renders/reloads rather than crashing boot.
+            return None
 
     @property
     def pattern(self) -> str:
@@ -1258,36 +1345,47 @@ class Proxy:
         except (urllib.error.URLError, OSError, ValueError):
             return False
 
-    def ensure(self) -> None:
+    def ensure(self) -> bool:
+        """True when the served CSP changed (caddy was reloaded).
+
+        A page keeps the policy it loaded with, so a policy change on a
+        kept stack invalidates any already-running app page — the caller
+        must restart the flutter run so the driven tab reloads under the
+        current policy.
+        """
         # A poll window before declaring the port foreign: the probe
         # routes through the scratch backend, whose ingress caddy can be
         # mid-restart for a few seconds (see Backend.ensure).
         deadline = time.monotonic() + 45
         while time.monotonic() < deadline:
             if self.is_ours_and_healthy():
-                return
+                # A kept stack may predate the CSP step (or carry an older
+                # policy) — re-serve the current one before any test loads
+                # the app.
+                if self.served_csp() != self.csp():
+                    self.config_path.write_text(self.config())
+                    subprocess.run(
+                        [
+                            "caddy",
+                            "reload",
+                            "--config",
+                            str(self.config_path),
+                            "--adapter",
+                            "caddyfile",
+                        ],
+                        cwd=REPO_ROOT,
+                        check=True,
+                        capture_output=True,
+                        timeout=30,
+                    )
+                    return True
+                return False
             if not pids_matching(self.pattern) and not ports_busy([PROXY_PORT]):
                 break  # genuinely gone — start below
             time.sleep(2)
         if ports_busy([PROXY_PORT]):
             raise FmtkError(f"port {PROXY_PORT} in use — run fmtk-down")
-        self.config_path.write_text(
-            f"http://:{PROXY_PORT} {{\n"
-            "\tbind 127.0.0.1\n"
-            "\thandle /api/* {\n"
-            f"\t\treverse_proxy 127.0.0.1:{BACKEND_PORT}\n"
-            "\t}\n"
-            "\thandle /ws {\n"
-            f"\t\treverse_proxy 127.0.0.1:{BACKEND_PORT}\n"
-            "\t}\n"
-            "\thandle /ws/* {\n"
-            f"\t\treverse_proxy 127.0.0.1:{BACKEND_PORT}\n"
-            "\t}\n"
-            "\thandle {\n"
-            f"\t\treverse_proxy 127.0.0.1:{FLUTTER_PORT}\n"
-            "\t}\n"
-            "}\n"
-        )
+        self.config_path.write_text(self.config())
         log = open(STATE_DIR / "caddy.log", "ab")
         subprocess.Popen(
             [
@@ -1304,6 +1402,9 @@ class Proxy:
             start_new_session=True,
         )
         wait_http(f"http://127.0.0.1:{PROXY_PORT}/api/v1/config", "caddy proxy", 30)
+        # A fresh start is a policy change (from nothing): an adopted
+        # app page may still be running under an absent/old policy.
+        return True
 
 
 def seed(url: str) -> None:
@@ -2225,6 +2326,50 @@ class FmtkClient:
             return data["result"]
         return data
 
+    UPLOAD_LIBRARY = "package:klangk_frontend/file_viewer/file_upload.dart"
+    UPLOAD_WALK_TEMPLATE = """
+() {{
+  FileDropZoneState? st;
+  void walk(Element el) {{
+    if (st != null) return;
+    if (el is StatefulElement) {{
+      final s = el.state;
+      if (s is FileDropZoneState) st = s;
+    }}
+    el.visitChildElements((c) => walk(c));
+  }}
+  walk(WidgetsBinding.instance.rootElement!);
+  if (st == null) return 'NO-DROP-ZONE';
+  {body}
+}}()
+"""
+
+    def drop_zone_eval(self, body: str) -> object:
+        """Evaluate against the live Files-tab drop zone.
+
+        Walks the element tree for the :class:`FileDropZoneState` the
+        workspace Files tab mounts and runs ``body`` with ``st!`` bound
+        to it. This is the drag-and-drop entry point a browser ``drop``
+        event would reach via desktop_drop — an OS drag cannot be
+        synthesized (Chromium leaves the entries API empty for
+        synthetic drags, and desktop_drop requires it), so drop-payload
+        tests inject at this boundary instead. ``file_upload.dart``'s
+        library scope carries ``DropDoneDetails``/``DropItemFile``
+        (desktop_drop) plus the widgets imports the walk needs. Bodies
+        must be complete statements — the evaluator does not append
+        semicolons.
+        """
+        data = self.exec(
+            "evaluate_dart_expression",
+            {
+                "expression": self.UPLOAD_WALK_TEMPLATE.format(body=body),
+                "libraryUri": self.UPLOAD_LIBRARY,
+            },
+        )
+        if isinstance(data, dict) and "result" in data:
+            return data["result"]
+        return data
+
     def dismiss_login_banner(self) -> None:
         # A 1s probe: the consent dialog renders WITH the form, and
         # wait_for_login_page has already gated on the form — 3s here
@@ -2477,7 +2622,11 @@ class Harness:
         write_config_yaml(self.config)
         self.backend.sighup()
         self.backend.wait_healthy()
-        self.proxy.ensure()
+        if self.proxy.ensure():
+            # The served CSP changed — an adopted app page still runs
+            # under the old policy (a page keeps the one it loaded
+            # with), so force a fresh launch to reload under the new.
+            self.flutter.stop()
         seed(self.backend.url)
         self.verify_smtp_delivery()
         # Adopt a healthy app from a previous run (FMTK_E2E_KEEP_APP=1
