@@ -2705,7 +2705,8 @@ trusted`. Existing workspaces pick this up when they are next recreated
   upgrading the host image also upgrades the images new workspaces run —
   a tag left in the persistent podman store by an older klangk version no
   longer keeps serving the old workspace image. Workspaces that were
-  already running keep their image until restarted.
+  already running keep their image until restarted, and the images an
+  upgrade displaces are garbage-collected on the next start.
 
 - **Drag-and-drop file upload works under the served CSP.** Every
   drag-and-drop upload failed silently on deployments serving the

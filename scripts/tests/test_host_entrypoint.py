@@ -4,9 +4,9 @@ The host entrypoint loads the embedded workspace and network-sidecar image
 tars into the nested podman store. The load is **unconditional**: the store
 is a persistent bind mount, so a load guarded by ``podman image exists``
 keeps the tag an earlier klangk version left behind, and every new workspace
-runs that old workspace image after a host upgrade. These tests run the real
-entrypoint against a stub ``podman`` and assert both loads happen on every
-start — including a restart where the images already exist.
+runs that old workspace image after a host upgrade. A failed load is loud but
+non-fatal: the host still boots on the previously loaded tag. These tests run
+the real entrypoint against a stub ``podman`` and pin both behaviors.
 """
 
 import os
@@ -17,8 +17,7 @@ import pytest
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 ENTRYPOINT = os.path.join(REPO_ROOT, "src", "containers", "host", "entrypoint.sh")
-WORKSPACE_LOAD = "load -i {home}/workspace.tar"
-SIDECAR_LOAD = "load -i {home}/network-sidecar.tar"
+PRUNE_LINE = "image prune -f"
 
 
 def write_executable(path, body):
@@ -32,24 +31,24 @@ def host(tmp_path, monkeypatch):
 
     The stub podman records every invocation to a log file and answers
     success for anything — including ``image exists`` — so the entrypoint's
-    load decision depends only on the entrypoint itself.
+    load decision depends only on the entrypoint itself. Creating the
+    ``fail-load`` marker makes the stub fail every ``load`` invocation.
     """
     home = tmp_path / "home"
     (home / "etc").mkdir(parents=True)
-    (home / "etc" / "klangkd.yaml").write_text(
-        "image_name: klangk-workspace\nnetwork_sidecar_image: klangk-network-sidecar\n"
-    )
     (home / "etc" / "supervisord.conf").write_text("# stub\n")
     (home / "workspace.tar").write_bytes(b"not-a-real-tar")
     (home / "network-sidecar.tar").write_bytes(b"not-a-real-tar")
     stub_bin = tmp_path / "bin"
     stub_bin.mkdir()
-    podman_log = tmp_path / "podman.log"
     write_executable(
         stub_bin / "podman",
         f"""\
         #!/bin/sh
-        printf '%s\\n' "$*" >> "{podman_log}"
+        printf '%s\\n' "$*" >> "{tmp_path / "podman.log"}"
+        if [ -f "{tmp_path / "fail-load"}" ] && [ "$1" = "load" ]; then
+          exit 1
+        fi
         exit 0
         """,
     )
@@ -65,7 +64,11 @@ def host(tmp_path, monkeypatch):
 
 
 def run_entrypoint(home):
-    """Run the real entrypoint with HOME pointed at the fake home."""
+    """Run the real entrypoint with HOME pointed at the fake home.
+
+    The entrypoint must exit 0 in every scenario tested here — including a
+    failing `podman load`, which is loud but non-fatal.
+    """
     env = dict(os.environ, HOME=str(home))
     proc = subprocess.run(
         ["bash", ENTRYPOINT, "start"],
@@ -75,6 +78,7 @@ def run_entrypoint(home):
         timeout=30,
     )
     assert proc.returncode == 0, proc.stderr
+    return proc
 
 
 def podman_log_lines(home):
@@ -82,11 +86,20 @@ def podman_log_lines(home):
     return log.read_text().splitlines() if log.exists() else []
 
 
+def workspace_load(home):
+    return f"load -i {home}/workspace.tar"
+
+
+def sidecar_load(home):
+    return f"load -i {home}/network-sidecar.tar"
+
+
 def test_bundled_images_load_on_first_start(host):
     run_entrypoint(host)
     lines = podman_log_lines(host)
-    assert WORKSPACE_LOAD.format(home=host) in lines
-    assert SIDECAR_LOAD.format(home=host) in lines
+    assert workspace_load(host) in lines
+    assert sidecar_load(host) in lines
+    assert PRUNE_LINE in lines
 
 
 def test_bundled_images_reload_on_restart(host):
@@ -95,14 +108,34 @@ def test_bundled_images_reload_on_restart(host):
     run_entrypoint(host)
     run_entrypoint(host)
     lines = podman_log_lines(host)
-    assert lines.count(WORKSPACE_LOAD.format(home=host)) == 2
-    assert lines.count(SIDECAR_LOAD.format(home=host)) == 2
+    assert lines.count(workspace_load(host)) == 2
+    assert lines.count(sidecar_load(host)) == 2
+    assert lines.count(PRUNE_LINE) == 2
 
 
 def test_missing_tars_load_nothing(host):
-    """A host image built without embedded tars starts cleanly and loads
-    nothing (dev builds, ``build-host-image.sh`` partial flows)."""
+    """A host image built without embedded tars starts cleanly, loads
+    nothing, and still runs the (best-effort) prune."""
     (host / "workspace.tar").unlink()
     (host / "network-sidecar.tar").unlink()
     run_entrypoint(host)
-    assert podman_log_lines(host) == []
+    assert podman_log_lines(host) == [PRUNE_LINE]
+
+
+def test_missing_sidecar_tar_loads_workspace_only(host):
+    (host / "network-sidecar.tar").unlink()
+    run_entrypoint(host)
+    lines = podman_log_lines(host)
+    assert workspace_load(host) in lines
+    assert sidecar_load(host) not in lines
+
+
+def test_load_failure_is_not_fatal(host):
+    """A failing `podman load` (disk full, store locked, corrupt tar) logs a
+    warning and the host still boots on the previously loaded images."""
+    (host.parent / "fail-load").write_text("")
+    proc = run_entrypoint(host)
+    assert proc.stderr.count("Warning: podman load") == 2
+    lines = podman_log_lines(host)
+    assert lines.count(workspace_load(host)) == 1
+    assert lines.count(sidecar_load(host)) == 1
