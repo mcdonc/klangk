@@ -216,7 +216,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
           );
         });
         if (name != null) setPageTitle(_workspaceName);
-        _maybeInitConsent(auth.token);
+        _maybeInitConsent(auth);
       }
     } catch (e) {
       debugPrint('[WorkspacePage] fetch workspace name failed: $e');
@@ -261,9 +261,12 @@ class _WorkspacePageState extends State<WorkspacePage> {
   }
 
   /// Create + connect the consent-decider service when the consent
-  /// surface is allowed (see [consentSurfaceAllowed]).
-  void _maybeInitConsent(String? token) {
-    if (token == null) return;
+  /// surface is allowed (see [consentSurfaceAllowed]). The service reads
+  /// the token live at each reconnect via [ConsentDeciderService.tokenProvider]
+  /// (#3504: a refresh blocklists the old jti, and a reconnect presenting
+  /// it would be rejected as revoked).
+  void _maybeInitConsent(AuthService auth) {
+    if (auth.token == null) return;
     if (!consentSurfaceAllowed(
       egressMode: _egressMode,
       permissions: _workspacePermissions,
@@ -272,7 +275,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
     }
     _consent ??= ConsentDeciderService(
       workspaceId: widget.workspaceId,
-      token: token,
+      tokenProvider: () => auth.token,
     )..connect();
   }
 

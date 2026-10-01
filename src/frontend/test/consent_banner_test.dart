@@ -58,7 +58,7 @@ ConsentDeciderService _serviceWithChannel(_FakeChannel channel) {
   ConsentDeciderService.testChannelFactory = (_, __) => channel;
   return ConsentDeciderService(
     workspaceId: 'ws',
-    token: 't',
+    tokenProvider: () => 't',
     // Fixed clock so the countdown is deterministic.
     clock: () => DateTime.fromMillisecondsSinceEpoch(2000 * 1000, isUtc: true),
   );
@@ -393,7 +393,7 @@ void main() {
     ConsentDeciderService.testChannelFactory = (_, __) => channel;
     final svc = ConsentDeciderService(
       workspaceId: 'ws',
-      token: 't',
+      tokenProvider: () => 't',
       // Long delay so the reconnect Timer never fires during the test
       // (dispose cancels it regardless).
       reconnectDelays: const [Duration(minutes: 5)],
@@ -427,7 +427,7 @@ void main() {
     ConsentDeciderService.testChannelFactory = (_, __) => _RefusedChannel();
     final svc = ConsentDeciderService(
       workspaceId: 'ws',
-      token: 't',
+      tokenProvider: () => 't',
       reconnectDelays: const [Duration(minutes: 5)],
       clock: () =>
           DateTime.fromMillisecondsSinceEpoch(2000 * 1000, isUtc: true),

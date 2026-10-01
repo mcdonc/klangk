@@ -2717,6 +2717,12 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   after the periodic token refresh. Previously the tab kept the token
   from page load and failed once it rotated, with "Cannot list this
   directory: Token has been revoked" and then "Invalid token".
+- **The consent banner reconnects with the session's current token.**
+  The consent decider's WebSocket now reads the access token at each
+  reconnect instead of using the token from page load, so a connection
+  drop after a token refresh reconnects normally. Previously the
+  reconnect presented the revoked token and the app demanded a
+  re-login (#3504).
 - **`git` inside workspaces trusts the deployer CA bundle (#3495).** The
   runtime CA-trust injection (#1181) now also exports `GIT_SSL_CAINFO`
   pointing at the merged bundle (system CAs plus

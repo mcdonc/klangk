@@ -59,6 +59,7 @@ void main() {
   });
 
   tearDown(() {
+    testBaseUrlOverride = null;
     testHttpClientOverride = null;
     testAuthHttpClientOverride = null;
   });
@@ -72,6 +73,7 @@ void main() {
     });
 
     final auth = AuthService();
+    addTearDown(auth.dispose);
     await tester.runAsync(() => Future<void>.delayed(Duration.zero));
     expect(auth.token, oldToken);
 
@@ -106,7 +108,5 @@ void main() {
     panelKey.currentState!.refresh();
     await tester.pumpAndSettle();
     expect(listingAuth.last, 'Bearer $newToken');
-
-    auth.dispose();
   });
 }
