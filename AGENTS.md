@@ -468,7 +468,9 @@ devenv --quiet shell -- fmtk-up
 It boots a scratch klangkd (127.0.0.1:8998, own state under
 `.devenv/state/fmtk`, admin@example.com/admin123abc), an origin-splitting
 caddy on 127.0.0.1:8124 (`/api/*` + `/ws` to the backend, everything else
-to the flutter dev server on 8125), the fixture, and
+to the flutter dev server on 8125 — the app is served under the
+production-rendered CSP from `scripts/fmtk_csp.py`, plus the three
+dev-only relaxations that script documents), the fixture, and
 `flutter run --debug -d chrome` — then prints the VM-service `ws://` URI
 and a ready-to-paste fmtk prefix. Run devenv from the repo **root**
 (src/frontend has its own devenv.lock without flutter, so `devenv shell`
