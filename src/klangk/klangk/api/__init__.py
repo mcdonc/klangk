@@ -29,7 +29,6 @@ the shared logic modules referenced as ``api.emailsvc`` / ``api.oidc`` /
 rate-limit globals (``api.resend_timestamps`` and friends).
 """
 
-import json
 import logging
 import os
 
@@ -45,6 +44,7 @@ from .. import (
 )
 from ..resource_watchdog import audit_failure_counts
 from ..settings import parse_bool_setting
+from ..version import version_info
 from .common import ALL_PERMISSIONS, autostart_allowed, get_app_dep
 
 # Imported under an alias: the ``from . import auth as _auth_routes`` line
@@ -153,25 +153,14 @@ async def empty():
 async def version(app=Depends(get_app_dep)):
     """Return build version info, plus loaded feature metadata.
 
-    An unreadable or wrong-shaped version file falls through to the
-    dev block (the same tolerance the ``app.start`` audit row's
-    version field applies, #3329) instead of 500ing.
+    The version resolves through the ``version_file`` setting, the
+    wheel-packaged copy, then the dev block (#3517) — every source is
+    read with the #3329 tolerance (absent, unreadable, or wrong-shaped
+    input falls through) instead of 500ing.
     """
-    if version_file := app.state.settings.version_file:
-        try:
-            with open(version_file) as f:
-                info = json.load(f)
-        except OSError, ValueError:
-            info = None
-        if isinstance(info, dict):
-            info["features"] = app.state.features.feature_list()
-            return info
-    return {
-        "version": "dev",
-        "commit": "unknown",
-        "built_at": None,
-        "features": app.state.features.feature_list(),
-    }
+    info = version_info(app.state.settings)
+    info["features"] = app.state.features.feature_list()
+    return info
 
 
 # --- Test/debug endpoints (only when KLANGKD_TEST_MODE is set) ---

@@ -31,7 +31,9 @@ llm-models:
 # --- Structural settings ---
 # The container mount below replaces the config file baked into the
 # image, so keep these values: they point klangkd at the image's data
-# volume, the embedded workspace image, and its version file.
+# volume and the embedded workspace image. version_file may be kept or
+# dropped — when it is absent, klangkd reads the copy of the build's
+# version.json packaged inside the installed klangk wheel (#3517).
 port: 8997
 listen: 0.0.0.0
 egress_port: 8995

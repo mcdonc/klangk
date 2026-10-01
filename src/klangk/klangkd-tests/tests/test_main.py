@@ -1463,6 +1463,19 @@ class TestAppLifecycleAudit:
             == "dev"
         )
 
+    def test_app_version_blank_string_reports_dev(self, tmp_path, monkeypatch):
+        # A version file that parses but carries an empty/missing
+        # version string reports dev, not "" (#3517).
+        from klangk import version as version_mod
+
+        monkeypatch.setattr(version_mod, "packaged_version", lambda: None)
+        path = tmp_path / "version.json"
+        path.write_text('{"version": "", "commit": "abc"}')
+        assert (
+            _app_version(types.SimpleNamespace(version_file=str(path)))
+            == "dev"
+        )
+
 
 class TestBroadcastContainerStatus:
     """The registry status callback schedules the scoped broadcast (#1714).

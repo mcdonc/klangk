@@ -12,6 +12,16 @@ in an installed wheel:
   -> ``klangk/nix-seed/Dockerfile`` (#2225). A committed source file, always
   present, so it is always included -- it lets ``klangk-build-nix-seed`` build
   a seed from a wheel install (no source tree, no devenv).
+- **the build version file** (``<repo>/scripts/generate-version.sh`` output)
+  -> ``klangk/version.json`` (#3517). Generated at build time from git state
+  — the same script that seeds the devenv's version file and the host
+  image's ``/home/klangk/version.json`` — so an installed wheel always
+  carries its build identity even when the runtime's ``version_file``
+  setting is unset (a deployed host whose operator ``klangkd.yaml`` mounts
+  over the image's config and omits the key). Included when the script is
+  present and succeeds; a wheel built from an sdist extraction (no repo,
+  no scripts/) proceeds without it and the runtime falls back to the dev
+  block.
 
 For the **sdist** target the hook force-includes the repo-root ``README.md``
 as a real file at ``README.md`` — the fallback source the metadata hook
@@ -26,6 +36,9 @@ above the project root. This hook force-includes via absolute paths in
 
 from __future__ import annotations
 
+import os
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +46,30 @@ from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
 _FRONTEND_DEST = "klangk/frontend"
 _NIX_SEED_DEST = "klangk/nix-seed"
+_VERSION_DEST = "klangk/version.json"
+
+
+def materialized_version_file(repo: Path) -> Path | None:
+    """A temp file holding ``generate-version.sh`` output, or ``None``.
+
+    Lenient on purpose (#3517): a missing script (sdist extraction — no
+    repo, no scripts/) or a failing script yields ``None`` and the
+    wheel ships without the packaged copy; the runtime chain then
+    falls back to the dev block, mirroring how editable builds proceed
+    without the gitignored frontend artifact.
+    """
+    script = repo / "scripts" / "generate-version.sh"
+    if not script.is_file():
+        return None
+    result = subprocess.run(
+        ["bash", str(script)], capture_output=True, text=True
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    fd, name = tempfile.mkstemp(prefix="klangk-version-", suffix=".json")
+    with os.fdopen(fd, "w") as f:
+        f.write(result.stdout)
+    return Path(name)
 
 
 class PackageDataHook(BuildHookInterface):
@@ -65,6 +102,15 @@ class PackageDataHook(BuildHookInterface):
         nix_seed_df = repo / "src" / "containers" / "nix-seed" / "Dockerfile"
         if nix_seed_df.is_file():
             force[str(nix_seed_df)] = f"{_NIX_SEED_DEST}/Dockerfile"
+
+        # --- Build version file: generated from git state (#3517). ---
+        # Skipped for editable builds — the copy would freeze at install
+        # time and go stale as the checkout moves (the devenv seeds a
+        # live version file through KLANGKD_VERSION_FILE instead).
+        if version != "editable":
+            version_src = materialized_version_file(repo)
+            if version_src is not None:
+                force[str(version_src)] = _VERSION_DEST
 
         # --- Flutter web build: gitignored, conditional + required for wheel.---
         frontend_src = repo / "src" / "frontend" / "build" / "web"

@@ -96,3 +96,76 @@ def test_metadata_hook_sources() -> None:
         "the metadata hook's fallback can find it (#3349)"
     )
     assert (_ROOT / "README.md").is_file(), "repo-root README.md is missing"
+
+
+def _hook_module():
+    """Load hatch_build_package_data.py standalone for behavior tests.
+
+    hatchling itself is not a devenv dependency (uv resolves it into
+    isolated build environments), so its BuildHookInterface import is
+    stubbed — the functions under test never touch the interface.
+    """
+    import importlib.util
+    import sys
+    import types
+
+    stub_pkg = types.ModuleType("hatchling")
+    stub_builders = types.ModuleType("hatchling.builders")
+    stub_hooks = types.ModuleType("hatchling.builders.hooks")
+    stub_plugin = types.ModuleType("hatchling.builders.hooks.plugin")
+    stub_iface = types.ModuleType("hatchling.builders.hooks.plugin.interface")
+    stub_iface.BuildHookInterface = type("BuildHookInterface", (), {})
+    stub_pkg.builders = stub_builders
+    stub_builders.hooks = stub_hooks
+    stub_hooks.plugin = stub_plugin
+    stub_plugin.interface = stub_iface
+    sys.modules.setdefault("hatchling", stub_pkg)
+    sys.modules.setdefault(stub_builders.__name__, stub_builders)
+    sys.modules.setdefault(stub_hooks.__name__, stub_hooks)
+    sys.modules.setdefault(stub_plugin.__name__, stub_plugin)
+    sys.modules.setdefault(stub_iface.__name__, stub_iface)
+
+    spec = importlib.util.spec_from_file_location(
+        "hatch_build_package_data",
+        _KLANGK_DIR / "hatch_build_package_data.py",
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _stub_version_script(tmp_path, body: str) -> None:
+    scripts = tmp_path / "scripts"
+    scripts.mkdir(exist_ok=True)
+    (scripts / "generate-version.sh").write_text(body)
+
+
+def test_hook_materializes_version_from_git(tmp_path) -> None:
+    """The wheel's packaged version.json comes from generate-version.sh
+    output (#3517) — the same single definition the devenv seed and the
+    host image's baked /home/klangk/version.json use."""
+    import json
+
+    mod = _hook_module()
+    _stub_version_script(
+        tmp_path,
+        '#!/usr/bin/env bash\nprintf \'%s\' \'{"version":"9.9.9","commit":"abc"}\'\n',
+    )
+    path = mod.materialized_version_file(tmp_path)
+    assert path is not None and path.is_file()
+    assert json.loads(path.read_text())["version"] == "9.9.9"
+
+
+def test_hook_skips_version_generation_when_script_absent(tmp_path) -> None:
+    """A wheel built from an sdist extraction has no repo, no scripts/ —
+    the hook yields None and the runtime falls back to the dev block
+    (#3517)."""
+    assert _hook_module().materialized_version_file(tmp_path) is None
+
+
+def test_hook_skips_version_generation_when_script_fails(tmp_path) -> None:
+    """A failing generate-version.sh yields None (lenient, #3517) — the
+    build proceeds without the packaged copy."""
+    mod = _hook_module()
+    _stub_version_script(tmp_path, "#!/usr/bin/env bash\nexit 1\n")
+    assert mod.materialized_version_file(tmp_path) is None

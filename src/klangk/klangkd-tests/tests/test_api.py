@@ -602,6 +602,32 @@ class TestVersion:
         assert resp.status_code == 200
         assert resp.json()["version"] == "dev"
 
+    async def test_version_serves_packaged_copy_when_setting_unset(
+        self, client, app, monkeypatch
+    ):
+        # #3517: a deployed host whose operator klangkd.yaml mounts over
+        # the image's config and omits version_file still reports the
+        # build baked into the wheel, not the dev block.
+        from klangk import version as version_mod
+
+        monkeypatch.setattr(app.state.settings, "version_file", None)
+        monkeypatch.setattr(
+            version_mod,
+            "packaged_version",
+            lambda: {
+                "version": "1.2.3",
+                "commit": "abc1234",
+                "built_at": "2026-01-01T00:00:00Z",
+            },
+        )
+        resp = await client.get("/api/v1/version")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["version"] == "1.2.3"
+        assert data["commit"] == "abc1234"
+        assert data["built_at"] == "2026-01-01T00:00:00Z"
+        assert "features" in data
+
     async def test_version_includes_features(
         self, client, app, tmp_path, monkeypatch
     ):
