@@ -2691,6 +2691,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Drag-and-drop file upload works under the served CSP.** Every
+  drag-and-drop upload failed silently on deployments serving the
+  browser Content-Security-Policy: the upload reads each dropped file
+  through a `blob:` object URL, and `connect-src 'self'` blocks `blob:`
+  fetches. The policy now admits `blob:` in `connect-src` — no remote
+  fetch surface is added, since only URLs the same-origin page itself
+  created are fetchable that way. Picked up on the next proxy config
+  render (a klangkd restart or SIGHUP).
 - **Soliplex bridged queries survive silent phases and always terminate
   (#3485).** `soliplex_query` / `soliplex_reply` streaming calls now emit
   an initial keepalive plus a periodic empty chunk every 20s, so a slow
