@@ -196,7 +196,7 @@ export async function waitForFlutter(page: Page) {
 
 /** Dismiss the "Enable accessibility" button if visible. Flutter shows this
  *  overlay on each route load and it can cover the canvas / terminal. */
-async function dismissAccessibility(page: Page) {
+export async function dismissAccessibility(page: Page) {
   const btn = page.locator("button", { hasText: "Enable accessibility" });
   if (await btn.isVisible({ timeout: 500 }).catch(() => false)) {
     await btn.click();

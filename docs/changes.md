@@ -2699,6 +2699,15 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   fetch surface is added, since only URLs the same-origin page itself
   created are fetchable that way. Picked up on the next proxy config
   render (a klangkd restart or SIGHUP).
+
+- **Copy buttons work on plain-HTTP deployments (#3491).** The copy
+  buttons next to mounts, environment variables, allowed domains
+  (workspace create dialog and settings panel), and the git-credential
+  feature's device code now fall back to `document.execCommand('copy')`
+  when the async Clipboard API is unavailable, so copying no longer
+  silently does nothing on browsers connected over plain HTTP. The audit
+  also confirmed the served CSP governs none of the clipboard facilities;
+  a new e2e check drives cut/copy/paste under the production policy.
 - **Soliplex bridged queries survive silent phases and always terminate
   (#3485).** `soliplex_query` / `soliplex_reply` streaming calls now emit
   an initial keepalive plus a periodic empty chunk every 20s, so a slow
