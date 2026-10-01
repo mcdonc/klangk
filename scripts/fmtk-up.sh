@@ -146,10 +146,7 @@ FLUTTER_BIN="$(readlink -f "$(command -v flutter)")" || die "flutter not found"
 CANVASKIT_ROOT="$(dirname "$(dirname "$FLUTTER_BIN")")/bin/cache/flutter_web_sdk"
 [ -d "$CANVASKIT_ROOT" ] || die "flutter web sdk not found at $CANVASKIT_ROOT"
 POLICY="$("$VENV_PYTHON" "$REPO_ROOT/scripts/fmtk_csp.py")" || die "csp render failed"
-if curl -sf -o /dev/null "http://127.0.0.1:$PROXY_PORT/api/v1/config" &&
-  pgrep -f "caddy run --config $STATE_DIR/proxy.Caddyfile" >/dev/null 2>&1; then
-  log "reusing caddy proxy on :$PROXY_PORT (reloading the current CSP)"
-  cat >"$STATE_DIR/proxy.Caddyfile" <<EOF
+cat >"$STATE_DIR/proxy.Caddyfile" <<EOF
 http://:$PROXY_PORT {
 	bind 127.0.0.1
 	header Content-Security-Policy "$POLICY"
@@ -171,34 +168,15 @@ http://:$PROXY_PORT {
 	}
 }
 EOF
+if curl -sf -o /dev/null "http://127.0.0.1:$PROXY_PORT/api/v1/config" &&
+  pgrep -f "caddy run --config $STATE_DIR/proxy.Caddyfile" >/dev/null 2>&1; then
+  log "reusing caddy proxy on :$PROXY_PORT (reloading the current CSP)"
   caddy reload --config "$STATE_DIR/proxy.Caddyfile" --adapter caddyfile \
     >>"$STATE_DIR/caddy.log" 2>&1 || die "caddy reload failed"
 else
   if ss -tln "sport = :$PROXY_PORT" | grep -q LISTEN; then
     die "port $PROXY_PORT is in use by something else — run fmtk-down, or override FMTK_PROXY_PORT"
   fi
-  cat >"$STATE_DIR/proxy.Caddyfile" <<EOF
-http://:$PROXY_PORT {
-	bind 127.0.0.1
-	header Content-Security-Policy "$POLICY"
-	handle /api/* {
-		reverse_proxy 127.0.0.1:$BACKEND_PORT
-	}
-	handle /ws {
-		reverse_proxy 127.0.0.1:$BACKEND_PORT
-	}
-	handle /ws/* {
-		reverse_proxy 127.0.0.1:$BACKEND_PORT
-	}
-	handle /canvaskit/* {
-		root * $CANVASKIT_ROOT
-		file_server
-	}
-	handle {
-		reverse_proxy 127.0.0.1:$FLUTTER_PORT
-	}
-}
-EOF
   log "starting caddy proxy on :$PROXY_PORT (api+ws -> :$BACKEND_PORT, rest -> :$FLUTTER_PORT, app served under the CSP)"
   setsid caddy run --config "$STATE_DIR/proxy.Caddyfile" --adapter caddyfile \
     >"$STATE_DIR/caddy.log" 2>&1 &

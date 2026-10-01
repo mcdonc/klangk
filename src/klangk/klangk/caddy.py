@@ -347,8 +347,8 @@ def csp_policy(
     scheme-source below. ``connect-src`` also admits ``blob:``: the
     drag-and-drop upload reads each dropped file from a blob: object URL
     the same-origin page itself created (see the ``connect_src`` comment
-    for the full chain), so the scheme-source adds no remote fetch
-    surface — a blob: URL cannot name a third-party host.
+    for the full chain), and the origin-keyed blob URL store means no
+    third-party URL is fetchable through the scheme-source.
 
     Same-origin ``ws:``/``wss:`` upgrades of the page origin are covered by
     ``'self'`` (CSP3), so the workspace WebSocket needs no bare scheme-source
@@ -411,11 +411,13 @@ def csp_policy(
     # De-duplicated, order-preserving: a feature can declare the same
     # origin as another (or 'self' resolves to nothing here), and CSP
     # tolerates repeats but the policy reads cleaner without them.
-    # ``blob:`` is first-party by construction: a blob: URL only exists
-    # because same-origin script created it, and the drag-and-drop upload
-    # path reads each dropped file from exactly such a URL (desktop_drop
-    # hands the app a blob: object URL; DropItem.readAsBytes fetches it),
-    # so ``connect-src 'self'`` alone silently killed every upload.
+    # ``blob:`` adds no remote fetch surface: the blob URL store is
+    # origin-keyed, so only URLs the same-origin page itself created are
+    # fetchable (a constructed ``blob:https://other/...`` string never
+    # resolves). The drag-and-drop upload path reads each dropped file
+    # from exactly such a URL (desktop_drop hands the app a blob: object
+    # URL; DropItem.readAsBytes fetches it), so ``connect-src 'self'``
+    # alone silently killed every upload.
     connect_src = "connect-src 'self' blob:" + "".join(
         f" {o}" for o in dict.fromkeys(connect_extra)
     )

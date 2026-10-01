@@ -152,8 +152,8 @@ def flutter_web_sdk() -> Path:
     """The flutter SDK's flutter_web_sdk dir (canvaskit lives under it).
 
     Resolved through the resolved flutter binary — the devenv wrapper
-    is a symlink chain into the store, so parents[2] of the real path
-    is the SDK root.
+    resolves to a store path whose bin/.. is the SDK root (parents[1]
+    of the binary).
     """
     flutter_bin = Path(os.path.realpath(shutil.which("flutter") or ""))
     sdk_root = flutter_bin.parents[1]
@@ -1327,6 +1327,10 @@ class Proxy:
             # the header (and the policy question) is still readable off
             # the error response.
             return err.headers.get("Content-Security-Policy")
+        except (urllib.error.URLError, OSError):
+            # A hung proxy: treat the served policy as unknown so the
+            # caller re-renders/reloads rather than crashing boot.
+            return None
 
     @property
     def pattern(self) -> str:
@@ -1398,6 +1402,9 @@ class Proxy:
             start_new_session=True,
         )
         wait_http(f"http://127.0.0.1:{PROXY_PORT}/api/v1/config", "caddy proxy", 30)
+        # A fresh start is a policy change (from nothing): an adopted
+        # app page may still be running under an absent/old policy.
+        return True
 
 
 def seed(url: str) -> None:

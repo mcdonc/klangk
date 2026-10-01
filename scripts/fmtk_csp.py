@@ -59,12 +59,26 @@ def fmtk_csp() -> str:
             "<!-- fmtk: hash-free staging for the dev-server policy -->\n"
         )
         policy = csp_policy(staging)
-    policy = policy.replace(
-        "script-src 'self' 'wasm-unsafe-eval'",
-        "script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline'",
-        1,
-    )
-    return policy.replace("; require-trusted-types-for 'script'", "", 1)
+    for old, new in [
+        (
+            "script-src 'self' 'wasm-unsafe-eval'",
+            "script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline'",
+        ),
+        (
+            "; require-trusted-types-for 'script'",
+            "",
+        ),
+    ]:
+        relaxed = policy.replace(old, new, 1)
+        if relaxed == policy:
+            raise RuntimeError(
+                f"production CSP drifted — relaxation {old!r} no longer "
+                "matches csp_policy() output; update this script to "
+                "match (a no-op replace would break the dev run with "
+                "an opaque boot failure)"
+            )
+        policy = relaxed
+    return policy
 
 
 if __name__ == "__main__":
