@@ -78,6 +78,26 @@ void main() {
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
     });
 
+    testWidgets('hands the loaded page to the preview', (tester) async {
+      String? shown;
+      final file = htmlFile(readText: () async => '<p>hello</p>');
+      await pump(
+        tester,
+        Builder(
+          builder: (context) => HtmlRenderer(
+            previewSupported: true,
+            previewBuilder: (html) {
+              shown = html;
+              return const Text('preview');
+            },
+          ).build(context, file),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(shown, '<p>hello</p>');
+      expect(find.text('preview'), findsOneWidget);
+    });
+
     testWidgets('reports a file that fails to load', (tester) async {
       final file = htmlFile(readText: () async => throw Exception('boom'));
       await pump(

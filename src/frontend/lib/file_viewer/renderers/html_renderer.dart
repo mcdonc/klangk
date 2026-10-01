@@ -11,10 +11,16 @@ import 'code_renderer.dart';
 /// render, while scripts, form submission and navigation stay off. Native
 /// builds show the highlighted source through [CodeRenderer].
 class HtmlRenderer extends FileRenderer {
-  HtmlRenderer({this.previewSupported = htmlPreviewSupported});
+  HtmlRenderer({
+    this.previewSupported = htmlPreviewSupported,
+    this.previewBuilder = buildHtmlPreview,
+  });
 
   /// Whether this platform can display the page; defaults per platform.
   final bool previewSupported;
+
+  /// Builds the widget that displays the loaded page.
+  final Widget Function(String html) previewBuilder;
 
   @override
   String get id => 'html';
@@ -35,14 +41,15 @@ class HtmlRenderer extends FileRenderer {
 
   @override
   Widget build(BuildContext context, RenderableFile file) => previewSupported
-      ? _HtmlView(file: file)
+      ? _HtmlView(file: file, previewBuilder: previewBuilder)
       : CodeRenderer().build(context, file);
 }
 
 class _HtmlView extends StatefulWidget {
-  const _HtmlView({required this.file});
+  const _HtmlView({required this.file, required this.previewBuilder});
 
   final RenderableFile file;
+  final Widget Function(String html) previewBuilder;
 
   @override
   State<_HtmlView> createState() => _HtmlViewState();
@@ -65,7 +72,7 @@ class _HtmlViewState extends State<_HtmlView> {
             child: SelectableText('Failed to load file: ${snapshot.error}'),
           );
         }
-        return buildHtmlPreview(snapshot.data ?? '');
+        return widget.previewBuilder(snapshot.data ?? '');
       },
     );
   }
