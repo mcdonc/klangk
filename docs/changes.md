@@ -33,6 +33,20 @@ operators or integrators to act when upgrading.
 
 ## \[Unreleased]
 
+### Changed
+
+- **Workspace Pi agent updated to 0.99.2 (#3511).** Workspaces now
+  bundle Pi coding agent 0.99.2 (previously 0.83.0), bringing 16 minor
+  versions of upstream agent fixes and features to workspace terminals.
+  The tarball stays sha512-pinned and verified at image build, so the
+  upgrade changes no supply-chain posture.
+
+- **Workspace pinned tooling updated: uv 0.12.21 and process-compose
+  1.122.0 (#3512).** uv moves from 0.11.23 to 0.12.21 (compatible with the
+  image's Python 3.13) and the process-compose supervisor moves from
+  1.120.0 to 1.122.0. Both tarballs stay per-architecture sha256-verified at
+  image build.
+
 ## \[v2.0a8] - 2026-10-01
 
 ### Fixed
