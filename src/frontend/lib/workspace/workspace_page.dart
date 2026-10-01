@@ -24,6 +24,7 @@ import '../terminal/ghostty_terminal.dart';
 import '../terminal/terminal_link.dart';
 import 'workspace_file_api.dart';
 import 'restart_flow.dart';
+import 'live_auth_token.dart';
 import 'workspace_overlays.dart';
 import 'consent_banner.dart';
 import 'marking_banner.dart';
@@ -215,7 +216,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
           );
         });
         if (name != null) setPageTitle(_workspaceName);
-        _maybeInitConsent(auth.token);
+        _maybeInitConsent(auth);
       }
     } catch (e) {
       debugPrint('[WorkspacePage] fetch workspace name failed: $e');
@@ -260,9 +261,12 @@ class _WorkspacePageState extends State<WorkspacePage> {
   }
 
   /// Create + connect the consent-decider service when the consent
-  /// surface is allowed (see [consentSurfaceAllowed]).
-  void _maybeInitConsent(String? token) {
-    if (token == null) return;
+  /// surface is allowed (see [consentSurfaceAllowed]). The service reads
+  /// the token live at each reconnect via [ConsentDeciderService.tokenProvider]
+  /// (#3504: a refresh blocklists the old jti, and a reconnect presenting
+  /// it would be rejected as revoked).
+  void _maybeInitConsent(AuthService auth) {
+    if (auth.token == null) return;
     if (!consentSurfaceAllowed(
       egressMode: _egressMode,
       permissions: _workspacePermissions,
@@ -271,7 +275,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
     }
     _consent ??= ConsentDeciderService(
       workspaceId: widget.workspaceId,
-      token: token,
+      tokenProvider: () => auth.token,
     )..connect();
   }
 
@@ -625,7 +629,6 @@ class _WorkspacePageState extends State<WorkspacePage> {
     if (_connecting) return _withMarking(_buildConnectingView());
 
     final wsClient = context.read<WsClient>();
-    final authToken = context.read<AuthService>().token;
 
     // #2768: the classification banner wraps the whole page (top + bottom)
     // — above the AppBar and outside the body, so it can never be
@@ -655,7 +658,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
                 Expanded(
                   child: Stack(
                     children: [
-                      _buildIdeLayout(wsClient, authToken),
+                      _buildIdeLayout(wsClient),
                       for (final feature in _features)
                         if (feature.buildOverlay(context) != null)
                           feature.buildOverlay(context)!,
@@ -741,21 +744,23 @@ class _WorkspacePageState extends State<WorkspacePage> {
     );
   }
 
-  Widget _buildIdeLayout(WsClient wsClient, String? authToken) {
+  Widget _buildIdeLayout(WsClient wsClient) {
     return IdeLayout(
       // #2886: no `files` permission → no Files tab at all (spectators,
       // terminal-only shares) — same my-permissions gate as Sharing/Network,
       // so the panel never fetches a listing the backend will 403.
       fileViewer: _hasPerm('files-view')
-          ? FileViewerPanel(
-              key: _fileViewerKey,
-              wsClient: wsClient,
-              workspaceId: widget.workspaceId,
-              authToken: authToken,
-              userHome: wsClient.userHome,
-              registry: _fileRenderers,
-              canDownload: _hasPerm('files-download'),
-              canWrite: _hasPerm('files-write'),
+          ? LiveAuthToken(
+              builder: (context, authToken) => FileViewerPanel(
+                key: _fileViewerKey,
+                wsClient: wsClient,
+                workspaceId: widget.workspaceId,
+                authToken: authToken,
+                userHome: wsClient.userHome,
+                registry: _fileRenderers,
+                canDownload: _hasPerm('files-download'),
+                canWrite: _hasPerm('files-write'),
+              ),
             )
           : null,
       featureTabs: _featureTabs,

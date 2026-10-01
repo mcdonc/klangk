@@ -419,7 +419,7 @@ void _sortRulesStable(List<ConsentRule> rules) {
 class ConsentDeciderService extends ChangeNotifier {
   ConsentDeciderService({
     required this.workspaceId,
-    required this.token,
+    required this.tokenProvider,
     this.holdTimeout = const Duration(seconds: 120),
     this.pingInterval = const Duration(seconds: 15),
     this.reconnectDelays = const [
@@ -431,7 +431,14 @@ class ConsentDeciderService extends ChangeNotifier {
   });
 
   final String workspaceId;
-  String token;
+
+  /// Supplies the session's current access token, read at each connect and
+  /// reconnect: a refresh rotates the token and blocklists the old jti, so
+  /// a reconnect presenting the construction-time token is rejected as
+  /// revoked (4001 → surfaced re-login). Mirrors [WsClient._connectWs],
+  /// which reads the live token at every open. Null means the session is
+  /// gone (logged out).
+  final String? Function() tokenProvider;
   final Duration holdTimeout;
   final Duration pingInterval;
   final List<Duration> reconnectDelays;
@@ -538,7 +545,7 @@ class ConsentDeciderService extends ChangeNotifier {
     final wsScheme = loc.scheme == 'https' ? 'wss' : 'ws';
     final base =
         '$wsScheme://${loc.host}:${loc.port}$baseUrl/ws/consent-decider';
-    final headers = await dpopHeadersFor('GET', base, token);
+    final headers = await dpopHeadersFor('GET', base, tokenProvider());
     final proof = headers['DPoP'];
     final suffix = proof == null ? '' : '&dpop=$proof';
     return '$base?workspace=$workspaceId$suffix';
@@ -566,6 +573,17 @@ class ConsentDeciderService extends ChangeNotifier {
   }
 
   Future<void> _openChannel() async {
+    // Read the token at open time, not construction time, so a refresh
+    // between connects signs the next handshake with the current jti.
+    // A null token (session gone) surfaces as the auth-failed state
+    // instead of flapping refused reconnects with an empty credential.
+    final token = tokenProvider();
+    if (token == null) {
+      _authFailed = true;
+      _refused = false;
+      notifyListeners();
+      return;
+    }
     // #3201: token as a WS subprotocol entry, not a query param.
     final url = await wsUrl();
     final protocols = ['bearer', token];
