@@ -47,6 +47,21 @@ operators or integrators to act when upgrading.
   1.120.0 to 1.122.0. Both tarballs stay per-architecture sha256-verified at
   image build.
 
+### Fixed
+
+- **The Files tab keeps working after a session token refresh.** The
+  file viewer now signs its requests with the session's current access
+  token, so directory listings, file reads, and uploads keep working
+  after the periodic token refresh. Previously the tab kept the token
+  from page load and failed once it rotated, with "Cannot list this
+  directory: Token has been revoked" and then "Invalid token".
+- **The consent banner reconnects with the session's current token.**
+  The consent decider's WebSocket now reads the access token at each
+  reconnect instead of using the token from page load, so a connection
+  drop after a token refresh reconnects normally. Previously the
+  reconnect presented the revoked token and the app demanded a
+  re-login (#3504).
+
 ## \[v2.0a8] - 2026-10-01
 
 ### Fixed
