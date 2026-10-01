@@ -20,7 +20,7 @@ WORKSPACE_TAR="$HOME/workspace.tar"
 if [ -f "$WORKSPACE_TAR" ]; then
   echo "Loading workspace image from $WORKSPACE_TAR ..."
   if ! podman load -i "$WORKSPACE_TAR"; then
-    echo "Warning: podman load of $WORKSPACE_TAR failed; continuing with the previously loaded image" >&2
+    echo "Warning: podman load of $WORKSPACE_TAR failed; continuing" >&2
   fi
 fi
 
@@ -32,15 +32,16 @@ SIDECAR_TAR="$HOME/network-sidecar.tar"
 if [ -f "$SIDECAR_TAR" ]; then
   echo "Loading network sidecar image from $SIDECAR_TAR ..."
   if ! podman load -i "$SIDECAR_TAR"; then
-    echo "Warning: podman load of $SIDECAR_TAR failed; continuing with the previously loaded image" >&2
+    echo "Warning: podman load of $SIDECAR_TAR failed; continuing" >&2
   fi
 fi
 
 # Garbage-collect images displaced by the retags above: each host upgrade
 # leaves the previous version's images dangling in the persistent store
 # (#3496). `podman image prune` removes only dangling images no container
-# references, so workspaces still running on an old image keep it; the
-# prune is best-effort.
+# references, so workspaces still running on an old image keep it. Keep
+# operator-managed images tagged: an untagged image no container references
+# is dangling and gets pruned. Best-effort.
 podman image prune -f >/dev/null 2>&1 ||
   echo "Warning: podman image prune failed; continuing" >&2
 

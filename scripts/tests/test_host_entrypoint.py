@@ -30,9 +30,9 @@ def host(tmp_path, monkeypatch):
     """A fake host-container home plus stub ``podman``/``supervisord``.
 
     The stub podman records every invocation to a log file and answers
-    success for anything — including ``image exists`` — so the entrypoint's
-    load decision depends only on the entrypoint itself. Creating the
-    ``fail-load`` marker makes the stub fail every ``load`` invocation.
+    success for anything, so the entrypoint's load decision depends only on
+    the entrypoint itself. Creating the ``fail-load`` marker makes the stub
+    fail every ``load`` invocation.
     """
     home = tmp_path / "home"
     (home / "etc").mkdir(parents=True)
@@ -122,12 +122,18 @@ def test_missing_tars_load_nothing(host):
     assert podman_log_lines(host) == [PRUNE_LINE]
 
 
-def test_missing_sidecar_tar_loads_workspace_only(host):
-    (host / "network-sidecar.tar").unlink()
+@pytest.mark.parametrize("present", ["workspace", "sidecar"])
+def test_missing_tar_loads_only_the_present_one(host, present):
+    """A host image bundling only one of the two tars loads exactly that
+    one (dev builds can ship either tar alone)."""
+    names = {"workspace": "workspace.tar", "sidecar": "network-sidecar.tar"}
+    loads = {"workspace": workspace_load(host), "sidecar": sidecar_load(host)}
+    absent = "sidecar" if present == "workspace" else "workspace"
+    (host / names[absent]).unlink()
     run_entrypoint(host)
     lines = podman_log_lines(host)
-    assert workspace_load(host) in lines
-    assert sidecar_load(host) not in lines
+    assert loads[present] in lines
+    assert loads[absent] not in lines
 
 
 def test_load_failure_is_not_fatal(host):
