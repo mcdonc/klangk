@@ -3,8 +3,9 @@ name: FIPS Host Image Check
 # Build the FIPS variant of the docker host container image
 # (src/containers/host/Dockerfile.fips, #2628) and run its build-time
 # proof, plus a weekly schedule to catch rot when the base images
-# (python:3.14-slim, debian:trixie-slim), the trixie openssl CLI, or
-# the Caddy repo changes behavior under us.
+# (python:3.14-slim, debian:trixie-slim), the trixie openssl CLI, the
+# pinned Caddy release artifacts, or the GitHub release URLs change
+# behavior under us.
 #
 # The Dockerfile's final layers fail the build if the validated FIPS
 # provider does not activate, if CLI/python md5 is fetchable, if the

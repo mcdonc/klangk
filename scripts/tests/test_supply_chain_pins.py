@@ -22,7 +22,9 @@ rotation procedures):
     - nodesource + github-cli repo keys: SHA-256 of the fetched key file
 - ``src/containers/host/Dockerfile``
     - python:3.14-slim: digest
-    - Caddy Cloudsmith repo key: SHA-256 of the fetched key file
+    - Caddy release tarball: ``CADDY_VERSION`` + per-arch SHA-256 ARGs
+      (#3502 — the Cloudsmith apt repo's InRelease is signed with an
+      expired subkey that trixie's sqv-apt refuses)
     - dependency versions: ``uv.lock`` exported to pip constraints by
       ``scripts/build-host-image.sh`` (``--constraint`` on the wheel install)
 - ``src/containers/host/Dockerfile.fips``
@@ -33,9 +35,9 @@ rotation procedures):
   ``src/containers/nix-seed/Dockerfile`` — debian:trixie-slim builders
   share Dockerfile.base's digest pin.
 
-Caddy's apt sources list is written inline (not fetched), so the repo key is
-the only network-sourced trust input for that repo; apt's own GPG
-verification then covers the package indexes and debs.
+Caddy installs from the version- and per-arch-digest-pinned GitHub release
+tarball; the fetched tarball is sha256-verified before the binary is
+installed (#3502).
 """
 
 from __future__ import annotations
@@ -251,14 +253,25 @@ class TestWorkspaceTarballPins:
 
 def test_caddy_tarball_is_version_pinned_and_verified():
     """Caddy installs from the GitHub release tarball at a pinned version,
-    with the fetched tarball sha256-verified before install (#3502;
-    posture per #2063)."""
+    with the fetched tarball sha256-verified before install, and each arch
+    maps to its own digest (#3502; posture per #2063, mirroring the uv
+    test below)."""
     text = _HOST_DF.read_text()
     assert "github.com/caddyserver/caddy/releases/download/" in text
     assert '"${CADDY_SHA256}  /tmp/caddy.tar.gz" | sha256sum -c -' in text
     assert re.match(r"^\d+\.\d+\.\d+$", _arg(_HOST_DF, "CADDY_VERSION")), (
         "CADDY_VERSION must be a plain semver"
     )
+
+
+def test_caddy_tarball_arch_digest_mapping_is_pinned():
+    """The case arms map each architecture to its own digest ARG, and the
+    two ARGs differ — a swapped arm or a pasted-twice digest otherwise
+    only fails at a later arm64 build."""
+    text = _HOST_DF.read_text()
+    assert 'CADDY_SHA256="$CADDY_SHA256_AMD64"' in text
+    assert 'CADDY_SHA256="$CADDY_SHA256_ARM64"' in text
+    assert _arg(_HOST_DF, "CADDY_SHA256_AMD64") != _arg(_HOST_DF, "CADDY_SHA256_ARM64")
 
 
 def test_caddy_tarball_digest_args_are_hex():
@@ -341,17 +354,11 @@ def test_nodesource_and_githubcli_keys_are_verified():
 
 
 def test_no_unverified_key_fetches_in_base_or_host():
-    """Every gpg key fetch in the base/host images lands in a file that a
+    """Every gpg key fetch in the base image lands in a file that a
     pinned-hash check reads before the key enters a keyring."""
-    for df, needles in (
-        (
-            _WORKSPACE_BASE_DF,
-            ("nodesource-repo.gpg.key", "githubcli-archive-keyring.gpg"),
-        ),
-    ):
-        text = df.read_text()
-        for needle in needles:
-            assert "-o /tmp/" in text and needle in text, (
-                f"{df}: {needle} must be downloaded to a file for hash "
-                f"verification, not piped straight into a keyring (#2063)"
-            )
+    text = _WORKSPACE_BASE_DF.read_text()
+    for needle in ("nodesource-repo.gpg.key", "githubcli-archive-keyring.gpg"):
+        assert "-o /tmp/" in text and needle in text, (
+            f"{_WORKSPACE_BASE_DF}: {needle} must be downloaded to a file "
+            f"for hash verification, not piped straight into a keyring (#2063)"
+        )
