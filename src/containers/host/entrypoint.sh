@@ -1,45 +1,49 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# klangkd runtime config — the single source of truth (supervisord.conf passes
-# this path via `klangkd --config`). No KLANGKD_* env vars are set in the image.
-CONFIG="$HOME/etc/klangkd.yaml"
+# klangkd runtime config lives at $HOME/etc/klangkd.yaml (supervisord.conf
+# passes that path via `klangkd --config`). No KLANGKD_* env vars are set in
+# the image.
 
-# Load the embedded workspace image into podman on first startup. The image
-# name comes from klangkd.yaml (image_name), read here so the entrypoint and
-# klangkd agree on which image the workspace tar provides. The python fallback
-# matches klangkd's own field default.
+# Load the embedded workspace image into podman at every startup (#3496).
+# The nested podman store is a persistent bind mount, so a tag left there by
+# an earlier klangk version survives a host upgrade; loading only when the
+# tag was absent kept every new workspace on that old workspace image.
+# `podman load` retags the image bundled with this host image: an upgrade
+# replaces the stale tag, and a restart on the same version re-imports
+# layers already in storage (the tar is read and digest-checked on every
+# start — the cost of not tracking loaded versions in the store). A failed
+# load logs a warning and the host keeps starting: the previously loaded
+# tag stays in place, and klangkd reports the image state when a workspace
+# tries to use it.
 WORKSPACE_TAR="$HOME/workspace.tar"
 if [ -f "$WORKSPACE_TAR" ]; then
-  IMAGE=$(python3 -c "
-import yaml
-d = yaml.safe_load(open('$CONFIG')) or {}
-print(d.get('image_name') or d.get('image-name') or 'klangk-workspace')
-" 2>/dev/null || echo klangk-workspace)
-  if ! podman image exists "$IMAGE" 2>/dev/null; then
-    echo "Loading workspace image $IMAGE ..."
-    podman load -i "$WORKSPACE_TAR"
+  echo "Loading workspace image from $WORKSPACE_TAR ..."
+  if ! podman load -i "$WORKSPACE_TAR"; then
+    echo "Warning: podman load of $WORKSPACE_TAR failed; continuing" >&2
   fi
 fi
 
-# Load the embedded network sidecar image into podman on first startup (#2301).
-# Same pattern as the workspace image above: the image name comes from
-# klangkd.yaml (network_sidecar_image), read here so the entrypoint and klangkd
-# agree on which image the sidecar tar provides. The python fallback matches
-# klangkd's own field default ("klangk-network-sidecar"), which is what the
-# generated klangkd.yaml falls back to when the key is absent.
+# Load the embedded network sidecar image into podman at every startup
+# (#2301, #3496) — same behavior as the workspace image above: the load is
+# unconditional so a tag left in the persistent store by an earlier klangk
+# version is retagged to the sidecar bundled with this host image.
 SIDECAR_TAR="$HOME/network-sidecar.tar"
 if [ -f "$SIDECAR_TAR" ]; then
-  SIDECAR_IMAGE=$(python3 -c "
-import yaml
-d = yaml.safe_load(open('$CONFIG')) or {}
-print(d.get('network_sidecar_image') or d.get('network-sidecar-image') or 'klangk-network-sidecar')
-" 2>/dev/null || echo klangk-network-sidecar)
-  if ! podman image exists "$SIDECAR_IMAGE" 2>/dev/null; then
-    echo "Loading network sidecar image $SIDECAR_IMAGE ..."
-    podman load -i "$SIDECAR_TAR"
+  echo "Loading network sidecar image from $SIDECAR_TAR ..."
+  if ! podman load -i "$SIDECAR_TAR"; then
+    echo "Warning: podman load of $SIDECAR_TAR failed; continuing" >&2
   fi
 fi
+
+# Garbage-collect images displaced by the retags above: each host upgrade
+# leaves the previous version's images dangling in the persistent store
+# (#3496). `podman image prune` removes only dangling images no container
+# references, so workspaces still running on an old image keep it. Keep
+# operator-managed images tagged: an untagged image no container references
+# is dangling and gets pruned. Best-effort.
+podman image prune -f >/dev/null 2>&1 ||
+  echo "Warning: podman image prune failed; continuing" >&2
 
 case "${1:-start}" in
 start)

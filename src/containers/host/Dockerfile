@@ -110,9 +110,9 @@ RUN mkdir -p /home/klangk/data && chown klangk:klangk /home/klangk/data
 # Rootless podman: fuse-overlayfs for storage on overlayfs-backed filesystems
 COPY --chown=klangk:klangk src/containers/host/storage.conf /home/klangk/.config/containers/storage.conf
 
-# Embedded workspace image — loaded into podman on first startup
+# Embedded workspace image — loaded into podman at every host start (#3496)
 COPY --from=workspace-image --chown=klangk:klangk workspace.tar /home/klangk/workspace.tar
-# Embedded network sidecar image — loaded into podman on first startup (#2301)
+# Embedded network sidecar image — loaded into podman at every host start (#2301, #3496)
 COPY --from=network-sidecar-image --chown=klangk:klangk network-sidecar.tar /home/klangk/network-sidecar.tar
 
 

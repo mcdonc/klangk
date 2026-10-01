@@ -2699,6 +2699,15 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   configuration — previously they failed with `certificate signer not
 trusted`. Existing workspaces pick this up when they are next recreated
   (a start after a stop); the backend applies its copy at startup.
+- **Workspace and sidecar images refresh after a host upgrade (#3496).**
+  The host container now loads its embedded workspace and network-sidecar
+  images at every start instead of only when the image name is missing, so
+  upgrading the host image also upgrades the images new workspaces run —
+  a tag left in the persistent podman store by an older klangk version no
+  longer keeps serving the old workspace image. Workspaces that were
+  already running keep their image until restarted, and the images an
+  upgrade displaces are garbage-collected once no workspace still uses
+  them.
 
 - **Drag-and-drop file upload works under the served CSP.** Every
   drag-and-drop upload failed silently on deployments serving the
