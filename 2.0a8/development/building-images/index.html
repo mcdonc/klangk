@@ -3094,9 +3094,9 @@ build loudly. (Known residuals beyond that scope are listed under
 <td><code>sha256sum</code> of the fetched <code>githubcli-archive-keyring.gpg</code> (fingerprint in the Dockerfile comment)</td>
 </tr>
 <tr>
-<td>Caddy repo key (Cloudsmith)</td>
-<td><code>CADDY_REPO_KEY_SHA256</code> in <code>src/containers/host/Dockerfile</code></td>
-<td><code>sha256sum</code> of the fetched <code>gpg.key</code> (fingerprint in the Dockerfile comment; cross-check <a href="https://cloudsmith.io/~caddy/repos/stable/pub-keys/">https://cloudsmith.io/~caddy/repos/stable/pub-keys/</a>)</td>
+<td>Caddy release tarball</td>
+<td><code>CADDY_VERSION</code> + <code>CADDY_SHA256_AMD64</code>/<code>_ARM64</code> in <code>src/containers/host/Dockerfile</code></td>
+<td>fetch the release's asset digests from <a href="https://api.github.com/repos/caddyserver/caddy/releases/latest">https://api.github.com/repos/caddyserver/caddy/releases/latest</a>; update all three ARGs together</td>
 </tr>
 <tr>
 <td>cryptography GitHub tag tarball (FIPS relink fallback)</td>
@@ -3107,12 +3107,14 @@ build loudly. (Known residuals beyond that scope are listed under
 </table>
 <p>Notes:</p>
 <ul>
-<li>The apt <strong>sources lists</strong> (NodeSource, GitHub CLI, Caddy) are written
+<li>The apt <strong>sources lists</strong> (NodeSource, GitHub CLI) are written
   inline in the Dockerfiles, not fetched — the GPG key is the only
   network-sourced trust input, and apt's own signature verification then
-  covers the package indexes and <code>.deb</code>s. Caddy itself is intentionally
-  not version-pinned so rebuilds pick up security patches; its integrity
-  rests on the pinned repo key.</li>
+  covers the package indexes and <code>.deb</code>s. Caddy installs from the
+  version- and digest-pinned GitHub release tarball (#3502): the Caddy
+  apt repo on Cloudsmith signed its <code>InRelease</code> with an expired subkey,
+  which Debian trixie's apt rejects. A pinned Caddy no longer picks up
+  security patches on rebuild — bump the three ARGs to ship one.</li>
 <li>Deps of the Pi agent tarball are still resolved by npm at build time
   (integrity-checked by npm against registry metadata, as usual).</li>
 <li><code>scripts/tests/test_supply_chain_pins.py</code> holds contract tests asserting
