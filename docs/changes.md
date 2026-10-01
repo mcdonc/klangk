@@ -2170,7 +2170,7 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
   with `KLANGKD_ENABLE_PING=false`.
 
 - **`process-compose` in the workspace container (#2049).** The workspace image
-  ships `process-compose` v1.120.0 at `/usr/local/bin/process-compose`.
+  ships `process-compose` v1.122.0 at `/usr/local/bin/process-compose`.
 
 - **`chat` feature (#1976).** The workspace chat tab + clanker agent UI is now a
   compiled-in, opt-in feature. Activate with `KLANGKD_FEATURES_ENABLE=chat`.
@@ -2287,11 +2287,10 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
   upgrade changes no supply-chain posture.
 
 - **Workspace pinned tooling updated: uv 0.12.21 and process-compose
-  1.122.0 (#3512).** uv moves from 0.11.23 to 0.12.21 (verified against
-  Python 3.13 in the image: venv creation, installs, and `uv run` all
-  work) and the process-compose supervisor moves from 1.120.0 to
-  1.122.0. Both tarballs stay per-architecture sha256-verified at image
-  build.
+  1.122.0 (#3512).** uv moves from 0.11.23 to 0.12.21 (compatible with the
+  image's Python 3.13) and the process-compose supervisor moves from
+  1.120.0 to 1.122.0. Both tarballs stay per-architecture sha256-verified at
+  image build.
 
 - **Soliplex keeps one server connected at a time (#3480).** Connecting to
   a Soliplex server — interactive login or an open/no-auth server's Connect —
