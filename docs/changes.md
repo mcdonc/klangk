@@ -33,6 +33,16 @@ operators or integrators to act when upgrading.
 
 ## \[Unreleased]
 
+### Added
+
+- **HTML files render in the Files tab.** Opening an `.html` or `.htm`
+  file in the web app shows the rendered page in a sandboxed frame:
+  markup, inline CSS and embedded `data:` images display. The page's
+  scripts and forms do not run, and it loads nothing over the network,
+  including from klangk's own hosted apps. Preview is the default mode for
+  these files; View, Edit and Raw show the source, and the desktop app
+  shows the source only.
+
 ### Changed
 
 - **Workspace Pi agent updated to 0.99.2 (#3511).** Workspaces now

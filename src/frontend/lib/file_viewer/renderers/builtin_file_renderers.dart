@@ -2,6 +2,7 @@ import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
 import 'code_editor_renderer.dart';
 import 'code_renderer.dart';
+import 'html_renderer.dart';
 import 'image_renderer.dart';
 import 'markdown_renderer.dart';
 import 'pdf_renderer.dart';
@@ -14,6 +15,7 @@ import 'video_renderer.dart';
 /// [RawTextRenderer] fallback is last.
 List<FileRenderer> builtinFileRenderers() => [
       MarkdownRenderer(),
+      HtmlRenderer(),
       ImageRenderer(),
       CodeRenderer(),
       CodeEditorRenderer(),
