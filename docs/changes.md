@@ -2280,6 +2280,12 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
 
 ### Changed
 
+- **Workspace Pi agent updated to 0.99.2 (#3511).** Workspaces now
+  bundle Pi coding agent 0.99.2 (previously 0.83.0), bringing 16 minor
+  versions of upstream agent fixes and features to workspace terminals.
+  The tarball stays sha512-pinned and verified at image build, so the
+  upgrade changes no supply-chain posture.
+
 - **Soliplex keeps one server connected at a time (#3480).** Connecting to
   a Soliplex server — interactive login or an open/no-auth server's Connect —
   disconnects the currently active server, and the overlay states the rule.
