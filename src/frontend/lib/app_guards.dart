@@ -96,6 +96,18 @@ String? guardAuth({
 /// Feature routes are excluded: they are public but a logged-in user may
 /// legitimately navigate to them.
 ///
+/// While [permissionsLoaded] is false — the session's token just landed
+/// and `/my-permissions` is still in flight — the gate HOLDS (returns
+/// null) instead of bouncing (#3540). Deciding the target at that
+/// instant tests `canAdminSection` against empty permissions, so an
+/// admin's stashed `/admin`-prefixed target would take the
+/// non-admin fallback to `/workspaces`, and once permissions arrive
+/// nothing re-attempts the stash — the user is parked there. The
+/// permission fetch's completion fires the notification that re-parses
+/// this same location, and the gate then decides with live data. A hold
+/// is safe: the gate holds on whatever public page the user is on for
+/// the fraction of a second the fetch takes.
+///
 /// The target is permission-checked against the *current* session: an
 /// `/admin`-prefixed target (e.g. stashed by an admin's logout or expiry,
 /// then inherited by whoever logs in next on this browser) falls back to
@@ -115,12 +127,14 @@ String? guardAuth({
 /// Returns the redirect target, or null to allow.
 String? guardLoggedInPublicRoute({
   required bool isLoggedIn,
+  required bool permissionsLoaded,
   required String loc,
   required Set<String> publicRoutes,
   required Set<String> featurePaths,
   required bool canAccessAdmin,
 }) {
   if (isLoggedIn && publicRoutes.contains(loc) && !featurePaths.contains(loc)) {
+    if (!permissionsLoaded) return null;
     final target = pendingRedirect;
     if (target == null) return '/workspaces';
     if (target.startsWith('/admin') && !canAccessAdmin) {
@@ -139,6 +153,21 @@ String? guardLoggedInPublicRoute({
 /// redirect even though the app-bar admin icon is gated, and its page is
 /// a dead end ("No admin sections available") for them.
 ///
+/// While [permissionsLoaded] is false — the session's token just landed
+/// and `/my-permissions` is still in flight — the gate HOLDS (returns
+/// null) instead of bouncing (#3540): `canAccessAdmin` reads empty
+/// permissions at that instant, so a mid-login navigation to a stashed
+/// or typed `/admin` URL would bounce an admin to `/workspaces`, and
+/// once the fetch completes nothing re-attempts the route — the user
+/// stays parked there. The permission fetch's completion fires the
+/// notification that re-parses this same location: an admin stays put,
+/// a non-admin is bounced then. The transient hold leaves a non-admin
+/// on the admin page for the fetch's duration — its data fetches are
+/// refused, and the settle bounce lands them on `/workspaces` — the
+/// cost of not parking admins permanently. The fetch itself has no
+/// client-side timeout: a hung request holds the page (and the login
+/// loading state) until the connection gives up.
+///
 /// Fires only for *logged-in* users: a logged-out visitor must keep the
 /// `guardAuth` flow (stash + `/login`), and `guardLoggedInPublicRoute`
 /// already rejects `/admin`-prefixed stashes for non-admins on login
@@ -151,11 +180,13 @@ String? guardLoggedInPublicRoute({
 /// every refreshListenable notification) all agree.
 String? guardAdminRoute({
   required bool isLoggedIn,
+  required bool permissionsLoaded,
   required bool canAccessAdmin,
   required String loc,
 }) {
-  if (isLoggedIn && !canAccessAdmin && loc.startsWith('/admin')) {
-    return '/workspaces';
+  if (isLoggedIn && loc.startsWith('/admin')) {
+    if (!permissionsLoaded) return null;
+    if (!canAccessAdmin) return '/workspaces';
   }
   return null;
 }
@@ -206,6 +237,7 @@ String? evaluateGuards({
   required Set<String> publicRoutes,
   required Set<String> featurePaths,
   required bool canAccessAdmin,
+  required bool permissionsLoaded,
 }) {
   if (bannerRequired) {
     return guardBanner(bannerRequired: true, isLoggedIn: isLoggedIn, loc: loc);
@@ -224,6 +256,7 @@ String? evaluateGuards({
       ) ??
       guardLoggedInPublicRoute(
         isLoggedIn: isLoggedIn,
+        permissionsLoaded: permissionsLoaded,
         loc: loc,
         publicRoutes: publicRoutes,
         featurePaths: featurePaths,
@@ -231,6 +264,7 @@ String? evaluateGuards({
       ) ??
       guardAdminRoute(
         isLoggedIn: isLoggedIn,
+        permissionsLoaded: permissionsLoaded,
         canAccessAdmin: canAccessAdmin,
         loc: loc,
       ) ??

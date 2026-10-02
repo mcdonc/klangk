@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -272,6 +273,55 @@ void main() {
   }
 
   group('AdminUsersPage', () {
+    testWidgets(
+      'mounts mid-permission-fetch and rebuilds when they settle (#3540)',
+      (tester) async {
+        // The router's admin gate holds a session on this page while the
+        // permission fetch is in flight — the page then builds with empty
+        // permissions, and AuthService's settle notification must rebuild
+        // it (the page re-resolves permissions in build, so it needs the
+        // auth dependency to receive that rebuild).
+        final permissions = Completer<http.Response>();
+        testAuthHttpClientOverride = MockClient((request) async {
+          if (request.url.path.contains('/api/v1/my-permissions')) {
+            return permissions.future;
+          }
+          if (request.url.path.contains('/api/v1/users') &&
+              request.method == 'GET') {
+            return http.Response(_usersEnvelope([_user('a@example.com')]), 200);
+          }
+          return http.Response('{}', 200);
+        });
+
+        await tester.binding.setSurfaceSize(const Size(1280, 900));
+        await tester.pumpWidget(buildPage());
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+
+        // Mounted while the boot fetch is pending: permission-gated tabs
+        // are absent.
+        expect(find.text('No admin sections available'), findsOneWidget);
+        expect(find.text('Handle'), findsNothing);
+
+        permissions.complete(http.Response(
+          jsonEncode({
+            'user_id': 'admin-user',
+            'email': 'admin@example.com',
+            'is_admin': true,
+            'permissions': {
+              '/users': ['manage-users'],
+            },
+            'groups': <Map<String, dynamic>>[],
+          }),
+          200,
+        ));
+        await tester.pumpAndSettle();
+
+        expect(find.text('No admin sections available'), findsNothing);
+        expect(find.text('Handle'), findsOneWidget);
+      },
+    );
+
     testWidgets('renders users from the paged envelope', (tester) async {
       serveUsers(
         (page, pageSize, sort, order, q) => [

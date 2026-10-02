@@ -102,9 +102,15 @@ def at_login(harness, app) -> None:
 
 def open_admin_users(app) -> None:
     """Route to the admin page and wait for the Users tab's toolbar
-    (the 'Handle' sort chip is unique to it)."""
+    (the 'Handle' sort chip is unique to it).  A first navigation can
+    lose the race with the login redirect chain (#3540) — one retry
+    re-runs the hash route and absorbs the loss."""
     app.navigate("/admin/users")
-    app.wait_for_text("Handle")
+    try:
+        app.wait_for_text("Handle")
+    except FmtkError:
+        app.navigate("/admin/users")
+        app.wait_for_text("Handle")
 
 
 def admin_login(harness, app) -> None:
