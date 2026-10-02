@@ -70,12 +70,6 @@ operators or integrators to act when upgrading.
   their next stop/start; a per-workspace env bag entry can still
   override it.
 
-- **Workspace `env` values containing `$` are now expanded (#3526).**
-  A value like `$PATH:/x` that previously reached the container as
-  literal text now resolves against the workspace environment at
-  injection time. Deployments with pre-existing `$`-bearing values
-  should review them: `\$` or `$$` escapes a literal dollar.
-
 ### Fixed
 
 - **Code files in the Files tab View sit at the top left.** The
