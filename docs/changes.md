@@ -44,6 +44,20 @@ operators or integrators to act when upgrading.
   workspace image's `/etc/profile.d`, so existing images pick it up on
   rebuild. See [The Shell](/features/the-shell/).
 
+### Changed
+
+- **Pi startup phone-home to pi.dev is off in workspaces (#3530).**
+  Workspace containers now set `PI_OFFLINE=1` (alongside the existing
+  `PI_SKIP_VERSION_CHECK=1`), so a Pi session inside a workspace no
+  longer requests `pi.dev/api/latest-version` or sends the
+  `pi.dev/api/report-install` telemetry ping the version-check flag
+  alone did not cover. Package update checks and helper-binary
+  downloads are skipped too; LLM completions (the llm-proxy path) and
+  explicit `pi install` are unaffected. The env is baked at container
+  creation, so workspaces running across the upgrade pick this up on
+  their next stop/start; a per-workspace env bag entry can still
+  override it.
+
 ### Fixed
 
 - **Code files in the Files tab View sit at the top left.** The

@@ -3272,6 +3272,27 @@ class TestStartContainer:
         # host.containers.internal must be resolvable
         assert "host.containers.internal:host-gateway" in kwargs["add_hosts"]
 
+    async def test_pi_offline_env_vars(self, workspace):
+        """Pi startup network ops are off in the container env (#3530).
+
+        Podman is last-wins on duplicate -e keys, so the property to pin
+        is that each PI_* key appears exactly once — a stray later
+        duplicate (the only way to override) would silently re-enable
+        the pi.dev phone-home attempts.
+        """
+        with patch_podman(self.registry) as p:
+            await self.registry.start_container(
+                container.ContainerStartSpec(
+                    workspace["id"],
+                    "/tmp/home",
+                )
+            )
+        env = p.create_container.call_args.kwargs["env"]
+        assert sum(e.startswith("PI_OFFLINE=") for e in env) == 1
+        assert sum(e.startswith("PI_SKIP_VERSION_CHECK=") for e in env) == 1
+        assert "PI_OFFLINE=1" in env
+        assert "PI_SKIP_VERSION_CHECK=1" in env
+
     async def test_user_logname_env_vars(self, workspace, monkeypatch):
         """USER/LOGNAME are set so tools inside the container see the
         correct UNIX user (#2153)."""
