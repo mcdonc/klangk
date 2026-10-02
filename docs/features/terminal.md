@@ -73,6 +73,13 @@ container. It starts on demand when you click the Terminal tab.
   [OSC 52](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h3-Operating-System-Commands)
   — see the [CLI reference](../reference/cli.md#terminal-behavior-differences)
   for the terminal-support matrix.
+
+  Firefox and Safari permit a clipboard write only from inside a user
+  gesture, and the bridge delivers the copy as a background message, so
+  there the text reaches the clipboard on your next click or keypress in
+  the app — click into the target field and paste. An immediate copy is
+  available via the native selection: Shift+drag, then Ctrl+Shift+C.
+
 - Right-click context menu with Paste (and Copy when text is selected)
 - Mouse wheel scrollback via tmux copy mode
 - If the container stops (idle timeout or crash), an overlay appears
