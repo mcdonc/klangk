@@ -4368,7 +4368,7 @@ users(id)`, so the decider handler passing the decider's email violated the
   sha256-pinned GitHub tag tarball when PyPI publishes no source release
   for the locked version.
 
-- **Admin deep-link login lands on the requested admin page (#3540).**
+- **Login and `/admin` navigation wait for permission data (#3540).**
   The router's admin gates now hold their decision while the session's
   permission data is still loading: a login redirect or a direct
   `/admin` navigation that arrives before `/my-permissions` answers

@@ -121,7 +121,7 @@ void main() {
           currentUri: state.uri.toString(),
           publicRoutes: routes,
           featurePaths: featurePaths,
-          canAccessAdmin: auth.isAdmin,
+          canAccessAdmin: auth.canAdminSection,
           permissionsLoaded: auth.permissionsLoaded,
         );
       },

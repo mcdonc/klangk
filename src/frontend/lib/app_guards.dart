@@ -164,7 +164,9 @@ String? guardLoggedInPublicRoute({
 /// a non-admin is bounced then. The transient hold leaves a non-admin
 /// on the admin page for the fetch's duration — its data fetches are
 /// refused, and the settle bounce lands them on `/workspaces` — the
-/// bounded cost of not parking admins permanently.
+/// cost of not parking admins permanently. The fetch itself has no
+/// client-side timeout: a hung request holds the page (and the login
+/// loading state) until the connection gives up.
 ///
 /// Fires only for *logged-in* users: a logged-out visitor must keep the
 /// `guardAuth` flow (stash + `/login`), and `guardLoggedInPublicRoute`
