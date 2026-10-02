@@ -75,6 +75,10 @@ def write_settings():
     # repeats on every fresh shell; /header (a builtin extension)
     # re-prints it on demand (#3537).
     image_settings["quietStartup"] = True
+    # Pi 1.0 runs its TUI fullscreen by default, which replaces the
+    # normal terminal scrollback with pi's own viewport. The web
+    # terminal depends on that scrollback, so keep the regular mode.
+    image_settings["tuiMode"] = "regular"
     # Point at image dirs directly — Pi also auto-discovers
     # ~/.pi/agent/{extensions,skills,prompts}/ for user-installed ones.
     image_settings["extensions"] = [str(IMAGE_DIR / "extensions")]
@@ -94,6 +98,7 @@ def ensure_settings_keys():
     defaults = {
         "theme": "dark",
         "quietStartup": True,
+        "tuiMode": "regular",
         "extensions": [str(IMAGE_DIR / "extensions")],
         "skills": [str(IMAGE_DIR / "skills")],
         "prompts": [str(IMAGE_DIR / "prompts")],

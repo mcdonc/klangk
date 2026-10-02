@@ -17,8 +17,8 @@ FROM $WORKSPACE_BASE_IMAGE
 # registry's own integrity record:
 #   npm view @earendil-works/pi-coding-agent@<version> dist.integrity
 # (base64 sha512 -> hex), or sha512sum of the fetched tarball.
-ARG PI_AGENT_VERSION=0.99.2
-ARG PI_AGENT_SHA512=e91d4167637bec2ad57067f7782d8aa2f4f3d50e1162201ec9dbd55904f9e3a3767e2d6705cf356944656ce64282bb96a16f5563f52b2f30f29c5e184e8969a0
+ARG PI_AGENT_VERSION=1.0.0
+ARG PI_AGENT_SHA512=fc5b5bc6849053f984bf542789c8498d18eab5ea9a21a316c66841e06dfaefe33065f5fbfc323907d60083996a6cdee7ced16c90112d51267e16598c0440ad33
 # Network downloads in this Dockerfile use `--retry 5 --retry-delay 2
 # --retry-all-errors`: GitHub-hosted runners occasionally reset connections
 # mid-transfer (curl exit 35, #2797), and without retries a single blip

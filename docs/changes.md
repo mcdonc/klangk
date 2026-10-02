@@ -33,6 +33,15 @@ operators or integrators to act when upgrading.
 
 ## \[Unreleased]
 
+### Changed
+
+- **Workspace Pi agent updated to 1.0.0 (#3542).** Workspaces now
+  bundle Pi coding agent 1.0.0 (previously 0.99.2). Pi 1.0 runs its
+  TUI fullscreen by default; workspace provisioning pins
+  `tuiMode: "regular"` so the web terminal keeps its normal
+  scrollback. Users who prefer fullscreen can set `tuiMode` to
+  `"fullscreen"` in their own `~/.pi/agent/settings.json`.
+
 ## \[v2.0a11] - 2026-10-02
 
 ### Added
