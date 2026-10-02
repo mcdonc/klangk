@@ -11,12 +11,18 @@
 # interactive shells; a non-interactive login shell never saw the export.
 #
 # ~/.local/bin goes in FRONT of /opt/klangk/bin (#3522): executables the
-# user installs there (`uv tool install`, `pipx`, `pip install --user`)
+# user installs there (uv tool install and other user-bin installers)
 # must resolve on the next shell and must shadow the vendored klangk-*
-# helpers. The prepend is skipped when the entry is already on PATH — a
-# ~/.profile that ordered it differently keeps its order — and when HOME
-# is unset. The directory itself need not exist: installers create it,
-# and a PATH entry naming a missing directory is harmless.
+# helpers. The prepend runs only when the entry is not already on PATH:
+# the guard keeps re-sourcing idempotent, and a PATH inherited with the
+# entry already present is left at its existing position. /etc/profile
+# resets PATH and runs profile.d before ~/.profile is sourced, so every
+# login shell composes the fresh order above; Debian's skel ~/.profile
+# then re-prepends ~/.local/bin itself once the directory exists — a
+# duplicate entry that is harmless (first match wins, shadowing
+# unchanged). The prepend is skipped when HOME is unset or empty. The
+# directory itself need not exist: installers create it, and a PATH
+# entry naming a missing directory is harmless.
 #
 # (The workspace health check is NOT a consumer of this: it runs a
 # non-login `bash -c` and sources nothing. See
