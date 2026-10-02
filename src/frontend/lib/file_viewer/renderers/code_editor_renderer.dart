@@ -115,7 +115,13 @@ class _CodeEditorViewState extends State<_CodeEditorView> {
               ),
             ),
             Expanded(
-              child: CodeForgeWeb(controller: _controller),
+              // Word suggestions come from the file's own text (there is no
+              // language server); their popup was unreadable on the light
+              // editor theme and took keys meant for the editor.
+              child: CodeForgeWeb(
+                controller: _controller,
+                enableSuggestions: false,
+              ),
             ),
           ],
         );
