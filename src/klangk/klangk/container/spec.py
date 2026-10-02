@@ -434,10 +434,13 @@ def build_env(
     env_vars.append(f"KLANGKWS_LLM_PROXY_URL={proxy_url}")
     # #3530: Pi phones home to pi.dev on startup (latest-version check,
     # install/update telemetry, package update checks). PI_OFFLINE=1
-    # disables all of Pi's startup network operations at once; none of
-    # them can work in a workspace anyway (egress is netfiltered down to
-    # the proxy). PI_SKIP_VERSION_CHECK stays for older Pi builds that
-    # predate PI_OFFLINE.
+    # disables those startup network operations at once. In filtered
+    # egress modes they could only ever fail against the netfilter; in
+    # unrestricted modes this keeps them from being attempted. A
+    # workspace env bag entry (appended later, last wins in podman) can
+    # still override — a deployer-level escape hatch, not a bypass of
+    # filtered modes. PI_SKIP_VERSION_CHECK stays for older Pi builds
+    # that predate PI_OFFLINE.
     env_vars.append("PI_OFFLINE=1")
     env_vars.append("PI_SKIP_VERSION_CHECK=1")
     logger.info("Container LLM proxy: %s", proxy_url)

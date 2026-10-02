@@ -2297,6 +2297,18 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
 
 ### Changed
 
+- **Pi startup phone-home to pi.dev is off in workspaces (#3530).**
+  Workspace containers now set `PI_OFFLINE=1` (alongside the existing
+  `PI_SKIP_VERSION_CHECK=1`), so a Pi session inside a workspace no
+  longer requests `pi.dev/api/latest-version` or sends the
+  `pi.dev/api/report-install` telemetry ping the version-check flag
+  alone did not cover. Package update checks and helper-binary
+  downloads are skipped too; LLM completions (the llm-proxy path) and
+  explicit `pi install` are unaffected. The env is baked at container
+  creation, so workspaces running across the upgrade pick this up on
+  their next stop/start; a per-workspace env bag entry can still
+  override it.
+
 - **Workspace Pi agent updated to 0.99.2 (#3511).** Workspaces now
   bundle Pi coding agent 0.99.2 (previously 0.83.0), bringing 16 minor
   versions of upstream agent fixes and features to workspace terminals.

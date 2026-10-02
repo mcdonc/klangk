@@ -3269,13 +3269,29 @@ class TestStartContainer:
         # API keys should NOT be in the container env
         assert not any(e.startswith("KLANGKD_LLM_API_KEY=") for e in env)
         assert not any(e.startswith("ANTHROPIC_API_KEY=") for e in env)
-        # #3530: Pi's startup network ops (pi.dev version check +
-        # install telemetry, package update checks) must be off inside
-        # workspaces; PI_OFFLINE=1 is the master switch.
-        assert env_dict["PI_OFFLINE"] == "1"
-        assert env_dict["PI_SKIP_VERSION_CHECK"] == "1"
         # host.containers.internal must be resolvable
         assert "host.containers.internal:host-gateway" in kwargs["add_hosts"]
+
+    async def test_pi_offline_env_vars(self, workspace):
+        """Pi startup network ops are off in the container env (#3530).
+
+        Podman is last-wins on duplicate -e keys, so the property to pin
+        is that each PI_* key appears exactly once — a stray later
+        duplicate (the only way to override) would silently re-enable
+        pi.dev traffic.
+        """
+        with patch_podman(self.registry) as p:
+            await self.registry.start_container(
+                container.ContainerStartSpec(
+                    workspace["id"],
+                    "/tmp/home",
+                )
+            )
+        env = p.create_container.call_args.kwargs["env"]
+        assert sum(e.startswith("PI_OFFLINE=") for e in env) == 1
+        assert sum(e.startswith("PI_SKIP_VERSION_CHECK=") for e in env) == 1
+        assert "PI_OFFLINE=1" in env
+        assert "PI_SKIP_VERSION_CHECK=1" in env
 
     async def test_user_logname_env_vars(self, workspace, monkeypatch):
         """USER/LOGNAME are set so tools inside the container see the
