@@ -44,6 +44,20 @@ operators or integrators to act when upgrading.
   workspace image's `/etc/profile.d`, so existing images pick it up on
   rebuild. See [The Shell](/features/the-shell/).
 
+### Changed
+
+- **Pi startup phone-home to pi.dev is off in workspaces (#3530).**
+  Workspace containers now set `PI_OFFLINE=1` (alongside the existing
+  `PI_SKIP_VERSION_CHECK=1`), so a Pi session inside a workspace no
+  longer requests `pi.dev/api/latest-version` or sends the
+  `pi.dev/api/report-install` telemetry ping the version-check flag
+  alone did not cover. Package update checks and helper-binary
+  downloads are skipped too; LLM completions (the llm-proxy path) and
+  explicit `pi install` are unaffected. The env is baked at container
+  creation, so workspaces running across the upgrade pick this up on
+  their next stop/start; a per-workspace env bag entry can still
+  override it.
+
 ### Fixed
 
 - **Code files in the Files tab View sit at the top left.** The
@@ -2591,62 +2605,6 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
 
 ### Changed
 
-<<<<<<< HEAD
-=======
-- **Pi startup phone-home to pi.dev is off in workspaces (#3530).**
-  Workspace containers now set `PI_OFFLINE=1` (alongside the existing
-  `PI_SKIP_VERSION_CHECK=1`), so a Pi session inside a workspace no
-  longer requests `pi.dev/api/latest-version` or sends the
-  `pi.dev/api/report-install` telemetry ping the version-check flag
-  alone did not cover. Package update checks and helper-binary
-  downloads are skipped too; LLM completions (the llm-proxy path) and
-  explicit `pi install` are unaffected. The env is baked at container
-  creation, so workspaces running across the upgrade pick this up on
-  their next stop/start; a per-workspace env bag entry can still
-  override it.
-
-- **Workspace Pi agent updated to 0.99.2 (#3511).** Workspaces now
-  bundle Pi coding agent 0.99.2 (previously 0.83.0), bringing 16 minor
-  versions of upstream agent fixes and features to workspace terminals.
-  The tarball stays sha512-pinned and verified at image build, so the
-  upgrade changes no supply-chain posture.
-
-- **Workspace pinned tooling updated: uv 0.12.21 and process-compose
-  1.122.0 (#3512).** uv moves from 0.11.23 to 0.12.21 (compatible with the
-  image's Python 3.13) and the process-compose supervisor moves from
-  1.120.0 to 1.122.0. Both tarballs stay per-architecture sha256-verified at
-  image build.
-
-- **Soliplex keeps one server connected at a time (#3480).** Connecting to
-  a Soliplex server — interactive login or an open/no-auth server's Connect —
-  disconnects the currently active server, and the overlay states the rule.
-  The `soliplex_query_all` tool is removed; `soliplex_query` accepts several
-  comma-separated room ids or `"*"` in `room_id` and returns one
-  aggregated, per-room answer from the target server.
-
-- **Strict xenon complexity gate (#3415).** The complexity gate now runs
-  through `scripts/xenon-gate.sh` — also the `klangk:xenon` devenv task —
-  which fails when its parser cannot read a graded file instead of
-  silently skipping it: xenon exits 0 on parse failures, so a skipped
-  file used to leave the gate with no signal anywhere. The
-  `scripts/tests` suite re-runs the gate over the graded tree in CI, and
-  the `test` extra now pins `xenon==0.9.3` so that guard runs on stock
-  runners.
-
-- **`dart format` pre-commit hook verifies instead of rewriting
-  (#3376).** The hook now runs `dart format --output=none
---set-exit-if-changed` via `scripts/dart-format-verify.sh` and fails
-  on unformatted files instead of silently rewriting them mid-commit —
-  rewrite mode flipped short→tall style in fresh worktrees (where no
-  `.dart_tool` exists to resolve the language version) and wedged prek's
-  stash rollback during cherry-picks. Files whose package has no
-  `.dart_tool` yet are skipped with a notice; run `dart format` yourself
-  before committing. The frontend CI workflow now checks formatting
-  after `pub get` (src/frontend `lib`+`test` and every feature package
-  with tests), and the five files that were off-canonical at the pinned
-  language version were reformatted.
-
->>>>>>> a944cee (Set PI_OFFLINE=1 in workspace container env (#3531))
 - **`GET /events` renamed to `GET /events/containers` (#3205).**
   The container start/stop history moved under the `/events`
   resource's Containers stream now that the identity/privilege audit
