@@ -44,6 +44,18 @@ operators or integrators to act when upgrading.
   workspace image's `/etc/profile.d`, so existing images pick it up on
   rebuild. See [The Shell](/features/the-shell/).
 
+- **Bash-style variable references in workspace `env` values
+  (#3526).** Values set in a workspace's environment variables may now
+  use `$FOO`, `${FOO}`, `${FOO:-default}`, `${FOO:+alt}` and
+  `${FOO:?error}`, resolved at injection time — container start and any
+  exec that carries them — against the environment they land in: the
+  image's `ENV`, the vars klangk itself injects, and earlier entries of
+  the same list, in order. `\$` and `$$` produce a literal `$`; unset
+  references expand to an empty string (a warning names the variable);
+  command substitution is deliberately not supported. Malformed syntax
+  is rejected when the env values are saved, and archive import drops
+  invalid entries instead of storing them.
+
 ### Changed
 
 - **Pi startup phone-home to pi.dev is off in workspaces (#3530).**
