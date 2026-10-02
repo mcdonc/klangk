@@ -24,7 +24,7 @@ from fastapi import (
 from fastapi.responses import (
     StreamingResponse,
 )
-from pydantic import AfterValidator, BaseModel
+from pydantic import AfterValidator, BaseModel, field_validator
 from sqlalchemy.exc import IntegrityError as SAIntegrityError
 
 from .. import (
@@ -34,6 +34,7 @@ from .. import (
     stepup,
     wshandler,
 )
+from ..envexp import validate_env_map
 from ..exceptions import (
     AuditWriteError,
     NodeDrainingError,
@@ -311,6 +312,23 @@ def _validate_workspace_name(value: str) -> str:
 WorkspaceName = Annotated[str, AfterValidator(_validate_workspace_name)]
 
 
+def _validate_env_values(
+    value: dict[str, str] | None,
+) -> dict[str, str] | None:
+    """Syntax-gate workspace ``env`` values (#3526).
+
+    Values may carry bash-style ``$`` references, resolved later (at
+    container start / exec time, against the workspace environment).
+    Syntax is decidable without that environment — malformed values
+    (unterminated ``${``, bad names, unknown operators) are rejected
+    here as 422 so they can never brick a start; semantics (unset
+    variables, ``:?`` failures) stay with the expansion choke points.
+    """
+    if value:
+        validate_env_map(value)
+    return value
+
+
 class WorkspaceBodyFields(BaseModel):
     """The optional workspace fields shared verbatim by the create
     (POST) and update (PUT) bodies.
@@ -325,6 +343,12 @@ class WorkspaceBodyFields(BaseModel):
     service_command: str | None = None
     mounts: list[str] | None = None
     env: dict[str, str] | None = None
+
+    @field_validator("env")
+    @classmethod
+    def _env_syntax(cls, value):
+        return _validate_env_values(value)
+
     setup_state: Literal["pending", "complete", "failed"] | None = None
     health_check: str | None = None
     allowed_domains: list[str] | None = None

@@ -24,6 +24,7 @@ from typing import Annotated
 from pydantic import StringConstraints, TypeAdapter, ValidationError
 
 from .. import workspace_settings as ws_settings
+from ..envexp import expand_env_value
 from ..podman import (
     SHARED_HOME as SHARED_HOME,
     SHARED_HOME_NAME as SHARED_HOME_NAME,
@@ -389,17 +390,45 @@ def _append_hosted_env(
         env_vars.append(f"KLANGKWS_HOSTING_BASE_PATH={hosting_base_path}")
 
 
+def _expand_extra_env(
+    env_vars: list[str],
+    extra_env: dict[str, str],
+    base_env: dict[str, str] | None,
+) -> None:
+    """Expand workspace ``env`` values onto ``env_vars`` (#3526).
+
+    Context, most specific last: ``base_env`` (the image's ENV layer,
+    fetched by the registry only when a value carries ``$``), then
+    everything already on ``env_vars`` (klangk-injected vars, then
+    feature env), then earlier extras of the same mapping — one
+    ordered pass, later entries winning, like a bash assignment
+    sequence. Never the daemon's own environment: expanding against it
+    would leak host values into workspaces.
+    """
+    ctx: dict[str, str] = dict(base_env or {})
+    for item in env_vars:
+        key, _, value = item.partition("=")
+        ctx[key] = value
+    for k, v in extra_env.items():
+        resolved = expand_env_value(v, ctx)
+        ctx[k] = resolved
+        env_vars.append(f"{k}={resolved}")
+
+
 def _append_feature_env(
-    app, env_vars: list[str], extra_env: dict[str, str] | None
+    app,
+    env_vars: list[str],
+    extra_env: dict[str, str] | None,
+    base_env: dict[str, str] | None = None,
 ) -> None:
     """Feature flags, then caller extras (an extra wins by appending
-    later)."""
+    later). Extras expand bash-style — see :func:`_expand_extra_env`.
+    """
     for k, v in app.state.features.container_env().items():
         env_vars.append(f"{k}={v}")
 
     if extra_env:
-        for k, v in extra_env.items():
-            env_vars.append(f"{k}={v}")
+        _expand_extra_env(env_vars, extra_env, base_env)
 
 
 def build_env(
@@ -412,6 +441,7 @@ def build_env(
     agent_home: str,
     extra_env: dict[str, str] | None,
     ssl_dir: str | None = None,
+    base_env: dict[str, str] | None = None,
 ) -> list[str]:
     """Build the container environment variable list.
 
@@ -482,7 +512,7 @@ def build_env(
     # ever needed. Emitted only when a trustable cert dir is present.
     env_vars.extend(ssl_env_vars(ssl_dir))
 
-    _append_feature_env(app, env_vars, extra_env)
+    _append_feature_env(app, env_vars, extra_env, base_env)
     return env_vars
 
 
