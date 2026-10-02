@@ -77,8 +77,7 @@ container. It starts on demand when you click the Terminal tab.
   Firefox and Safari permit a clipboard write only from inside a user
   gesture, and the bridge delivers the copy as a background message, so
   there the text reaches the clipboard on your next click or keypress in
-  the app — click into the target field and paste. An immediate copy is
-  available via the native selection: Shift+drag, then Ctrl+Shift+C.
+  the app — click into the target field and paste.
 
 - Right-click context menu with Paste (and Copy when text is selected)
 - Mouse wheel scrollback via tmux copy mode

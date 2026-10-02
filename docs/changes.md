@@ -2717,8 +2717,7 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   WebSocket because it sits outside the user-gesture task, so nothing ever
   reached the clipboard. The write is now deferred to the next input event
   in the page (a click or keypress delivers it from inside the gesture
-  task); Shift+drag plus Ctrl+Shift+C still copies immediately. See
-  [the terminal docs](features/terminal.md).
+  task). See [the terminal docs](features/terminal.md).
 - **Build version reporting survives an operator config mount
   (#3517).** A deployed host container whose operator `klangkd.yaml`
   mounts over the image's config file and omits `version_file` showed

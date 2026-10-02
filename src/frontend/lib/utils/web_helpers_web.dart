@@ -219,15 +219,23 @@ final ClipboardFlushController _clipboardFlush =
     ClipboardFlushController(_writeClipboardViaApi);
 void Function()? _removeFlushListeners;
 
-/// One clipboard write attempt through the async Clipboard API, reported as
-/// a bool so [ClipboardFlushController] can retry it on the next input
-/// event after a rejection.
+/// One clipboard write attempt for the deferred flush, reported as a bool so
+/// [ClipboardFlushController] can retry it on the next input event after a
+/// rejection. Both immediate paths from [setClipboardText] are retried here:
+/// the async Clipboard API, then `execCommand('copy')`, which is what an
+/// insecure context (plain HTTP, where `navigator.clipboard` is undefined —
+/// #2166) has available — and inside the gesture listener it is permitted.
 Future<bool> _writeClipboardViaApi(String text) async {
   try {
     await web.window.navigator.clipboard.writeText(text).toDart;
     return true;
   } catch (e) {
-    debugPrint('[WebHelpers] deferred clipboard write failed: $e');
+    debugPrint('[WebHelpers] deferred clipboard writeText failed: $e');
+  }
+  try {
+    return _execCommandCopy(text);
+  } catch (e) {
+    debugPrint('[WebHelpers] deferred execCommand copy failed: $e');
     return false;
   }
 }
@@ -241,11 +249,20 @@ void _installFlushListeners() {
       if (!_clipboardFlush.isArmed) _uninstallFlushListeners();
     });
   }).toJS;
+  // Losing focus means the user may have copied something elsewhere; drop
+  // the pending write so its next input event cannot clobber the newer
+  // clipboard content with stale text (review #3521: stale-clobber guard).
+  final onBlur = ((web.Event _) {
+    _clipboardFlush.clear();
+    _uninstallFlushListeners();
+  }).toJS;
   web.document.addEventListener('pointerdown', handler, true.toJS);
   web.document.addEventListener('keydown', handler, true.toJS);
+  web.window.addEventListener('blur', onBlur);
   _removeFlushListeners = () {
     web.document.removeEventListener('pointerdown', handler, true.toJS);
     web.document.removeEventListener('keydown', handler, true.toJS);
+    web.window.removeEventListener('blur', onBlur);
   };
 }
 

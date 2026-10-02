@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:klangk_frontend/utils/clipboard_flush.dart';
 
@@ -68,6 +70,51 @@ void main() {
       // clipboard.
       expect(written, ['second selection']);
       expect(controller.isArmed, isFalse);
+    });
+
+    test('an arm landing during an in-flight flush keeps the newer text',
+        () async {
+      final written = <String>[];
+      late Completer<bool> firstWrite;
+      var attempt = 0;
+      final controller = ClipboardFlushController((text) async {
+        written.add(text);
+        attempt++;
+        if (attempt == 1) {
+          // The first write is still in flight when the second arm lands.
+          firstWrite = Completer<bool>();
+          return firstWrite.future;
+        }
+        return true;
+      });
+
+      controller.arm('older selection');
+      final inFlight = controller.flush();
+      controller.arm('newer selection');
+
+      // The older write succeeds — it must not clear the newer pending text.
+      firstWrite.complete(true);
+      await inFlight;
+      expect(controller.isArmed, isTrue);
+
+      await controller.flush();
+      expect(written, ['older selection', 'newer selection']);
+      expect(controller.isArmed, isFalse);
+    });
+
+    test('clear drops the pending write without delivering it', () async {
+      final written = <String>[];
+      final controller = ClipboardFlushController((text) async {
+        written.add(text);
+        return true;
+      });
+
+      controller.arm('stale selection');
+      controller.clear();
+      expect(controller.isArmed, isFalse);
+
+      await controller.flush();
+      expect(written, isEmpty);
     });
   });
 }
