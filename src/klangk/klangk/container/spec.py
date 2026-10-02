@@ -432,6 +432,13 @@ def build_env(
     egress_port = app.state.settings.egress_port
     proxy_url = f"http://host.containers.internal:{egress_port}/llm-proxy"
     env_vars.append(f"KLANGKWS_LLM_PROXY_URL={proxy_url}")
+    # #3530: Pi phones home to pi.dev on startup (latest-version check,
+    # install/update telemetry, package update checks). PI_OFFLINE=1
+    # disables all of Pi's startup network operations at once; none of
+    # them can work in a workspace anyway (egress is netfiltered down to
+    # the proxy). PI_SKIP_VERSION_CHECK stays for older Pi builds that
+    # predate PI_OFFLINE.
+    env_vars.append("PI_OFFLINE=1")
     env_vars.append("PI_SKIP_VERSION_CHECK=1")
     logger.info("Container LLM proxy: %s", proxy_url)
 

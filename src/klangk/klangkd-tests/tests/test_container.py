@@ -3269,6 +3269,11 @@ class TestStartContainer:
         # API keys should NOT be in the container env
         assert not any(e.startswith("KLANGKD_LLM_API_KEY=") for e in env)
         assert not any(e.startswith("ANTHROPIC_API_KEY=") for e in env)
+        # #3530: Pi's startup network ops (pi.dev version check +
+        # install telemetry, package update checks) must be off inside
+        # workspaces; PI_OFFLINE=1 is the master switch.
+        assert env_dict["PI_OFFLINE"] == "1"
+        assert env_dict["PI_SKIP_VERSION_CHECK"] == "1"
         # host.containers.internal must be resolvable
         assert "host.containers.internal:host-gateway" in kwargs["add_hosts"]
 
