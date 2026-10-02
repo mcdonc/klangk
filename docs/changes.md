@@ -851,6 +851,15 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **`~/.local/bin` on the workspace `PATH` (#3522).** Every login shell in
+  a workspace container now puts `~/.local/bin` at the front of `PATH`,
+  ahead of `/opt/klangk/bin`, and creates the directory when missing, so
+  executables installed into it — `uv tool install` ships in the image —
+  resolve on the next shell and shadow the vendored klangk helpers. No
+  manual `mkdir` or `PATH` export is needed. The behavior ships in the
+  workspace image's `/etc/profile.d`, so existing images pick it up on
+  rebuild. See [The Shell](/features/the-shell/).
+
 - **HTML files render in the Files tab.** Opening an `.html` or `.htm`
   file in the web app shows the rendered page in a sandboxed frame:
   markup, inline CSS and embedded `data:` images display. The page's
