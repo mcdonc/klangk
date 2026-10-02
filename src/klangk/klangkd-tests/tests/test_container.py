@@ -671,6 +671,34 @@ class TestStartContainer:
         p.start_container.assert_awaited_once_with("new-cid", hooks_dir=None)
         assert workspace["id"] in self.registry.states
 
+    async def test_env_values_expand_against_image_env(self, workspace):
+        """#3526: workspace env values carrying ``$`` references expand
+        against the image's ENV layer at create time (and only then pay
+        for the image inspect — plain values never trigger it).
+        """
+        image_env = AsyncMock(
+            return_value={"PATH": "/usr/bin", "TOOL": "/opt/t"}
+        )
+        with patch_podman(self.registry, image_env=image_env) as p:
+            cid, _ = await self.registry.start_container(
+                container.ContainerStartSpec(
+                    workspace["id"],
+                    "/tmp/home",
+                    extra_env={
+                        "MY_PATH": "$PATH:/x",
+                        "T": "${TOOL:-/d}",
+                        "PLAIN": "no-refs",
+                    },
+                )
+            )
+        assert cid == "new-cid"
+        image_env.assert_awaited_once()
+        kwargs = p.create_container.await_args.kwargs
+        env = dict(item.split("=", 1) for item in kwargs["env"])
+        assert env["MY_PATH"] == "/usr/bin:/x"
+        assert env["T"] == "/opt/t"
+        assert env["PLAIN"] == "no-refs"
+
     async def test_shared_home_dir_materialized_before_start(self, workspace):
         """<home>/klangk exists on the HOST before ``podman start`` (#2725).
 

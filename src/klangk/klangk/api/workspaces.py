@@ -24,7 +24,7 @@ from fastapi import (
 from fastapi.responses import (
     StreamingResponse,
 )
-from pydantic import AfterValidator, BaseModel
+from pydantic import AfterValidator, BaseModel, field_validator
 from sqlalchemy.exc import IntegrityError as SAIntegrityError
 
 from .. import (
@@ -33,6 +33,11 @@ from .. import (
     netfilter as netfilter_mod,
     stepup,
     wshandler,
+)
+from ..envexp import (
+    EnvExpansionError,
+    validate_env_map,
+    validate_env_value,
 )
 from ..exceptions import (
     AuditWriteError,
@@ -311,6 +316,23 @@ def _validate_workspace_name(value: str) -> str:
 WorkspaceName = Annotated[str, AfterValidator(_validate_workspace_name)]
 
 
+def _validate_env_values(
+    value: dict[str, str] | None,
+) -> dict[str, str] | None:
+    """Syntax-gate workspace ``env`` values (#3526).
+
+    Values may carry bash-style ``$`` references, resolved later (at
+    container start / exec time, against the workspace environment).
+    Syntax is decidable without that environment — malformed values
+    (unterminated ``${``, bad names, unknown operators) are rejected
+    here as 422 so they can never brick a start; semantics (unset
+    variables, ``:?`` failures) stay with the expansion choke points.
+    """
+    if value:
+        validate_env_map(value)
+    return value
+
+
 class WorkspaceBodyFields(BaseModel):
     """The optional workspace fields shared verbatim by the create
     (POST) and update (PUT) bodies.
@@ -325,6 +347,12 @@ class WorkspaceBodyFields(BaseModel):
     service_command: str | None = None
     mounts: list[str] | None = None
     env: dict[str, str] | None = None
+
+    @field_validator("env")
+    @classmethod
+    def _env_syntax(cls, value):
+        return _validate_env_values(value)
+
     setup_state: Literal["pending", "complete", "failed"] | None = None
     health_check: str | None = None
     allowed_domains: list[str] | None = None
@@ -1587,22 +1615,47 @@ def _validate_archive_provenance(metadata: dict, app) -> None:
         )
 
 
+def _archive_env_key_allowed(key: str) -> bool:
+    """Not klangk-namespaced and not injection-capable."""
+    return not key.startswith(
+        ("KLANGKD_", "KLANGKWS_", "KLANGKBUILD_", "KLANGK_")
+    ) and key not in {"LD_PRELOAD", "LD_LIBRARY_PATH", "PATH"}
+
+
+def _archive_env_value_valid(key: str, value: str) -> bool:
+    """Syntax-valid expansion (#3526) — malformed entries are dropped
+    with a warning instead of stored to brick the first start."""
+    try:
+        validate_env_value(value)
+    except EnvExpansionError:
+        logger.warning(
+            "import: dropping env %r with invalid expansion syntax",
+            key,
+        )
+        return False
+    return True
+
+
 def _sanitize_archive_env(raw_env) -> dict | None:
-    """The archived env, stripped of klangk-namespaced and injection-capable
-    vars (stale server/container values are re-derived for the new
-    container; ``extra_env`` is appended last so a stale value would clobber
-    the live injection, #1740)."""
+    """The archived env, stripped of klangk-namespaced and
+    injection-capable vars (stale server/container values are
+    re-derived for the new container; ``extra_env`` is appended last
+    so a stale value would clobber the live injection, #1740).
+
+    #3526: archive env values may carry ``$`` references (the archive
+    predates or postdates this server's expansion), but the archive is
+    untrusted input — non-string values are coerced and entries whose
+    syntax fails the API gate's validation are dropped, never stored
+    to brick the imported workspace's first start.
+    """
     if not isinstance(raw_env, dict):
         return None
-    blocked = {"LD_PRELOAD", "LD_LIBRARY_PATH", "PATH"}
-    return {
-        k: v
-        for k, v in raw_env.items()
-        if not k.startswith(
-            ("KLANGKD_", "KLANGKWS_", "KLANGKBUILD_", "KLANGK_")
-        )
-        and k not in blocked
-    }
+    sanitized: dict[str, str] = {}
+    for k, v in raw_env.items():
+        value = str(v)
+        if _archive_env_key_allowed(k) and _archive_env_value_valid(k, value):
+            sanitized[str(k)] = value
+    return sanitized
 
 
 def _archive_egress_mode(egress_mode) -> str:

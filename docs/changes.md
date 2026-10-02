@@ -851,6 +851,18 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **Bash-style variable references in workspace `env` values
+  (#3526).** Values set in a workspace's environment variables may now
+  use `$FOO`, `${FOO}`, `${FOO:-default}`, `${FOO:+alt}` and
+  `${FOO:?error}`, resolved at injection time — container start and any
+  exec that carries them — against the environment they land in: the
+  image's `ENV`, the vars klangk itself injects, and earlier entries of
+  the same list, in order. `\$` and `$$` produce a literal `$`; unset
+  references expand to an empty string (a warning names the variable);
+  command substitution is deliberately not supported. Malformed syntax
+  is rejected when the env values are saved, and archive import drops
+  invalid entries instead of storing them.
+
 - **`~/.local/bin` on the workspace `PATH` (#3522).** Every login shell in
   a workspace container now puts `~/.local/bin` at the front of `PATH`,
   ahead of `/opt/klangk/bin`, and creates the directory when missing, so
@@ -2308,6 +2320,11 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
   creation, so workspaces running across the upgrade pick this up on
   their next stop/start; a per-workspace env bag entry can still
   override it.
+- **Workspace `env` values containing `$` are now expanded (#3526).**
+  A value like `$PATH:/x` that previously reached the container as
+  literal text now resolves against the workspace environment at
+  injection time. Deployments with pre-existing `$`-bearing values
+  should review them: `\$` or `$$` escapes a literal dollar.
 
 - **Workspace Pi agent updated to 0.99.2 (#3511).** Workspaces now
   bundle Pi coding agent 0.99.2 (previously 0.83.0), bringing 16 minor
