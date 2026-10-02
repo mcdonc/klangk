@@ -91,18 +91,23 @@ class _CodeViewState extends State<_CodeView> {
             child: SelectableText('Failed to load file: ${snapshot.error}'),
           );
         }
-        return SingleChildScrollView(
-          scrollDirection: Axis.vertical,
+        // The file panel gives renderers a loose width; without the Align
+        // the scroll views shrink to the code and the panel centers them.
+        return Align(
+          alignment: Alignment.topLeft,
           child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: HighlightView(
-              snapshot.data ?? '',
-              language: languageForExtension(widget.file.extension),
-              theme: atomOneDarkTheme,
-              padding: const EdgeInsets.all(12),
-              textStyle: TextStyle(
-                fontFamily: 'RobotoMono',
-                fontSize: 13,
+            scrollDirection: Axis.vertical,
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: HighlightView(
+                snapshot.data ?? '',
+                language: languageForExtension(widget.file.extension),
+                theme: atomOneDarkTheme,
+                padding: const EdgeInsets.all(12),
+                textStyle: TextStyle(
+                  fontFamily: 'RobotoMono',
+                  fontSize: 13,
+                ),
               ),
             ),
           ),
