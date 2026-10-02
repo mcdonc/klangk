@@ -401,7 +401,10 @@ void main() {
     test('logged-in non-admin on /admin/users -> /workspaces (#2669)', () {
       expect(
         guardAdminRoute(
-            isLoggedIn: true, canAccessAdmin: false, loc: '/admin/users'),
+            isLoggedIn: true,
+            permissionsLoaded: true,
+            canAccessAdmin: false,
+            loc: '/admin/users'),
         '/workspaces',
       );
     });
@@ -409,7 +412,10 @@ void main() {
     test('logged-in admin on /admin/users -> allowed (null)', () {
       expect(
         guardAdminRoute(
-            isLoggedIn: true, canAccessAdmin: true, loc: '/admin/users'),
+            isLoggedIn: true,
+            permissionsLoaded: true,
+            canAccessAdmin: true,
+            loc: '/admin/users'),
         isNull,
       );
     });
@@ -420,7 +426,10 @@ void main() {
       // the Events tab is their only section there.
       expect(
         guardAdminRoute(
-            isLoggedIn: true, canAccessAdmin: true, loc: '/admin/users'),
+            isLoggedIn: true,
+            permissionsLoaded: true,
+            canAccessAdmin: true,
+            loc: '/admin/users'),
         isNull,
       );
     });
@@ -431,7 +440,10 @@ void main() {
       // workspace list without ever seeing the login form.
       expect(
         guardAdminRoute(
-            isLoggedIn: false, canAccessAdmin: false, loc: '/admin/users'),
+            isLoggedIn: false,
+            permissionsLoaded: true,
+            canAccessAdmin: false,
+            loc: '/admin/users'),
         isNull,
       );
     });
@@ -439,7 +451,10 @@ void main() {
     test('non-admin on non-admin route -> allowed (null)', () {
       expect(
         guardAdminRoute(
-            isLoggedIn: true, canAccessAdmin: false, loc: '/workspaces'),
+            isLoggedIn: true,
+            permissionsLoaded: true,
+            canAccessAdmin: false,
+            loc: '/workspaces'),
         isNull,
       );
     });
@@ -449,11 +464,70 @@ void main() {
       // refreshListenable notification; the guard must answer every
       // evaluation identically (the #2670 lesson).
       final first = guardAdminRoute(
-          isLoggedIn: true, canAccessAdmin: false, loc: '/admin/users');
+          isLoggedIn: true,
+          permissionsLoaded: true,
+          canAccessAdmin: false,
+          loc: '/admin/users');
       final second = guardAdminRoute(
-          isLoggedIn: true, canAccessAdmin: false, loc: '/admin/users');
+          isLoggedIn: true,
+          permissionsLoaded: true,
+          canAccessAdmin: false,
+          loc: '/admin/users');
       expect(first, second);
       expect(first, '/workspaces');
+    });
+
+    test('holds a logged-in /admin route while permissions load (#3540)', () {
+      // The reachable flake path: a navigation to /admin/* lands between
+      // the token write and the /my-permissions response — bouncing on
+      // empty permissions parks an admin on /workspaces with nothing to
+      // re-attempt the route. The gate must hold until the fetch
+      // settles; its completion notify re-parses this location.
+      expect(
+        guardAdminRoute(
+          isLoggedIn: true,
+          permissionsLoaded: false,
+          canAccessAdmin: false,
+          loc: '/admin/users',
+        ),
+        isNull,
+      );
+    });
+
+    test('holds apply to every /admin-prefixed location (#3540)', () {
+      expect(
+        guardAdminRoute(
+          isLoggedIn: true,
+          permissionsLoaded: false,
+          canAccessAdmin: false,
+          loc: '/admin/events',
+        ),
+        isNull,
+      );
+    });
+
+    test('a settled non-admin session still bounces (#3540)', () {
+      expect(
+        guardAdminRoute(
+          isLoggedIn: true,
+          permissionsLoaded: true,
+          canAccessAdmin: false,
+          loc: '/admin/users',
+        ),
+        '/workspaces',
+      );
+    });
+
+    test('logged-out /admin routes never hold — guardAuth owns them', () {
+      expect(
+        guardAdminRoute(
+          isLoggedIn: false,
+          permissionsLoaded: false,
+          canAccessAdmin: false,
+          loc: '/admin/users',
+        ),
+        isNull,
+      );
     });
   });
 

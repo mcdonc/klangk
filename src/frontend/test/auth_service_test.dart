@@ -641,6 +641,32 @@ void main() {
       expect(service.permissionsLoaded, isFalse);
     });
 
+    test('a persisted boot token settles it via _loadToken', () async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/api/v1/my-permissions')) {
+          return http.Response(
+            jsonEncode({
+              'user_id': 'u',
+              'email': 'a@b.c',
+              'is_admin': false,
+              'permissions': <String, List<String>>{},
+              'groups': <Map<String, dynamic>>[],
+            }),
+            200,
+          );
+        }
+        return http.Response('{}', 200);
+      });
+      SharedPreferences.setMockInitialValues({'klangk_jwt': 'boot-token'});
+
+      final service = AuthService();
+      expect(service.permissionsLoaded, isFalse);
+      await Future.delayed(Duration.zero);
+      await Future.delayed(Duration.zero);
+      expect(service.isLoggedIn, isTrue);
+      expect(service.permissionsLoaded, isTrue);
+    });
+
     test('a 401 from the permission fetch clears the session, not settles',
         () async {
       testAuthHttpClientOverride = MockClient((request) async {

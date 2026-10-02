@@ -105,8 +105,8 @@ String? guardAuth({
 /// nothing re-attempts the stash — the user is parked there. The
 /// permission fetch's completion fires the notification that re-parses
 /// this same location, and the gate then decides with live data. A hold
-/// is safe: the login page is a legitimate resting surface for a
-/// logged-in user for the fraction of a second the fetch takes.
+/// is safe: the gate holds on whatever public page the user is on for
+/// the fraction of a second the fetch takes.
 ///
 /// The target is permission-checked against the *current* session: an
 /// `/admin`-prefixed target (e.g. stashed by an admin's logout or expiry,
@@ -153,6 +153,19 @@ String? guardLoggedInPublicRoute({
 /// redirect even though the app-bar admin icon is gated, and its page is
 /// a dead end ("No admin sections available") for them.
 ///
+/// While [permissionsLoaded] is false — the session's token just landed
+/// and `/my-permissions` is still in flight — the gate HOLDS (returns
+/// null) instead of bouncing (#3540): `canAccessAdmin` reads empty
+/// permissions at that instant, so a mid-login navigation to a stashed
+/// or typed `/admin` URL would bounce an admin to `/workspaces`, and
+/// once the fetch completes nothing re-attempts the route — the user
+/// stays parked there. The permission fetch's completion fires the
+/// notification that re-parses this same location: an admin stays put,
+/// a non-admin is bounced then. The transient hold leaves a non-admin
+/// on the admin page for the fetch's duration — its data fetches are
+/// refused, and the settle bounce lands them on `/workspaces` — the
+/// bounded cost of not parking admins permanently.
+///
 /// Fires only for *logged-in* users: a logged-out visitor must keep the
 /// `guardAuth` flow (stash + `/login`), and `guardLoggedInPublicRoute`
 /// already rejects `/admin`-prefixed stashes for non-admins on login
@@ -165,11 +178,13 @@ String? guardLoggedInPublicRoute({
 /// every refreshListenable notification) all agree.
 String? guardAdminRoute({
   required bool isLoggedIn,
+  required bool permissionsLoaded,
   required bool canAccessAdmin,
   required String loc,
 }) {
-  if (isLoggedIn && !canAccessAdmin && loc.startsWith('/admin')) {
-    return '/workspaces';
+  if (isLoggedIn && loc.startsWith('/admin')) {
+    if (!permissionsLoaded) return null;
+    if (!canAccessAdmin) return '/workspaces';
   }
   return null;
 }
@@ -247,6 +262,7 @@ String? evaluateGuards({
       ) ??
       guardAdminRoute(
         isLoggedIn: isLoggedIn,
+        permissionsLoaded: permissionsLoaded,
         canAccessAdmin: canAccessAdmin,
         loc: loc,
       ) ??

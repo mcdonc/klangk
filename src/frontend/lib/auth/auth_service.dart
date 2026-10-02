@@ -221,8 +221,10 @@ class AuthService extends ChangeNotifier {
   Map<String, List<String>> get permissions => _permissions;
   List<Map<String, dynamic>> get groups => _groups;
 
-  /// Whether [permissions] reflects the live session (see
-  /// [_permissionsLoaded]). Read by the router's redirect guards.
+  /// Whether a permission fetch has settled for the CURRENT token —
+  /// during a token refresh the flag is false while [permissions] still
+  /// holds the previous fetch's data. Read by the router's redirect
+  /// guards (see [_permissionsLoaded]).
   bool get permissionsLoaded => _permissionsLoaded;
 
   /// Instance-admin status: the explicit `is_admin` flag from
