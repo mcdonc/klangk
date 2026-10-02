@@ -56,6 +56,10 @@ Extensions are installed at image build time into
 `~/.pi/agent/` at first login. Users can install additional extensions
 with `pi install`.
 
+The per-user settings provisioned at login also pin
+`tuiMode: "regular"`: Pi 1.0 runs its TUI fullscreen by default,
+which would replace the web terminal's normal scrollback.
+
 ## System prompt
 
 Agents share a system prompt installed at `~/AGENTS.md` on first
