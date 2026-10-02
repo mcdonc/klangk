@@ -18,6 +18,7 @@ import time
 from .. import podman
 from .. import fips as fips_mod
 from ..exceptions import AuditWriteError, NodeDrainingError
+from ..envexp import needs_expansion
 from ..notifier import notify_event
 from ..model.workspaces import EGRESS_MODE_ALLOW, EGRESS_MODE_INTERACTIVE
 from ..model.container_events import (
@@ -1829,6 +1830,17 @@ class ContainerRegistry(NetworkSidecarMixin):
             and bool(self.app.state.settings.userns)
         )
 
+    async def _expansion_base_env(self, spec: ContainerStartSpec):
+        """Image ENV for workspace-env expansion (#3526).
+
+        Fetched only when an extra value actually carries a ``$``
+        reference — the common no-reference start pays nothing.
+        """
+        if not spec.extra_env or not needs_expansion(spec.extra_env.values()):
+            return None
+        resolved_image = self._resolved_start_image(spec.image)
+        return await self.app.state.podman.image_env(resolved_image)
+
     async def _build_start_config(
         self, spec: ContainerStartSpec, host_ports: list[int]
     ) -> tuple[dict, str, bool]:
@@ -1848,6 +1860,9 @@ class ContainerRegistry(NetworkSidecarMixin):
                 ssl_dir,
                 _SSL_MOUNT_DEST,
             )
+        # #3526: expansion context for $-references in workspace env
+        # values — the image's ENV layer (see _expansion_base_env).
+        base_env = await self._expansion_base_env(spec)
         env_vars = build_env(
             self.app,
             spec.workspace_id,
@@ -1858,6 +1873,7 @@ class ContainerRegistry(NetworkSidecarMixin):
             agent_home,
             spec.extra_env,
             ssl_dir,
+            base_env=base_env,
         )
         await ensure_volumes(
             self.app,

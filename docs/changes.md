@@ -1211,6 +1211,73 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+<<<<<<< HEAD
+=======
+- **Bash-style variable references in workspace `env` values
+  (#3526).** Values set in a workspace's environment variables may now
+  use `$FOO`, `${FOO}`, `${FOO:-default}`, `${FOO:+alt}` and
+  `${FOO:?error}`, resolved at injection time — container start and any
+  exec that carries them — against the environment they land in: the
+  image's `ENV`, the vars klangk itself injects, and earlier entries of
+  the same list, in order. `\$` and `$$` produce a literal `$`; unset
+  references expand to an empty string (a warning names the variable);
+  command substitution is deliberately not supported. Malformed syntax
+  is rejected when the env values are saved, and archive import drops
+  invalid entries instead of storing them.
+
+- **`~/.local/bin` on the workspace `PATH` (#3522).** Every login shell in
+  a workspace container now puts `~/.local/bin` at the front of `PATH`,
+  ahead of `/opt/klangk/bin`, and creates the directory when missing, so
+  executables installed into it — `uv tool install` ships in the image —
+  resolve on the next shell and shadow the vendored klangk helpers. No
+  manual `mkdir` or `PATH` export is needed. The behavior ships in the
+  workspace image's `/etc/profile.d`, so existing images pick it up on
+  rebuild. See [The Shell](/features/the-shell/).
+
+- **HTML files render in the Files tab.** Opening an `.html` or `.htm`
+  file in the web app shows the rendered page in a sandboxed frame:
+  markup, inline CSS and embedded `data:` images display. The page's
+  scripts and forms do not run, and it loads nothing over the network,
+  including from klangk's own hosted apps. Preview is the default mode for
+  these files; View, Edit and Raw show the source, and the desktop app
+  shows the source only.
+
+- **`csp_connect_origins` / `KLANGKD_CSP_CONNECT_ORIGINS`.** Comma-separated URLs whose origins the browser site's Content-Security-Policy admits in `connect-src`, for frontend features that fetch a deploy-configured remote server browser-side. The soliplex feature's configured `soliplex_url` now declares itself via the new `csp_connect_origin` feature-config flag, fixing its "Failed to load providers" (fetches to the configured server were blocked by the first-party-only `connect-src 'self'`). The setting covers additional remotes the operator lists — each origin must be listed in advance, including soliplex servers added at runtime via the overlay. Only the `scheme://host[:port]` origin of each URL is used; reloadable on SIGHUP. See [Configuration File](reference/klangkd-config.md).
+
+- **`KLANGKWS_FEATURE_GITEA_OAUTH_CLIENT_ID` (#3405).** With
+  `KLANGKWS_FEATURE_GITEA_OAUTH_REDIRECT_URI` (the klangk origin
+  registered as the OAuth redirect in the Gitea application), a bare
+  client ID runs the browser authorization flow for any Gitea host a
+  workspace clones — no `KLANGKWS_FEATURE_OAUTH_PROVIDERS` entry
+  needed. Explicit provider entries keep winning over the shorthand.
+  See [Gitea](gitea.md).
+
+- **Workspace-tab plugins are re-created per workspace page (#3409).** The
+  tab registry holds factories registered once at boot from the
+  active-feature set; each workspace page creates, owns, and disposes its
+  own tab set, so `dispose()` is terminal and a tab may mix in
+  `ChangeNotifier`. Per-workspace state belongs on the tab instance (each
+  page starts from zero), never in statics. Requires `klangk-plugin-api`
+  v0.6.0 (`register` takes a factory; `tabs`/`disposeAll` became
+  `createTabs`/`clear`); boingball (dormant) carries the first tab.
+
+- **Git authentication via the browser for Gitea hosts (#3385).** A
+  `KLANGKWS_FEATURE_OAUTH_PROVIDERS` entry with
+  `flow: authorization_code_pkce` runs the OAuth authorization-code
+  flow with PKCE (S256) for hosts like Gitea that implement no device
+  flow: the first `git clone` opens an authorization popup, approval
+  happens on the Gitea page, and the tab session refreshes the token
+  headlessly afterwards. The operator registers a public OAuth
+  application in Gitea's user settings pointing at the klangk origin;
+  see the new [Gitea](/gitea/) docs chapter. GitHub and GitLab device
+  flows are unchanged.
+
+- **PyPI project links (#3369).** The `klangk` wheel now carries
+  `project.urls` — Homepage, Documentation, Repository, Issues, and
+  Changelog — so the PyPI project and release pages show the sidebar
+  links. Changelog points at the docs-rendered changelog page.
+
+>>>>>>> 12b5b9a (Resolve $-references in workspace env values at injection (#3532))
 - **`host` and `instance` fields on JSON log records (#3330).** Every
   JSON log line (console in `KLANGKD_LOG_FORMAT=json` and the
   `KLANGKD_LOG_FILE` sink) now carries `host` (the emitting machine's
@@ -2605,6 +2672,67 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
 
 ### Changed
 
+<<<<<<< HEAD
+=======
+- **Pi startup phone-home to pi.dev is off in workspaces (#3530).**
+  Workspace containers now set `PI_OFFLINE=1` (alongside the existing
+  `PI_SKIP_VERSION_CHECK=1`), so a Pi session inside a workspace no
+  longer requests `pi.dev/api/latest-version` or sends the
+  `pi.dev/api/report-install` telemetry ping the version-check flag
+  alone did not cover. Package update checks and helper-binary
+  downloads are skipped too; LLM completions (the llm-proxy path) and
+  explicit `pi install` are unaffected. The env is baked at container
+  creation, so workspaces running across the upgrade pick this up on
+  their next stop/start; a per-workspace env bag entry can still
+  override it.
+- **Workspace `env` values containing `$` are now expanded (#3526).**
+  A value like `$PATH:/x` that previously reached the container as
+  literal text now resolves against the workspace environment at
+  injection time. Deployments with pre-existing `$`-bearing values
+  should review them: `\$` or `$$` escapes a literal dollar.
+
+- **Workspace Pi agent updated to 0.99.2 (#3511).** Workspaces now
+  bundle Pi coding agent 0.99.2 (previously 0.83.0), bringing 16 minor
+  versions of upstream agent fixes and features to workspace terminals.
+  The tarball stays sha512-pinned and verified at image build, so the
+  upgrade changes no supply-chain posture.
+
+- **Workspace pinned tooling updated: uv 0.12.21 and process-compose
+  1.122.0 (#3512).** uv moves from 0.11.23 to 0.12.21 (compatible with the
+  image's Python 3.13) and the process-compose supervisor moves from
+  1.120.0 to 1.122.0. Both tarballs stay per-architecture sha256-verified at
+  image build.
+
+- **Soliplex keeps one server connected at a time (#3480).** Connecting to
+  a Soliplex server — interactive login or an open/no-auth server's Connect —
+  disconnects the currently active server, and the overlay states the rule.
+  The `soliplex_query_all` tool is removed; `soliplex_query` accepts several
+  comma-separated room ids or `"*"` in `room_id` and returns one
+  aggregated, per-room answer from the target server.
+
+- **Strict xenon complexity gate (#3415).** The complexity gate now runs
+  through `scripts/xenon-gate.sh` — also the `klangk:xenon` devenv task —
+  which fails when its parser cannot read a graded file instead of
+  silently skipping it: xenon exits 0 on parse failures, so a skipped
+  file used to leave the gate with no signal anywhere. The
+  `scripts/tests` suite re-runs the gate over the graded tree in CI, and
+  the `test` extra now pins `xenon==0.9.3` so that guard runs on stock
+  runners.
+
+- **`dart format` pre-commit hook verifies instead of rewriting
+  (#3376).** The hook now runs `dart format --output=none
+--set-exit-if-changed` via `scripts/dart-format-verify.sh` and fails
+  on unformatted files instead of silently rewriting them mid-commit —
+  rewrite mode flipped short→tall style in fresh worktrees (where no
+  `.dart_tool` exists to resolve the language version) and wedged prek's
+  stash rollback during cherry-picks. Files whose package has no
+  `.dart_tool` yet are skipped with a notice; run `dart format` yourself
+  before committing. The frontend CI workflow now checks formatting
+  after `pub get` (src/frontend `lib`+`test` and every feature package
+  with tests), and the five files that were off-canonical at the pinned
+  language version were reformatted.
+
+>>>>>>> 12b5b9a (Resolve $-references in workspace env values at injection (#3532))
 - **`GET /events` renamed to `GET /events/containers` (#3205).**
   The container start/stop history moved under the `/events`
   resource's Containers stream now that the identity/privilege audit

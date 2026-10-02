@@ -25,6 +25,7 @@ import time
 from collections.abc import AsyncGenerator
 
 from .util import BoundedOutputQueue
+from .envexp import expand_env_map, needs_expansion
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +104,15 @@ def classify(stderr: str) -> int:
     return 500
 
 
+def _parse_env_items(items) -> dict[str, str]:
+    """Parse ``K=V`` strings (Config.Env / image Env) into a dict."""
+    env: dict[str, str] = {}
+    for item in items:
+        key, _, value = item.partition("=")
+        env[key] = value
+    return env
+
+
 class Podman:
     """Owns the resolved podman binary path and the ~20 CLI wrappers.
 
@@ -118,6 +128,11 @@ class Podman:
         # the dict-of-locks pattern registry.py uses for service sessions.
         # Single event loop: no await between get and set, so no race.
         self._volume_locks: dict[str, asyncio.Lock] = {}
+        # Create-time env per container id (#3526) — Config.Env is
+        # immutable for a given id (a recreate mints a new id), so a
+        # cache entry never goes stale; entries are ~1KB, evicted when
+        # the container is removed (``remove_container``).
+        self._container_env_cache: dict[str, dict[str, str]] = {}
 
     def volume_create_lock(self, user_id: str) -> asyncio.Lock:
         """The lock serializing *user_id*'s quota count + volume create.
@@ -390,6 +405,69 @@ class Podman:
         return await self._inspect_first(
             ["container", "inspect", container_id]
         )
+
+    async def container_env(self, container_id: str) -> dict[str, str]:
+        """A container's create-time environment, cached per id (#3526).
+
+        ``Config.Env`` — image ENV plus every ``--env`` of the create —
+        is exactly what a ``podman exec`` inherits, so it is the
+        expansion context for workspace ``env`` values on the exec
+        path. A missing container (inspect None) yields an empty
+        context with a warning rather than failing the exec: the
+        expansion degrades to unset-variable semantics.
+        """
+        cached = self._container_env_cache.get(container_id)
+        if cached is not None:
+            return cached
+        info = await self.inspect_container(container_id)
+        if info is None:
+            # Do NOT cache the empty context: None here is "container
+            # gone / inspect empty", and a transient empty must not
+            # poison every later expansion for this container's life
+            # (#3526 review) — the next exec re-inspects.
+            logger.warning(
+                "could not inspect %s for env expansion; "
+                "expanding against an empty context",
+                container_id,
+            )
+            return {}
+        config = info.get("Config") or {}
+        env = _parse_env_items(config.get("Env") or [])
+        self._container_env_cache[container_id] = env
+        return env
+
+    async def image_env(self, image: str) -> dict[str, str]:
+        """An image's ENV layer as a dict (#3526).
+
+        The expansion context for workspace ``env`` values on the
+        container-create path (there is no container to inspect yet).
+        """
+        info = await self._inspect_first(["image", "inspect", image])
+        if info is None:
+            return {}
+        # Podman (5.x, verified) nests Env under Config in image
+        # inspect, same shape as Docker; a top-level Env is accepted
+        # too for forward compatibility.
+        raw = info.get("Config", {}).get("Env")
+        if raw is None:
+            raw = info.get("Env") or []
+        return _parse_env_items(raw)
+
+    async def _resolve_exec_extra_env(
+        self, container_id: str, extra_env: dict[str, str] | None
+    ) -> dict[str, str] | None:
+        """Expand workspace ``env`` values for an exec (#3526).
+
+        The exec choke point: values carrying ``$`` references are
+        resolved against the container's create-time environment (plus
+        earlier entries of the same mapping). The common no-``$`` case
+        (feature-flag literals, ``LC_ALL=C``) skips both the expansion
+        and the env fetch entirely.
+        """
+        if not extra_env or not needs_expansion(extra_env.values()):
+            return extra_env
+        base = await self.container_env(container_id)
+        return expand_env_map(extra_env, base)
 
     async def container_logs(self, container_id: str) -> str:
         """Return the container's combined stdout/stderr logs (empty if gone).
@@ -712,6 +790,7 @@ class Podman:
 
         Returns ``(returncode, stdout, stderr)``.
         """
+        extra_env = await self._resolve_exec_extra_env(container_id, extra_env)
         args = self._exec_args(
             container_id,
             cmd,
@@ -733,6 +812,7 @@ class Podman:
         timeout: float | None = 30.0,
     ) -> tuple[int, bytes, str]:
         """Like ``exec_container`` but returns raw stdout bytes."""
+        extra_env = await self._resolve_exec_extra_env(container_id, extra_env)
         args = self._exec_args(
             container_id, cmd, user=user, extra_env=extra_env
         )
@@ -774,6 +854,7 @@ class Podman:
         to disk.  stderr is discarded to avoid pipe-buffer deadlocks (the
         process would block if stderr fills while we only drain stdout).
         """
+        extra_env = await self._resolve_exec_extra_env(container_id, extra_env)
         args = self._exec_args(
             container_id, cmd, user=user, extra_env=extra_env
         )
@@ -829,6 +910,9 @@ class Podman:
             args.append("-f")  # catch stragglers
         args.append(container_id)
         rc, _out, err = await self.run(args, check=False)
+        # #3526 review: the removed id's env snapshot is dead — drop it
+        # so stop→start cycles cannot accumulate cache entries.
+        self._container_env_cache.pop(container_id, None)
         self._raise_rm_error(rc, err)
 
     async def list_containers(self, label: str) -> list[dict]:
