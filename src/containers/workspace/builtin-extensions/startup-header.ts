@@ -7,7 +7,7 @@
  * re-prints the startup header's sections — loaded context files,
  * skills, prompt templates, and extensions — as a persistent session
  * entry that never enters the LLM context. The sections are rebuilt
- * from live session data (pi 0.99.2 exposes no API to re-run its own
+ * from live session data (pi 1.0.0 exposes no API to re-run its own
  * renderer), so edge cases can diverge from the startup header: the
  * Skills section is empty when `enableSkillCommands` is off, and the
  * Extensions section lists files found on disk rather than ones that
