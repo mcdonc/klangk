@@ -57,6 +57,7 @@ class TestWriteSettings:
         assert settings["defaultModel"] == "test-model"
         assert settings["hideThinkingBlock"] is True
         assert settings["theme"] == "dark"
+        assert settings["quietStartup"] is True
         assert settings["extensions"] == [str(sc.IMAGE_DIR / "extensions")]
         assert settings["skills"] == [str(sc.IMAGE_DIR / "skills")]
         assert settings["prompts"] == [str(sc.IMAGE_DIR / "prompts")]
@@ -100,6 +101,7 @@ class TestWriteSettings:
         assert settings["defaultModel"] == "test-model"
         assert settings["hideThinkingBlock"] is True
         assert settings["theme"] == "dark"
+        assert settings["quietStartup"] is True
         assert settings["extensions"] == [str(image_dir / "extensions")]
         assert settings["skills"] == [str(image_dir / "skills")]
         assert settings["prompts"] == [str(image_dir / "prompts")]
@@ -120,14 +122,17 @@ class TestEnsureSettingsKeys:
         assert settings["skills"] == [str(sc.IMAGE_DIR / "skills")]
         assert settings["prompts"] == [str(sc.IMAGE_DIR / "prompts")]
         assert settings["theme"] == "dark"
+        assert settings["quietStartup"] is True
         assert settings["other"] == "keep"
 
-    def test_preserves_explicit_user_theme(self, fake_home):
+    def test_preserves_explicit_user_overrides(self, fake_home):
         agent = fake_home / ".pi" / "agent"
         agent.mkdir(parents=True)
-        # A user who explicitly chose a theme keeps it (#3535).
+        # A user who explicitly overrode a provisioned default keeps
+        # the override (#3535, #3537).
         old = {
             "theme": "light",
+            "quietStartup": False,
             "extensions": ["/e"],
             "skills": ["/s"],
             "prompts": ["/p"],
@@ -138,12 +143,14 @@ class TestEnsureSettingsKeys:
 
         settings = json.loads((agent / "settings.json").read_text())
         assert settings["theme"] == "light"
+        assert settings["quietStartup"] is False
 
     def test_no_write_when_all_present(self, fake_home):
         agent = fake_home / ".pi" / "agent"
         agent.mkdir(parents=True)
         full = {
             "theme": "dark",
+            "quietStartup": True,
             "extensions": ["/e"],
             "skills": ["/s"],
             "prompts": ["/p"],

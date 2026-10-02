@@ -71,6 +71,10 @@ def write_settings():
     # The web terminal surface is dark; pi's first-run background
     # auto-detection misfires there and can land on light (#3535).
     image_settings["theme"] = "dark"
+    # The startup header scrolls the web terminal on every launch and
+    # repeats on every fresh shell; /header (a builtin extension)
+    # re-prints it on demand (#3537).
+    image_settings["quietStartup"] = True
     # Point at image dirs directly — Pi also auto-discovers
     # ~/.pi/agent/{extensions,skills,prompts}/ for user-installed ones.
     image_settings["extensions"] = [str(IMAGE_DIR / "extensions")]
@@ -89,6 +93,7 @@ def ensure_settings_keys():
     settings = json.loads(settings_path.read_text())
     defaults = {
         "theme": "dark",
+        "quietStartup": True,
         "extensions": [str(IMAGE_DIR / "extensions")],
         "skills": [str(IMAGE_DIR / "skills")],
         "prompts": [str(IMAGE_DIR / "prompts")],

@@ -851,6 +851,17 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **Quiet Pi startup with on-demand `/header` (#3537).** The
+  per-user `~/.pi/agent/settings.json` provisioned at first workspace
+  login now sets `"quietStartup": true`, so the startup header
+  (context files, skills, prompts, extensions) no longer scrolls the
+  web terminal on every launch. A new `startup-header` builtin
+  extension registers `/header`, which re-prints that information at
+  any point in a session as a session entry that never enters the LLM
+  context. Existing homes without the key are backfilled on the next
+  shell; a user who sets `"quietStartup": false` keeps the startup
+  header.
+
 - **Dark default theme for the workspace Pi agent (#3535).** The
   per-user `~/.pi/agent/settings.json` provisioned at first workspace
   login now sets `"theme": "dark"`, matching the dark web terminal
