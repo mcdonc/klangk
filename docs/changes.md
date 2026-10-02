@@ -851,6 +851,13 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **Dark default theme for the workspace Pi agent (#3535).** The
+  per-user `~/.pi/agent/settings.json` provisioned at first workspace
+  login now sets `"theme": "dark"`, matching the dark web terminal
+  (pi's first-run background auto-detection misfires there). Existing
+  homes without a theme are backfilled to dark on next login; a user
+  who explicitly chose a theme keeps it.
+
 - **Bash-style variable references in workspace `env` values
   (#3526).** Values set in a workspace's environment variables may now
   use `$FOO`, `${FOO}`, `${FOO:-default}`, `${FOO:+alt}` and

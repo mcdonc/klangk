@@ -68,6 +68,9 @@ def write_settings():
     # Hide the thinking block — Ctrl+T toggle doesn't work in web
     # terminals because the browser captures it.
     image_settings["hideThinkingBlock"] = True
+    # The web terminal surface is dark; pi's first-run background
+    # auto-detection misfires there and can land on light (#3535).
+    image_settings["theme"] = "dark"
     # Point at image dirs directly — Pi also auto-discovers
     # ~/.pi/agent/{extensions,skills,prompts}/ for user-installed ones.
     image_settings["extensions"] = [str(IMAGE_DIR / "extensions")]
@@ -85,6 +88,7 @@ def ensure_settings_keys():
         return
     settings = json.loads(settings_path.read_text())
     defaults = {
+        "theme": "dark",
         "extensions": [str(IMAGE_DIR / "extensions")],
         "skills": [str(IMAGE_DIR / "skills")],
         "prompts": [str(IMAGE_DIR / "prompts")],
