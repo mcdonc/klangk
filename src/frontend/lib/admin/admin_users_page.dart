@@ -620,6 +620,11 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
   Widget build(BuildContext context) {
     // Re-resolve on each build: AuthService loads permissions asynchronously,
     // so the first build (before they arrive) would otherwise show no tabs.
+    // #3540: the router's admin gate can hold a login on this page while
+    // /my-permissions is still in flight — the page then mounts with empty
+    // permissions, and the fetch's settle notification must rebuild it.
+    // Watching the auth service provides exactly that rebuild.
+    context.watch<AuthService>();
     _resolvePermissions();
     final (tabs, views) = _buildTabsAndViews();
 
