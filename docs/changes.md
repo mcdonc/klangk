@@ -51,6 +51,9 @@ operators or integrators to act when upgrading.
   time), and `GET /api/v1/version` plus the audit row read it when the
   `version_file` setting is unset or unreadable — deployed hosts
   report the real version without any operator action.
+- **Word suggestions are off in the Files tab editor.** Typing in Edit
+  mode no longer opens a completion popup, so the arrow keys and Enter
+  always move the cursor or edit the text.
 
 ## \[v2.0a9] - 2026-10-01
 
