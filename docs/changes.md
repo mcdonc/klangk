@@ -2328,6 +2328,13 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
 
 ### Changed
 
+- **Workspace Pi agent updated to 1.0.0 (#3542).** Workspaces now
+  bundle Pi coding agent 1.0.0 (previously 0.99.2). Pi 1.0 runs its
+  TUI fullscreen by default; workspace provisioning pins
+  `tuiMode: "regular"` so the web terminal keeps its normal
+  scrollback. Users who prefer fullscreen can set `tuiMode` to
+  `"fullscreen"` in their own `~/.pi/agent/settings.json`.
+
 - **Pi startup phone-home to pi.dev is off in workspaces (#3530).**
   Workspace containers now set `PI_OFFLINE=1` (alongside the existing
   `PI_SKIP_VERSION_CHECK=1`), so a Pi session inside a workspace no
