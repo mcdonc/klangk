@@ -860,7 +860,7 @@ sync` report a clear permission-denied error.
   the same list, in order. `\$` and `$$` produce a literal `$`; unset
   references expand to an empty string (a warning names the variable);
   command substitution is deliberately not supported. Malformed syntax
-  is rejected when the settings are saved, and archive import drops
+  is rejected when the env values are saved, and archive import drops
   invalid entries instead of storing them.
 
 - **`~/.local/bin` on the workspace `PATH` (#3522).** Every login shell in

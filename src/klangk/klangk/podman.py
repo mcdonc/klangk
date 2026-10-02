@@ -130,8 +130,8 @@ class Podman:
         self._volume_locks: dict[str, asyncio.Lock] = {}
         # Create-time env per container id (#3526) — Config.Env is
         # immutable for a given id (a recreate mints a new id), so a
-        # cache entry never goes stale; entries are ~1KB and bounded
-        # by the workspace count.
+        # cache entry never goes stale; entries are ~1KB, evicted when
+        # the container is removed (``remove_container``).
         self._container_env_cache: dict[str, dict[str, str]] = {}
 
     def volume_create_lock(self, user_id: str) -> asyncio.Lock:
@@ -910,6 +910,9 @@ class Podman:
             args.append("-f")  # catch stragglers
         args.append(container_id)
         rc, _out, err = await self.run(args, check=False)
+        # #3526 review: the removed id's env snapshot is dead — drop it
+        # so stop→start cycles cannot accumulate cache entries.
+        self._container_env_cache.pop(container_id, None)
         self._raise_rm_error(rc, err)
 
     async def list_containers(self, label: str) -> list[dict]:

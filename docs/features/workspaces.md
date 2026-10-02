@@ -34,14 +34,15 @@ optionally configure:
   Values may reference the workspace environment with bash-style
   syntax — `$FOO`, `${FOO}`, `${FOO:-default}`, `${FOO:+alt}` and
   `${FOO:?error}` — resolved when klangk injects them (container
-  start, and any exec that carries them) against the environment they land in: the
+  start, and any exec that carries them) against the environment
+  they land in: the
   image's `ENV`, the vars klangk itself sets (`KLANGKWS_*`, feature
   flags) and earlier entries of the same list, in order. Unset
   references expand to the empty string (a warning names the
   variable); `${FOO:?error}` fails the start instead when a variable
   is required. `\$` and `$$` produce a literal `$`. Command
   substitution (`$(...)`) is deliberately not supported. Malformed
-  references are rejected when the settings are saved.
+  references are rejected when the env values are saved.
 - **Allowed egress domains** — restrict outbound network access to a
   list of hosts (e.g., `github.com:443`, `pypi.org`). See
   [Egress Filtering](egress-filtering.md).

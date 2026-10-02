@@ -1028,6 +1028,14 @@ class TestRemoveContainer:
         assert _args(m, 0) == ["stop", "-t", "5", "cid"]
         assert _args(m, 1) == ["rm", "-f", "cid"]
 
+    async def test_removes_cached_env_snapshot(self):
+        """#3526 review: a removed container's env snapshot must not
+        linger — stop→start cycles would otherwise leak entries."""
+        _p._container_env_cache["cid"] = {"PATH": "/x"}
+        with patch(EXEC, _exec(("", "", 0), ("", "", 0))):
+            await _p.remove_container("cid")
+        assert "cid" not in _p._container_env_cache
+
     async def test_no_force(self):
         with patch(EXEC, _exec(("", "", 0))) as m:
             await _p.remove_container("cid", force=False)
