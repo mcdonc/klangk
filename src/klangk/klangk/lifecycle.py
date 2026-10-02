@@ -15,7 +15,6 @@ unchanged except where noted inline (#2738 audit fixes). Owns:
 """
 
 import asyncio
-import json
 import logging
 import os
 import signal
@@ -34,8 +33,9 @@ from . import static
 from .auth import PASSWORD_CLASSES, password_class_counts
 from .bind_safety import enforce_no_auth_bind_safety
 from .exceptions import ConfigurationError
-from .settings import KlangkSettings
 from .logger import configure as configure_logging
+from .settings import KlangkSettings
+from .version import version_info
 from .model import (
     ACTION_ALLOW,
     ACTION_DENY,
@@ -122,27 +122,11 @@ _NON_RELOADABLE_SETTINGS: tuple[tuple[str, str], ...] = (
 )
 
 
-def _read_version_file(path: str) -> dict | None:
-    """The parsed version file, or ``None`` when it is absent,
-    unreadable, or not a JSON object."""
-    try:
-        with open(path) as f:
-            info = json.load(f)
-    except OSError, ValueError:
-        return None
-    return info if isinstance(info, dict) else None
-
-
 def _app_version(settings) -> str:
-    """The running build's version string ("dev" until a version file
-    is configured and readable — the same source the ``/version``
-    endpoint reads)."""
-    path = settings.version_file
-    if not path:
-        return "dev"
-    info = _read_version_file(path)
-    if info is None:
-        return "dev"
+    """The running build's version string — the same chain the
+    ``/version`` endpoint reads (``version_file`` setting, packaged
+    copy, dev block; #3517)."""
+    info = version_info(settings)
     return str(info.get("version") or "dev")
 
 
