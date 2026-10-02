@@ -46,6 +46,10 @@ operators or integrators to act when upgrading.
 
 ### Fixed
 
+- **Code files in the Files tab View sit at the top left.** The
+  highlighted code view fills the pane from the left edge instead of
+  showing as a narrow block centered in the pane.
+
 - **Terminal selection copy works in Firefox and Safari (#3516).** A
   mouse selection in the Terminal tab copies through the browser-delegate
   bridge, and Firefox/Safari reject a clipboard write that arrives over the
