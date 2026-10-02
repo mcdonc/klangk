@@ -9,7 +9,9 @@ is red (#3232 done-when). Attribution caveat: the toolkit's error monitor
 is a rolling, never-cleared window over the current app instance — an
 error surfacing in test B may originate in test A of the same session —
 and ``restart_app`` drains+raises *before* stopping so the outgoing
-instance cannot launder its errors away.
+instance cannot launder its errors away (one exception: a gone
+isolate's drain counts as empty, because that dead-connection state is
+exactly what the restart exists to recover — #3469).
 
 Env knobs: FMTK_E2E_FRESH=1 wipes the scratch state before the session
 (fresh DB); FMTK_E2E_HEADLESS forces Chrome mode (default auto: headless
