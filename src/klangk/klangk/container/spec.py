@@ -410,7 +410,7 @@ def _expand_extra_env(
         key, _, value = item.partition("=")
         ctx[key] = value
     for k, v in extra_env.items():
-        resolved = expand_env_value(v, ctx)
+        resolved = expand_env_value(str(v), ctx)
         ctx[k] = resolved
         env_vars.append(f"{k}={resolved}")
 

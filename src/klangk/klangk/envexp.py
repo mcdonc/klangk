@@ -53,6 +53,18 @@ _NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 # + "-word".
 _OPERATORS = (":-", ":+", ":?", "-", "+", "?")
 
+# Maximum ${...} nesting (a default containing a default …). Real
+# values never approach this; the cap turns a settings-supplied
+# recursion bomb (5000-deep nesting survives the syntax gate because
+# validation never walks the words) into a clean EnvExpansionError
+# instead of a RecursionError-turned-500 (#3526 review).
+_MAX_NESTING = 16
+
+# ${ ... } — used both to locate a reference's closing brace (only
+# "${" opens a nested level; a bare "{" is literal text, the way bash
+# treats it unquoted) and to measure a value's nesting statically.
+_BRACE_TOKENS = re.compile(r"\$\{|}")
+
 
 class EnvExpansionError(ValueError):
     """A workspace env value is syntactically invalid, or a ``:?``
@@ -96,13 +108,13 @@ def _default_word(raw, env, name, op, word) -> str:
     """The ``-``/``:-`` handler: the value, or *word* when unusable."""
     if _passes(op, env, name):
         return str(env[name])
-    return expand_env_value(word or "", env)
+    return _expand(word or "", env)
 
 
 def _alt_word(raw, env, name, op, word) -> str:
     """The ``+``/``:+`` handler: *word* when usable, else empty."""
     if _passes(op, env, name):
-        return expand_env_value(word or "", env)
+        return _expand(word or "", env)
     return ""
 
 
@@ -110,7 +122,7 @@ def _required_word(raw, env, name, op, word) -> str:
     """The ``?``/``:?`` handler: the value, or a hard error."""
     if _passes(op, env, name):
         return str(env[name])
-    message = expand_env_value(word or "", env) or (
+    message = _expand(word or "", env) or (
         f"{name}: parameter null or not set"
     )
     raise EnvExpansionError(f"env value {raw!r}: {message}")
@@ -163,20 +175,18 @@ def _split_operator(inner: str) -> tuple[str, str | None, str | None]:
 
 
 def _find_closing_brace(value: str, start: int) -> int | None:
-    """Index of the ``}`` closing the ``{`` at *start*, or None.
+    """Index of the ``}`` closing the ``${`` whose ``{`` is at *start*.
 
-    Counts braces so nested references (``${A:-${B}}``) close on the
-    right one; an unbalanced bare ``{`` inside a word therefore swallows
-    text the way an unquoted bash brace would.
+    Only ``${`` opens a nested level — a bare ``{`` inside a word is
+    literal text (bash, unquoted), so ``${FOO:-a{b}`` closes on the
+    trailing ``}`` and yields the default ``a{b``. Returns None when
+    the reference is unterminated.
     """
-    depth = 0
-    for i in range(start, len(value)):
-        if value[i] == "{":
-            depth += 1
-        elif value[i] == "}":
-            depth -= 1
-            if depth == 0:
-                return i
+    depth = 1
+    for m in _BRACE_TOKENS.finditer(value, start + 1):
+        depth += 1 if m.group() == "${" else -1
+        if depth == 0:
+            return m.start()
     return None
 
 
@@ -223,6 +233,13 @@ def expand_env_value(value: str, env: Mapping[str, str]) -> str:
     One left-to-right pass; expansion results are never re-scanned.
     See the module docstring for the supported syntax.
     """
+    _reject_deep_nesting(value)
+    return _expand(value, env)
+
+
+def _expand(value: str, env: Mapping[str, str]) -> str:
+    """The scanner loop behind :func:`expand_env_value` (the words of
+    an operator recurse back into this; results never re-scanned)."""
     out: list[str] = []
     i = 0
     n = len(value)
@@ -241,15 +258,35 @@ def expand_env_value(value: str, env: Mapping[str, str]) -> str:
     return "".join(out)
 
 
+def _reject_deep_nesting(value: str) -> None:
+    """Refuse values nested beyond ``_MAX_NESTING`` — a clean error, not
+    a RecursionError-turned-500 (#3526 review).
+
+    Static scan (``${`` opens a level, ``}`` closes one), so it also
+    catches depth the ``_AllSet`` validation context cannot walk.
+    """
+    depth = 0
+    for m in _BRACE_TOKENS.finditer(value):
+        depth += 1 if m.group() == "${" else -1
+        if depth > _MAX_NESTING:
+            raise EnvExpansionError(
+                f"invalid env value: more than {_MAX_NESTING} nested "
+                "references"
+            )
+
+
 def needs_expansion(values) -> bool:
     """Whether any of *values* contains a ``$`` worth expanding.
 
     The cheap guard both choke points check before paying for an env
     fetch (container/image inspect). Deliberately over-inclusive —
     escaped-only values (``\\$5``) take the expansion path and come
-    back unchanged, which is correct and rare.
+    back unchanged, which is correct and rare. Values are coerced to
+    str so a non-string that slipped past every gate (a legacy or
+    imported workspace row) degrades to ordinary text instead of a
+    TypeError-turned-500 (#3526 review).
     """
-    return any("$" in v for v in values)
+    return any("$" in str(v) for v in values)
 
 
 class _AllSet(dict):
@@ -271,18 +308,20 @@ class _AllSet(dict):
 
 def validate_env_value(value: str) -> None:
     """Raise :class:`EnvExpansionError` if *value* is syntactically
-    invalid (unterminated ``${``, bad name, unknown operator).
+    invalid (unterminated ``${``, bad name, unknown operator, nesting
+    beyond ``_MAX_NESTING``).
 
     Syntax only — never evaluates against a real environment.
     """
-    expand_env_value(value, _AllSet())
+    _reject_deep_nesting(value)
+    _expand(value, _AllSet())
 
 
 def validate_env_map(mapping: Mapping[str, str]) -> None:
     """Syntax-validate every value of a workspace ``env`` mapping."""
     for key, value in mapping.items():
         try:
-            validate_env_value(value)
+            validate_env_value(str(value))
         except EnvExpansionError as exc:
             raise EnvExpansionError(f"env {key!r}: {exc}") from exc
 
@@ -300,7 +339,7 @@ def expand_env_map(
     ctx: dict[str, str] = dict(base_env or {})
     out: dict[str, str] = {}
     for key, value in mapping.items():
-        resolved = expand_env_value(value, ctx)
+        resolved = expand_env_value(str(value), ctx)
         ctx[key] = resolved
         out[key] = resolved
     return out

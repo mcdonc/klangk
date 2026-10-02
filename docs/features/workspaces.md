@@ -34,7 +34,7 @@ optionally configure:
   Values may reference the workspace environment with bash-style
   syntax — `$FOO`, `${FOO}`, `${FOO:-default}`, `${FOO:+alt}` and
   `${FOO:?error}` — resolved when klangk injects them (container
-  start and every exec) against the environment they land in: the
+  start, and any exec that carries them) against the environment they land in: the
   image's `ENV`, the vars klangk itself sets (`KLANGKWS_*`, feature
   flags) and earlier entries of the same list, in order. Unset
   references expand to the empty string (a warning names the

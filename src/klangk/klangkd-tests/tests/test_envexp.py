@@ -80,6 +80,30 @@ def test_nested_words_expand_once():
     assert expand_env_value("${A:-${C:-c}}", env) == "c"
 
 
+def test_bare_brace_in_word_is_literal():
+    # Only "${" opens a level (bash, unquoted) — a bare "{" must not
+    # swallow the real closing brace (#3526 review).
+    assert expand_env_value("${FOO:-a{b}", {}) == "a{b"
+    assert expand_env_value("${FOO}{", {"FOO": "x"}) == "x{"
+
+
+def test_deep_nesting_rejected_cleanly():
+    deep = "${" * 20 + "X" + "}" * 20
+    with pytest.raises(EnvExpansionError, match="nested"):
+        expand_env_value(deep, {})
+    with pytest.raises(EnvExpansionError, match="nested"):
+        validate_env_map({"A": deep})
+
+
+def test_non_string_values_degrade_to_text():
+    # A legacy/imported row can hold non-strings past every gate —
+    # expansion must not TypeError (#3526 review).
+    assert expand_env_map({"A": 5}, {}) == {"A": "5"}
+    assert needs_expansion([5]) is False
+    assert needs_expansion(["$A", 5]) is True
+    validate_env_map({"A": 5})
+
+
 def test_no_rescan_of_results():
     # The value of FOO is the literal "$BAR"; it must not re-expand.
     assert expand_env_value("$FOO", {"FOO": "$BAR", "BAR": "no"}) == "$BAR"
@@ -206,6 +230,11 @@ def test_exec_path_inspect_failure_degrades_to_empty():
         p._resolve_exec_extra_env("cid", {"A": "${FOO:-d}"})
     )
     assert resolved == {"A": "d"}
+    # A failed inspect must not poison the cache: the next call
+    # inspects again (#3526 review).
+    assert p.inspects == 1
+    asyncio.run(p._resolve_exec_extra_env("cid", {"A": "${FOO:-d}"}))
+    assert p.inspects == 2
 
 
 def test_image_env_reads_podman_and_docker_shapes():
@@ -244,6 +273,25 @@ def test_api_model_accepts_null_and_expands_later():
     # Malformed references are a 422 at the gate, never a bricked start.
     with pytest.raises(ValidationError):
         CreateWorkspaceRequest(name="x", env={"A": "${OOPS"})
+
+
+def test_archive_import_sanitizes_expansion_syntax():
+    """The archive env gate (#3526): blocked prefixes still stripped,
+    non-strings coerced, malformed syntax dropped instead of stored."""
+    from klangk.api.workspaces import _sanitize_archive_env
+
+    sanitized = _sanitize_archive_env(
+        {
+            "OK": "$FOO:${BAR:-x}",
+            "NUM": 5,
+            "BAD": "${UNTERMINATED",
+            "KLANGKWS_TOKEN": "x",  # blocked prefix
+            "PATH": "/x",  # blocked name
+        }
+    )
+    assert sanitized == {"OK": "$FOO:${BAR:-x}", "NUM": "5"}
+    assert _sanitize_archive_env(None) is None
+    assert _sanitize_archive_env("junk") is None
 
 
 # --- start-path choke point (spec.build_env) ---
@@ -292,3 +340,25 @@ def test_build_env_expands_extras_against_image_and_klangk_env():
     as_map2 = dict(item.split("=", 1) for item in env2)
     assert as_map2["F"] == "on"
     assert as_map2["P"] == "plain"
+
+
+def test_build_env_never_expands_against_host_environment(monkeypatch):
+    """The no-host-env invariant (#3526): a daemon-side variable must
+    never be visible to workspace env expansion."""
+    monkeypatch.setenv("KLANGK_TEST_HOST_SECRET", "host-value")
+    app = _fake_app()
+    env_vars = build_env(
+        app,
+        "ws",
+        [],
+        "host",
+        "http",
+        "/b",
+        "/home/klangk",
+        {"LEAK": "$KLANGK_TEST_HOST_SECRET"},
+        None,
+        base_env=None,
+    )
+    as_map = dict(item.split("=", 1) for item in env_vars)
+    assert as_map["LEAK"] == ""
+    assert "host-value" not in env_vars

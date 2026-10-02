@@ -421,12 +421,16 @@ class Podman:
             return cached
         info = await self.inspect_container(container_id)
         if info is None:
+            # Do NOT cache the empty context: None here is "container
+            # gone / inspect empty", and a transient empty must not
+            # poison every later expansion for this container's life
+            # (#3526 review) — the next exec re-inspects.
             logger.warning(
                 "could not inspect %s for env expansion; "
                 "expanding against an empty context",
                 container_id,
             )
-            info = {}
+            return {}
         config = info.get("Config") or {}
         env = _parse_env_items(config.get("Env") or [])
         self._container_env_cache[container_id] = env
@@ -437,16 +441,16 @@ class Podman:
 
         The expansion context for workspace ``env`` values on the
         container-create path (there is no container to inspect yet).
-        Podman puts ``Env`` at the top level of image inspect; Docker
-        nests it under ``Config`` — read both.
         """
         info = await self._inspect_first(["image", "inspect", image])
         if info is None:
             return {}
-        raw = info.get("Env")
+        # Podman (5.x, verified) nests Env under Config in image
+        # inspect, same shape as Docker; a top-level Env is accepted
+        # too for forward compatibility.
+        raw = info.get("Config", {}).get("Env")
         if raw is None:
-            config = info.get("Config") or {}
-            raw = config.get("Env") or []
+            raw = info.get("Env") or []
         return _parse_env_items(raw)
 
     async def _resolve_exec_extra_env(

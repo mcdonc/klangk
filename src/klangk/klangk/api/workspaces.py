@@ -34,7 +34,11 @@ from .. import (
     stepup,
     wshandler,
 )
-from ..envexp import validate_env_map
+from ..envexp import (
+    EnvExpansionError,
+    validate_env_map,
+    validate_env_value,
+)
 from ..exceptions import (
     AuditWriteError,
     NodeDrainingError,
@@ -1611,22 +1615,47 @@ def _validate_archive_provenance(metadata: dict, app) -> None:
         )
 
 
+def _archive_env_key_allowed(key: str) -> bool:
+    """Not klangk-namespaced and not injection-capable."""
+    return not key.startswith(
+        ("KLANGKD_", "KLANGKWS_", "KLANGKBUILD_", "KLANGK_")
+    ) and key not in {"LD_PRELOAD", "LD_LIBRARY_PATH", "PATH"}
+
+
+def _archive_env_value_valid(key: str, value: str) -> bool:
+    """Syntax-valid expansion (#3526) — malformed entries are dropped
+    with a warning instead of stored to brick the first start."""
+    try:
+        validate_env_value(value)
+    except EnvExpansionError:
+        logger.warning(
+            "import: dropping env %r with invalid expansion syntax",
+            key,
+        )
+        return False
+    return True
+
+
 def _sanitize_archive_env(raw_env) -> dict | None:
-    """The archived env, stripped of klangk-namespaced and injection-capable
-    vars (stale server/container values are re-derived for the new
-    container; ``extra_env`` is appended last so a stale value would clobber
-    the live injection, #1740)."""
+    """The archived env, stripped of klangk-namespaced and
+    injection-capable vars (stale server/container values are
+    re-derived for the new container; ``extra_env`` is appended last
+    so a stale value would clobber the live injection, #1740).
+
+    #3526: archive env values may carry ``$`` references (the archive
+    predates or postdates this server's expansion), but the archive is
+    untrusted input — non-string values are coerced and entries whose
+    syntax fails the API gate's validation are dropped, never stored
+    to brick the imported workspace's first start.
+    """
     if not isinstance(raw_env, dict):
         return None
-    blocked = {"LD_PRELOAD", "LD_LIBRARY_PATH", "PATH"}
-    return {
-        k: v
-        for k, v in raw_env.items()
-        if not k.startswith(
-            ("KLANGKD_", "KLANGKWS_", "KLANGKBUILD_", "KLANGK_")
-        )
-        and k not in blocked
-    }
+    sanitized: dict[str, str] = {}
+    for k, v in raw_env.items():
+        value = str(v)
+        if _archive_env_key_allowed(k) and _archive_env_value_valid(k, value):
+            sanitized[str(k)] = value
+    return sanitized
 
 
 def _archive_egress_mode(egress_mode) -> str:
