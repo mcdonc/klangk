@@ -569,6 +569,99 @@ void main() {
     });
   });
 
+  group('permissionsLoaded lifecycle (#3540)', () {
+    // Full-session client: login 200, empty config, my-permissions 200.
+    MockClient _sessionClient({bool isAdmin = false}) {
+      return MockClient((request) async {
+        if (request.url.path.contains('/api/v1/auth/login')) {
+          return http.Response(jsonEncode({'access_token': 'tok'}), 200);
+        }
+        if (request.url.path.contains('/api/v1/config')) {
+          return http.Response('{}', 200);
+        }
+        if (request.url.path.contains('/api/v1/my-permissions')) {
+          return http.Response(
+            jsonEncode({
+              'user_id': 'u',
+              'email': 'a@b.c',
+              'is_admin': isAdmin,
+              'permissions': {},
+              'groups': [],
+            }),
+            200,
+          );
+        }
+        return http.Response('', 200);
+      });
+    }
+
+    test('login settles it once the permission fetch completes', () async {
+      testAuthHttpClientOverride = _sessionClient(isAdmin: true);
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service.permissionsLoaded, isFalse);
+
+      await service.login('user', 'pass');
+      expect(service.isLoggedIn, isTrue);
+      expect(service.permissionsLoaded, isTrue);
+    });
+
+    test('a failed permission fetch still settles it (no eternal hold)',
+        () async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/api/v1/auth/login')) {
+          return http.Response(jsonEncode({'access_token': 'tok'}), 200);
+        }
+        if (request.url.path.contains('/api/v1/config')) {
+          return http.Response('{}', 200);
+        }
+        throw Exception('boom');
+      });
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      await service.login('user', 'pass');
+      expect(service.isLoggedIn, isTrue);
+      expect(service.permissionsLoaded, isTrue);
+      expect(service.canAdminSection, isFalse);
+    });
+
+    test('logout clears it with the session', () async {
+      testAuthHttpClientOverride = _sessionClient();
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      await service.login('user', 'pass');
+      expect(service.permissionsLoaded, isTrue);
+
+      await service.logout();
+      expect(service.isLoggedIn, isFalse);
+      expect(service.permissionsLoaded, isFalse);
+    });
+
+    test('a 401 from the permission fetch clears the session, not settles',
+        () async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/api/v1/auth/login')) {
+          return http.Response(jsonEncode({'access_token': 'tok'}), 200);
+        }
+        if (request.url.path.contains('/api/v1/my-permissions')) {
+          return http.Response('unauthorized', 401);
+        }
+        return http.Response('{}', 200);
+      });
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      await service.login('user', 'pass');
+      expect(service.isLoggedIn, isFalse);
+      expect(service.permissionsLoaded, isFalse);
+    });
+  });
+
   group('mustChangePassword (#3172)', () {
     test('login sets mustChangePassword from response', () async {
       testAuthHttpClientOverride = MockClient((request) async {

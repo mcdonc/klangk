@@ -4367,3 +4367,11 @@ users(id)`, so the decider handler passing the decider's email violated the
   and the FIPS host image's `cryptography` relink builds from a
   sha256-pinned GitHub tag tarball when PyPI publishes no source release
   for the locked version.
+
+- **Admin deep-link login lands on the requested admin page (#3540).**
+  The post-login redirect now holds the login page until the session's
+  permission data has loaded, then routes to the destination with live
+  permissions. Previously a redirect evaluated while `/my-permissions`
+  was still in flight tested the admin gate against empty permissions
+  and landed the user on the workspaces page instead; the requested
+  admin page was never re-attempted.

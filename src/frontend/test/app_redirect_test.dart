@@ -121,6 +121,7 @@ void main() {
           publicRoutes: routes,
           featurePaths: featurePaths,
           canAccessAdmin: auth.isAdmin,
+          permissionsLoaded: true,
         );
       },
       routes: [

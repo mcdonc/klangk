@@ -110,6 +110,7 @@ class _KlangkAppState extends State<KlangkApp> {
           publicRoutes: routes,
           featurePaths: featurePaths,
           canAccessAdmin: auth.canAdminSection,
+          permissionsLoaded: auth.permissionsLoaded,
         );
       },
       routes: [

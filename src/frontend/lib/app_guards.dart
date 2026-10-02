@@ -96,6 +96,18 @@ String? guardAuth({
 /// Feature routes are excluded: they are public but a logged-in user may
 /// legitimately navigate to them.
 ///
+/// While [permissionsLoaded] is false — the session's token just landed
+/// and `/my-permissions` is still in flight — the gate HOLDS (returns
+/// null) instead of bouncing (#3540). Deciding the target at that
+/// instant tests `canAdminSection` against empty permissions, so an
+/// admin's stashed `/admin`-prefixed target would take the
+/// non-admin fallback to `/workspaces`, and once permissions arrive
+/// nothing re-attempts the stash — the user is parked there. The
+/// permission fetch's completion fires the notification that re-parses
+/// this same location, and the gate then decides with live data. A hold
+/// is safe: the login page is a legitimate resting surface for a
+/// logged-in user for the fraction of a second the fetch takes.
+///
 /// The target is permission-checked against the *current* session: an
 /// `/admin`-prefixed target (e.g. stashed by an admin's logout or expiry,
 /// then inherited by whoever logs in next on this browser) falls back to
@@ -115,12 +127,14 @@ String? guardAuth({
 /// Returns the redirect target, or null to allow.
 String? guardLoggedInPublicRoute({
   required bool isLoggedIn,
+  required bool permissionsLoaded,
   required String loc,
   required Set<String> publicRoutes,
   required Set<String> featurePaths,
   required bool canAccessAdmin,
 }) {
   if (isLoggedIn && publicRoutes.contains(loc) && !featurePaths.contains(loc)) {
+    if (!permissionsLoaded) return null;
     final target = pendingRedirect;
     if (target == null) return '/workspaces';
     if (target.startsWith('/admin') && !canAccessAdmin) {
@@ -206,6 +220,7 @@ String? evaluateGuards({
   required Set<String> publicRoutes,
   required Set<String> featurePaths,
   required bool canAccessAdmin,
+  required bool permissionsLoaded,
 }) {
   if (bannerRequired) {
     return guardBanner(bannerRequired: true, isLoggedIn: isLoggedIn, loc: loc);
@@ -224,6 +239,7 @@ String? evaluateGuards({
       ) ??
       guardLoggedInPublicRoute(
         isLoggedIn: isLoggedIn,
+        permissionsLoaded: permissionsLoaded,
         loc: loc,
         publicRoutes: publicRoutes,
         featurePaths: featurePaths,

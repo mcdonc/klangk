@@ -210,8 +210,20 @@ class AuthService extends ChangeNotifier {
   List<Map<String, dynamic>> _groups = [];
   bool _isAdmin = false;
 
+  /// True once this session's permission fetch has settled (a 200, a
+  /// refusal, or a network error — anything but still-in-flight or a
+  /// cleared session). The login-page redirect guard holds while it is
+  /// false: a mid-login re-parse would otherwise test `canAdminSection`
+  /// against empty permissions and bounce an admin's stashed
+  /// `/admin`-prefixed target to `/workspaces` (#3540).
+  bool _permissionsLoaded = false;
+
   Map<String, List<String>> get permissions => _permissions;
   List<Map<String, dynamic>> get groups => _groups;
+
+  /// Whether [permissions] reflects the live session (see
+  /// [_permissionsLoaded]). Read by the router's redirect guards.
+  bool get permissionsLoaded => _permissionsLoaded;
 
   /// Instance-admin status: the explicit `is_admin` flag from
   /// /my-permissions, derived server-side from `admins`-group
@@ -418,11 +430,17 @@ class AuthService extends ChangeNotifier {
         _isAdmin = data['is_admin'] == true;
       } else if (resp.statusCode == 401) {
         await _clearToken(preserveRedirect: true);
+        return;
       }
     } catch (e) {
       // coverage:ignore-start
       debugPrint('[AuthService] fetch permissions failed: $e');
     } // coverage:ignore-end
+    // Every settled outcome except the 401 (which cleared the session
+    // and with it this flag) marks the fetch resolved: a failed or
+    // refused fetch leaves empty permissions, and the guards must not
+    // hold the login page forever on its account (#3540).
+    _permissionsLoaded = true;
   }
 
   /// Refresh permissions from the server (call after group changes).
@@ -454,6 +472,10 @@ class AuthService extends ChangeNotifier {
 
   Future<void> _saveToken(String token) async {
     _token = token;
+    // A fresh token starts a permission-fetch cycle; until it settles,
+    // the guards hold instead of bouncing (see _permissionsLoaded,
+    // #3540).
+    _permissionsLoaded = false;
     await writeToken(token);
     // Bind the fresh token to the browser's non-extractable key right
     // away (#3218): the unbound token exists in JS-readable form only
@@ -527,6 +549,7 @@ class AuthService extends ChangeNotifier {
     _refreshTimer = null;
     _token = null;
     _permissions = {};
+    _permissionsLoaded = false;
     _groups = [];
     _isAdmin = false;
     _mustChangePassword = false;
