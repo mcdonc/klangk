@@ -5,6 +5,8 @@ import 'dart:typed_data';
 import 'package:flutter/widgets.dart';
 import 'package:web/web.dart' as web;
 
+import 'clipboard_flush.dart';
+
 /// Open a URL in a new browser tab.
 void openUrl(String url) {
   web.window.open(url, '_blank');
@@ -170,7 +172,15 @@ void Function() installPageKeyListener(bool Function() shouldSuppress) {
 /// host `navigator.clipboard` is `undefined`, so `writeText` is unavailable
 /// and terminal copy via the bridge silently failed (#2166). Fall back to
 /// `document.execCommand('copy')` against a transient `<textarea>`, which
-/// works in all contexts. Returns whether the copy succeeded.
+/// works in all contexts.
+///
+/// When both paths fail the permission gate — Firefox and Safari reject
+/// `writeText` outside the user-activation task, so a clipboard write that
+/// arrives over the WebSocket bridge (the terminal-selection copy path)
+/// never passes — the text is armed on [ClipboardFlushController] and
+/// delivered on the next input event, whose handler runs inside a gesture
+/// task and is therefore permitted (#3516). Returns whether the copy is
+/// handled: written now, or scheduled for the next input event.
 Future<bool> setClipboardText(String text) async {
   // Prefer the async Clipboard API. It is secure-context-only (HTTPS /
   // localhost); over plain HTTP `navigator.clipboard` is `undefined`, so the
@@ -182,20 +192,90 @@ Future<bool> setClipboardText(String text) async {
   } catch (e) {
     debugPrint('[WebHelpers] clipboard.writeText failed, falling back: $e');
   }
+  var copied = false;
+  try {
+    copied = _execCommandCopy(text);
+  } catch (e) {
+    // A throw here would surface as an unhandled async rejection in
+    // fire-and-forget callers (copy buttons) — report it and take the
+    // deferred path below instead.
+    debugPrint('[WebHelpers] execCommand copy failed: $e');
+  }
+  if (copied) return true;
+  // Both immediate paths were rejected (Firefox/Safari, outside a gesture
+  // task — see the doc above). Arm the deferred flush: the next input event
+  // delivers the text to the clipboard from inside its gesture task (#3516).
+  _clipboardFlush.arm(text);
+  _installFlushListeners();
+  debugPrint('[WebHelpers] clipboard write deferred to the next input event');
+  return true;
+}
+
+// Deferred clipboard flush (#3516): state plus one capture-phase listener
+// pair (pointerdown, keydown) installed on first arm and removed once the
+// flush succeeds. The controller holds the policy; these keep it wired to
+// the DOM.
+final ClipboardFlushController _clipboardFlush =
+    ClipboardFlushController(_writeClipboardViaApi);
+void Function()? _removeFlushListeners;
+
+/// One clipboard write attempt for the deferred flush, reported as a bool so
+/// [ClipboardFlushController] can retry it on the next input event after a
+/// rejection. Both immediate paths from [setClipboardText] are retried here:
+/// the async Clipboard API, then `execCommand('copy')`, which is what an
+/// insecure context (plain HTTP, where `navigator.clipboard` is undefined —
+/// #2166) has available — and inside the gesture listener it is permitted.
+Future<bool> _writeClipboardViaApi(String text) async {
+  try {
+    await web.window.navigator.clipboard.writeText(text).toDart;
+    return true;
+  } catch (e) {
+    debugPrint('[WebHelpers] deferred clipboard writeText failed: $e');
+  }
   try {
     return _execCommandCopy(text);
   } catch (e) {
-    // A throw here would surface as an unhandled async rejection in
-    // fire-and-forget callers (copy buttons) — report failure instead.
-    debugPrint('[WebHelpers] execCommand copy failed: $e');
+    debugPrint('[WebHelpers] deferred execCommand copy failed: $e');
     return false;
   }
 }
 
+void _installFlushListeners() {
+  if (_removeFlushListeners != null) return;
+  // The listener body must stay synchronous for `.toJS` (async closures
+  // cannot cross the JS boundary); the flush continuation runs via .then.
+  final handler = ((web.Event _) {
+    _clipboardFlush.flush().then((_) {
+      if (!_clipboardFlush.isArmed) _uninstallFlushListeners();
+    });
+  }).toJS;
+  // Losing focus means the user may have copied something elsewhere; drop
+  // the pending write so its next input event cannot clobber the newer
+  // clipboard content with stale text (review #3521: stale-clobber guard).
+  final onBlur = ((web.Event _) {
+    _clipboardFlush.clear();
+    _uninstallFlushListeners();
+  }).toJS;
+  web.document.addEventListener('pointerdown', handler, true.toJS);
+  web.document.addEventListener('keydown', handler, true.toJS);
+  web.window.addEventListener('blur', onBlur);
+  _removeFlushListeners = () {
+    web.document.removeEventListener('pointerdown', handler, true.toJS);
+    web.document.removeEventListener('keydown', handler, true.toJS);
+    web.window.removeEventListener('blur', onBlur);
+  };
+}
+
+void _uninstallFlushListeners() {
+  _removeFlushListeners?.call();
+  _removeFlushListeners = null;
+}
+
 // `document.execCommand('copy')` is deprecated but is the only clipboard-write
 // path available in an insecure context (plain HTTP). It needs the document
-// focused and (modern browsers) a user gesture; the bridge copy originates
-// from the user's selection, so activation is typically still valid.
+// focused and (modern browsers) a user gesture. Firefox and Safari reject it
+// for bridge-delivered writes just like `writeText` — the deferred flush
+// below covers that case (#3516).
 bool _execCommandCopy(String text) {
   final doc = web.document;
   final ta = doc.createElement('textarea') as web.HTMLTextAreaElement;
