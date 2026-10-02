@@ -1179,6 +1179,61 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+<<<<<<< HEAD
+=======
+- **`~/.local/bin` on the workspace `PATH` (#3522).** Every login shell in
+  a workspace container now puts `~/.local/bin` at the front of `PATH`,
+  ahead of `/opt/klangk/bin`, and creates the directory when missing, so
+  executables installed into it — `uv tool install` ships in the image —
+  resolve on the next shell and shadow the vendored klangk helpers. No
+  manual `mkdir` or `PATH` export is needed. The behavior ships in the
+  workspace image's `/etc/profile.d`, so existing images pick it up on
+  rebuild. See [The Shell](/features/the-shell/).
+
+- **HTML files render in the Files tab.** Opening an `.html` or `.htm`
+  file in the web app shows the rendered page in a sandboxed frame:
+  markup, inline CSS and embedded `data:` images display. The page's
+  scripts and forms do not run, and it loads nothing over the network,
+  including from klangk's own hosted apps. Preview is the default mode for
+  these files; View, Edit and Raw show the source, and the desktop app
+  shows the source only.
+
+- **`csp_connect_origins` / `KLANGKD_CSP_CONNECT_ORIGINS`.** Comma-separated URLs whose origins the browser site's Content-Security-Policy admits in `connect-src`, for frontend features that fetch a deploy-configured remote server browser-side. The soliplex feature's configured `soliplex_url` now declares itself via the new `csp_connect_origin` feature-config flag, fixing its "Failed to load providers" (fetches to the configured server were blocked by the first-party-only `connect-src 'self'`). The setting covers additional remotes the operator lists — each origin must be listed in advance, including soliplex servers added at runtime via the overlay. Only the `scheme://host[:port]` origin of each URL is used; reloadable on SIGHUP. See [Configuration File](reference/klangkd-config.md).
+
+- **`KLANGKWS_FEATURE_GITEA_OAUTH_CLIENT_ID` (#3405).** With
+  `KLANGKWS_FEATURE_GITEA_OAUTH_REDIRECT_URI` (the klangk origin
+  registered as the OAuth redirect in the Gitea application), a bare
+  client ID runs the browser authorization flow for any Gitea host a
+  workspace clones — no `KLANGKWS_FEATURE_OAUTH_PROVIDERS` entry
+  needed. Explicit provider entries keep winning over the shorthand.
+  See [Gitea](gitea.md).
+
+- **Workspace-tab plugins are re-created per workspace page (#3409).** The
+  tab registry holds factories registered once at boot from the
+  active-feature set; each workspace page creates, owns, and disposes its
+  own tab set, so `dispose()` is terminal and a tab may mix in
+  `ChangeNotifier`. Per-workspace state belongs on the tab instance (each
+  page starts from zero), never in statics. Requires `klangk-plugin-api`
+  v0.6.0 (`register` takes a factory; `tabs`/`disposeAll` became
+  `createTabs`/`clear`); boingball (dormant) carries the first tab.
+
+- **Git authentication via the browser for Gitea hosts (#3385).** A
+  `KLANGKWS_FEATURE_OAUTH_PROVIDERS` entry with
+  `flow: authorization_code_pkce` runs the OAuth authorization-code
+  flow with PKCE (S256) for hosts like Gitea that implement no device
+  flow: the first `git clone` opens an authorization popup, approval
+  happens on the Gitea page, and the tab session refreshes the token
+  headlessly afterwards. The operator registers a public OAuth
+  application in Gitea's user settings pointing at the klangk origin;
+  see the new [Gitea](/gitea/) docs chapter. GitHub and GitLab device
+  flows are unchanged.
+
+- **PyPI project links (#3369).** The `klangk` wheel now carries
+  `project.urls` — Homepage, Documentation, Repository, Issues, and
+  Changelog — so the PyPI project and release pages show the sidebar
+  links. Changelog points at the docs-rendered changelog page.
+
+>>>>>>> 88f1263 (Prepend ~/.local/bin to PATH in klangk workspaces (#3522) (#3523))
 - **`host` and `instance` fields on JSON log records (#3330).** Every
   JSON log line (console in `KLANGKD_LOG_FORMAT=json` and the
   `KLANGKD_LOG_FILE` sink) now carries `host` (the emitting machine's
