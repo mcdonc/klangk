@@ -9,15 +9,28 @@ a gone isolate with the tab on the app origin arms a marker, a state
 that outlives the window restarts the flutter run transparently, and a
 parked-away tab never arms. This scenario pins all three legs against
 the live stack.
+
+The 2026-09-10+ nightlies exposed a second leg (#3469): the first
+scenario to meet the dead instance reaches for
+``Harness.restart_app()`` — the designated recovery — whose pre-restart
+drain died on the same gone isolate, so the restart never ran and every
+following scenario failed on the dead connection (the flows group's
+nightly cascade). ``restart_app`` now treats a gone-isolate drain as an
+empty drain and relaunches; the scenario below pins that policy
+(including what must still raise) against stubbed drains.
 """
 
 from __future__ import annotations
 
 import time
 
+import pytest
+
 from fmtkharness import (
     BACKEND_PORT,
+    FmtkClient,
     FmtkError,
+    FlutterRun,
     ISOLATE_GONE_MARK,
     WEDGE_RECOVERY_SECONDS,
     cdp_eval,
@@ -83,3 +96,42 @@ def test_isolate_wedge_recovery(harness, app):
     app.flutter.isolate_gone_since = time.monotonic() - (WEDGE_RECOVERY_SECONDS + 5)
     assert app.recover_if_wedged(gone_error()) is True
     app.wait_for_login_page()
+
+
+def test_restart_app_survives_a_dead_isolate(harness, monkeypatch):
+    """The pre-restart drain must tolerate the state it recovers
+    (#3469): a gone isolate counts as an empty drain and the
+    stop/relaunch proceeds, while a live drain's real errors and any
+    other drain failure still raise."""
+    relaunched = []
+    monkeypatch.setattr(FlutterRun, "stop", lambda self: None)
+    monkeypatch.setattr(
+        FlutterRun, "launch", lambda self, url_suffix="": relaunched.append(url_suffix)
+    )
+
+    # a dead isolate's drain (the nightly cascade's exact failure):
+    # restart_app relaunches instead of raising, and clears the wedge
+    # marker the outgoing instance armed
+    def gone_drain(self):
+        raise gone_error()
+
+    monkeypatch.setattr(FmtkClient, "app_errors", gone_drain)
+    harness.flutter.isolate_gone_since = time.monotonic()
+    harness.restart_app()
+    assert relaunched == [""]
+    assert harness.flutter.isolate_gone_since is None
+
+    # a drain with real errors still fails the test before any stop
+    monkeypatch.setattr(FmtkClient, "app_errors", lambda self: [{"message": "boom"}])
+    with pytest.raises(FmtkError, match="app errors before restart_app"):
+        harness.restart_app()
+
+    # a drain failure that is not the gone-isolate signature raises —
+    # a broken drain must not quietly become a restart
+    def broken_drain(self):
+        raise FmtkError("fmtk get_app_errors failed: toolkit down (None)")
+
+    monkeypatch.setattr(FmtkClient, "app_errors", broken_drain)
+    with pytest.raises(FmtkError, match="toolkit down"):
+        harness.restart_app()
+    assert relaunched == [""]  # no further stop/launch ran
