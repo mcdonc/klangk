@@ -34,6 +34,33 @@ Future<void> pumpRenderer(WidgetTester tester, Widget child) async {
 }
 
 void main() {
+  testWidgets('code sits at the top left when hosted like the file panel',
+      (tester) async {
+    // The file panel hosts a renderer as the Expanded child of a Column
+    // with the default (centered) cross-axis alignment.
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 800,
+            height: 600,
+            child: Column(
+              children: [
+                Expanded(
+                  child: Builder(
+                    builder: (c) => CodeRenderer().build(c, codeFile()),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(find.byType(HighlightView)), Offset.zero);
+  });
+
   group('languageForExtension', () {
     test('maps known code extensions', () {
       expect(languageForExtension('dart'), 'dart');
