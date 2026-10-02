@@ -438,8 +438,8 @@ def build_env(
     # egress modes they could only ever fail against the netfilter; in
     # unrestricted modes this keeps them from being attempted. A
     # workspace env bag entry (appended later, last wins in podman) can
-    # still override — a deployer-level escape hatch, not a bypass of
-    # filtered modes. PI_SKIP_VERSION_CHECK stays for older Pi builds
+    # still override — settable by workspace owners/members via the env
+    # bag, not filtered here. PI_SKIP_VERSION_CHECK stays for older Pi builds
     # that predate PI_OFFLINE.
     env_vars.append("PI_OFFLINE=1")
     env_vars.append("PI_SKIP_VERSION_CHECK=1")

@@ -3278,7 +3278,7 @@ class TestStartContainer:
         Podman is last-wins on duplicate -e keys, so the property to pin
         is that each PI_* key appears exactly once — a stray later
         duplicate (the only way to override) would silently re-enable
-        pi.dev traffic.
+        the pi.dev phone-home attempts.
         """
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
