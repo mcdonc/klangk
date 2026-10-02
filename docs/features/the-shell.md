@@ -79,12 +79,13 @@ exec` — must see. (The health check is deliberately _not_ a profile
 - Edit `~/.bashrc` for **interactive niceties** (aliases, prompt
   customization) that only matter in a terminal you're typing into.
 - Install command-line tools into `~/.local/bin`: every login shell puts
-  that directory first on `PATH`, so the executables resolve immediately
-  and shadow the vendored `/opt/klangk/bin` helpers. `uv tool install
-<tool>` targets that directory, creates it on demand, and uv ships in
-  the image; other user-bin installers work the same way — `pipx`
-  (`uv tool install pipx`) or a manual `ln -s` of a downloaded binary
-  into the directory. No manual `PATH` export is needed.
+  that directory first on `PATH` and creates it when missing, so the
+  executables resolve immediately and shadow the vendored
+  `/opt/klangk/bin` helpers. `uv tool install <tool>` targets that
+  directory (uv ships in the image); other user-bin installers work the
+  same way — `pipx` (`uv tool install pipx`) or a manual `ln -s` of a
+  downloaded binary into the directory. No manual `mkdir` or `PATH`
+  export is needed.
 - Add scripts to `~/bin`
 - Configure `~/.gitconfig`, `~/.vimrc`, etc.
 

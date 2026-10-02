@@ -21,8 +21,9 @@
 # then re-prepends ~/.local/bin itself once the directory exists — a
 # duplicate entry that is harmless (first match wins, shadowing
 # unchanged). The prepend is skipped when HOME is unset or empty. The
-# directory itself need not exist: installers create it, and a PATH
-# entry naming a missing directory is harmless.
+# shell creates the directory itself (see the mkdir below), but the
+# prepend tolerates it missing regardless: a PATH entry naming a
+# missing directory is harmless.
 #
 # (The workspace health check is NOT a consumer of this: it runs a
 # non-login `bash -c` and sources nothing. See
@@ -37,6 +38,11 @@ case ":${PATH}:" in
 *) export PATH="/opt/klangk/bin:$PATH" ;;
 esac
 if [ -n "${HOME:-}" ]; then
+  # Create the directory up front (#3522): a manual
+  # `ln -s <binary> ~/.local/bin/foo` then works in a fresh workspace
+  # with no mkdir first. mkdir -p is idempotent; a failure (read-only
+  # home) stays quiet — a login shell must never break over this.
+  [ -d "${HOME}/.local/bin" ] || mkdir -p "${HOME}/.local/bin" 2>/dev/null || :
   case ":${PATH}:" in
   *:"${HOME}/.local/bin":*) ;;
   *) export PATH="${HOME}/.local/bin:$PATH" ;;
