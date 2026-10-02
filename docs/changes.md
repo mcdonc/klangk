@@ -2309,6 +2309,11 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
 
 ### Changed
 
+- **Workspace `env` values containing `$` are now expanded (#3526).**
+  A value like `$PATH:/x` that previously reached the container as
+  literal text now resolves against the workspace environment at
+  injection time. Deployments with pre-existing `$`-bearing values
+  should review them: `\$` or `$$` escapes a literal dollar.
 - **Pi startup phone-home to pi.dev is off in workspaces (#3530).**
   Workspace containers now set `PI_OFFLINE=1` (alongside the existing
   `PI_SKIP_VERSION_CHECK=1`), so a Pi session inside a workspace no
@@ -2320,11 +2325,6 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
   creation, so workspaces running across the upgrade pick this up on
   their next stop/start; a per-workspace env bag entry can still
   override it.
-- **Workspace `env` values containing `$` are now expanded (#3526).**
-  A value like `$PATH:/x` that previously reached the container as
-  literal text now resolves against the workspace environment at
-  injection time. Deployments with pre-existing `$`-bearing values
-  should review them: `\$` or `$$` escapes a literal dollar.
 
 - **Workspace Pi agent updated to 0.99.2 (#3511).** Workspaces now
   bundle Pi coding agent 0.99.2 (previously 0.83.0), bringing 16 minor
