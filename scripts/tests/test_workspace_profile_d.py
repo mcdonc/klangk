@@ -11,8 +11,8 @@ Behavioral tests, not grep-style: the snippet is sourced by a real POSIX
 ``sh`` with controlled ``PATH``/``HOME``, mirroring how ``/etc/profile``
 sources it via run-parts (under dash). On the dev host ``sh`` is
 bash-as-sh; ``SHELLS`` adds ``dash`` where available (CI's ubuntu
-runners have it), so the quoting-sensitive case pattern gets exercised
-under both.
+runners have it), and the matrix test runs every edge-case input under
+each available shell.
 """
 
 from __future__ import annotations
@@ -89,9 +89,9 @@ def test_sourcing_twice_is_idempotent() -> None:
 
 
 def test_entry_already_on_path_keeps_its_position() -> None:
-    # PATH inherited with BOTH entries present (a nested login shell
-    # before /etc/profile's reset, or an interactive shell spawned from
-    # one): the snippet must not duplicate or move either entry.
+    # PATH inherited with BOTH entries present (an interactive non-login
+    # shell spawned from a login shell): the snippet must not duplicate
+    # or move either entry.
     path_env = f"/home/klangk/.local/bin:/opt/klangk/bin:{BASE_PATH}"
     assert source_snippet(path_env, "/home/klangk") == path_env
 
@@ -128,10 +128,16 @@ def test_debian_skel_profile_reprepend_keeps_local_bin_first(
 
 @pytest.mark.parametrize("shell", SHELLS)
 def test_matrix_under_each_available_posix_shell(shell: str) -> None:
-    assert source_snippet(BASE_PATH, "/home/klangk", shell=shell) == LOCAL_FIRST
+    spaced = "/home/alice von neumann"
+    cases = [
+        (BASE_PATH, "/home/klangk", LOCAL_FIRST),
+        (BASE_PATH, spaced, f"{spaced}/.local/bin:/opt/klangk/bin:{BASE_PATH}"),
+        (BASE_PATH, None, KLANGK_ONLY),
+        (BASE_PATH, "", KLANGK_ONLY),
+    ]
+    for path_env, home, expected in cases:
+        assert source_snippet(path_env, home, shell=shell) == expected
     assert (
         source_snippet(BASE_PATH, "/home/klangk", again=True, shell=shell)
         == LOCAL_FIRST
     )
-    assert source_snippet(BASE_PATH, None, shell=shell) == KLANGK_ONLY
-    assert source_snippet(BASE_PATH, "", shell=shell) == KLANGK_ONLY

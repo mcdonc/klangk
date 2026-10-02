@@ -82,9 +82,9 @@ exec` — must see. (The health check is deliberately _not_ a profile
   that directory first on `PATH`, so the executables resolve immediately
   and shadow the vendored `/opt/klangk/bin` helpers. `uv tool install
 <tool>` targets that directory, creates it on demand, and uv ships in
-  the image; other user-bin installers work the same way — `pipx` once
-  you have it installed, or a manual `ln -s` of a downloaded binary into
-  the directory. No manual `PATH` export is needed.
+  the image; other user-bin installers work the same way — `pipx`
+  (`uv tool install pipx`) or a manual `ln -s` of a downloaded binary
+  into the directory. No manual `PATH` export is needed.
 - Add scripts to `~/bin`
 - Configure `~/.gitconfig`, `~/.vimrc`, etc.
 
