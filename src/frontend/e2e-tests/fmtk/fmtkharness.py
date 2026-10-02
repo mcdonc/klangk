@@ -2591,16 +2591,40 @@ class Harness:
 
         The app-error monitor is a rolling window that a restart would
         silently clear — drain it first so errors from the outgoing app
-        instance fail the test instead of being laundered away."""
-        errors = self.client.app_errors()
+        instance fail the test instead of being laundered away. An
+        outgoing instance whose isolate is already gone has no monitor
+        window left to drain, so that drain failure counts as empty
+        (:meth:`drain_errors_before_restart`) — this method is the
+        designated recovery for exactly that dead-connection state
+        (#3469)."""
+        errors = self.drain_errors_before_restart()
         if errors:
             raise FmtkError(f"app errors before restart_app: {errors}")
+        # The wedge marker describes the outgoing instance; the fresh
+        # launch starts the dwds race window clean (#3469).
+        self.flutter.isolate_gone_since = None
         url_suffix = ""
         if at_path is not None:
             self.flutter.launch_serial += 1
             url_suffix = f"/?e2e_boot={self.flutter.launch_serial}#{at_path}"
         self.flutter.stop()
         self.flutter.launch(url_suffix)
+
+    def drain_errors_before_restart(self) -> list:
+        """The outgoing instance's app errors, tolerating a gone isolate.
+
+        A dead debug connection leaves no error-monitor window to
+        launder — the state restart_app exists to recover — so a drain
+        that dies with the gone-isolate signature counts as an empty
+        drain (the deliberate trade FlutterRun.recover_from_wedge
+        documents). Any other drain failure still raises: a broken
+        drain must not quietly become a restart."""
+        try:
+            return self.client.app_errors()
+        except FmtkError as exc:
+            if ISOLATE_GONE_MARK in f"{exc}\n{exc.stderr}":
+                return []
+            raise
 
     def boot(self, fresh: bool = False) -> None:
         if fresh:
