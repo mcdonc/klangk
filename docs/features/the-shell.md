@@ -3,11 +3,13 @@
 Bash is the default shell for all workspace terminals. Two system files
 set up the environment before your personal `~/.bashrc` runs:
 
-- `/etc/profile.d/klangk-*.sh` — environment exports (`PATH=/opt/klangk/bin`,
-  `EDITOR`) sourced by **every login shell**, interactive or not. This is
-  why one-shot commands like `klangk exec` (`bash -lc`) still find
-  `pi` and the `klangk-*` helpers. (The workspace health check is the
-  exception — it runs as a non-login `bash -c` and sources nothing; see
+- `/etc/profile.d/klangk-*.sh` — environment exports (`PATH` with
+  `~/.local/bin` first, then `/opt/klangk/bin`, and `EDITOR`) sourced by
+  **every login shell**, interactive or not. This is why one-shot commands
+  like `klangk exec` (`bash -lc`) still find `pi`, the `klangk-*` helpers,
+  and tools you installed into `~/.local/bin` (`uv tool install`, `pipx`,
+  `pip install --user`). (The workspace health check is the exception — it
+  runs as a non-login `bash -c` and sources nothing; see
   [Health Check](health-check.md).)
 - `/etc/bash.bashrc` — interactive-shell setup: waits for container
   readiness, runs `on-shell-init` feature hooks, and (via the default
@@ -75,6 +77,11 @@ exec` — must see. (The health check is deliberately _not_ a profile
   consumer; see [Health Check](health-check.md).)
 - Edit `~/.bashrc` for **interactive niceties** (aliases, prompt
   customization) that only matter in a terminal you're typing into.
+- Install tools into `~/.local/bin` (`uv tool install`, `pipx install`,
+  `pip install --user`): every login shell puts that directory first on
+  `PATH`, so the executables resolve immediately and shadow the vendored
+  `/opt/klangk/bin` helpers. Installers create the directory on demand —
+  no manual `export PATH` needed.
 - Add scripts to `~/bin`
 - Configure `~/.gitconfig`, `~/.vimrc`, etc.
 
