@@ -84,6 +84,7 @@ void main() {
         publicRoutes: publicRoutes,
         featurePaths: const {},
         canAccessAdmin: auth.canAdminSection,
+        permissionsLoaded: auth.permissionsLoaded,
       ),
       routes: [
         GoRoute(

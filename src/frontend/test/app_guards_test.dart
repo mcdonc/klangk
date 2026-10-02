@@ -173,6 +173,7 @@ void main() {
           publicRoutes: routes,
           featurePaths: featurePaths,
           canAccessAdmin: false,
+          permissionsLoaded: true,
         ),
         '/workspace/abc',
       );
@@ -186,6 +187,7 @@ void main() {
           publicRoutes: routes,
           featurePaths: featurePaths,
           canAccessAdmin: false,
+          permissionsLoaded: true,
         ),
         '/workspaces',
       );
@@ -199,6 +201,7 @@ void main() {
           publicRoutes: routes,
           featurePaths: featurePaths,
           canAccessAdmin: false,
+          permissionsLoaded: true,
         ),
         isNull,
       );
@@ -212,6 +215,7 @@ void main() {
           publicRoutes: routes,
           featurePaths: featurePaths,
           canAccessAdmin: false,
+          permissionsLoaded: true,
         ),
         isNull,
       );
@@ -225,6 +229,7 @@ void main() {
           publicRoutes: routes,
           featurePaths: featurePaths,
           canAccessAdmin: false,
+          permissionsLoaded: true,
         ),
         isNull,
       );
@@ -242,6 +247,7 @@ void main() {
         publicRoutes: routes,
         featurePaths: featurePaths,
         canAccessAdmin: false,
+        permissionsLoaded: true,
       );
       final second = guardLoggedInPublicRoute(
         isLoggedIn: true,
@@ -249,6 +255,7 @@ void main() {
         publicRoutes: routes,
         featurePaths: featurePaths,
         canAccessAdmin: false,
+        permissionsLoaded: true,
       );
       expect(first, '/workspace/abc');
       expect(second, '/workspace/abc');
@@ -268,6 +275,7 @@ void main() {
             publicRoutes: routes,
             featurePaths: featurePaths,
             canAccessAdmin: false,
+            permissionsLoaded: true,
           ),
           '/workspaces',
         );
@@ -284,6 +292,7 @@ void main() {
           publicRoutes: routes,
           featurePaths: featurePaths,
           canAccessAdmin: false,
+          permissionsLoaded: true,
         ),
         '/workspaces',
       );
@@ -298,6 +307,7 @@ void main() {
           publicRoutes: routes,
           featurePaths: featurePaths,
           canAccessAdmin: true,
+          permissionsLoaded: true,
         ),
         '/admin/users',
       );
@@ -314,6 +324,7 @@ void main() {
           publicRoutes: routes,
           featurePaths: featurePaths,
           canAccessAdmin: true,
+          permissionsLoaded: true,
         ),
         '/admin/users',
       );
@@ -328,8 +339,60 @@ void main() {
           publicRoutes: routes,
           featurePaths: featurePaths,
           canAccessAdmin: false,
+          permissionsLoaded: true,
         ),
         '/workspace/abc?file=main.dart',
+      );
+    });
+
+    test('holds while session permissions are still loading (#3540)', () {
+      // The #3540 flake: a mid-login re-parse fires after the token
+      // lands but before /my-permissions returns — testing the admin
+      // stash against empty permissions would bounce the admin to
+      // /workspaces, and nothing would re-attempt the stash once the
+      // fetch completes. The gate must hold instead.
+      pendingRedirect = '/admin/users';
+      expect(
+        guardLoggedInPublicRoute(
+          isLoggedIn: true,
+          loc: '/login',
+          publicRoutes: routes,
+          featurePaths: featurePaths,
+          canAccessAdmin: false,
+          permissionsLoaded: false,
+        ),
+        isNull,
+      );
+    });
+
+    test('holds with no stash too — the fallback also needs live data (#3540)',
+        () {
+      pendingRedirect = null;
+      expect(
+        guardLoggedInPublicRoute(
+          isLoggedIn: true,
+          loc: '/login',
+          publicRoutes: routes,
+          featurePaths: featurePaths,
+          canAccessAdmin: false,
+          permissionsLoaded: false,
+        ),
+        isNull,
+      );
+    });
+
+    test('decides normally once permissions have loaded (#3540)', () {
+      pendingRedirect = '/admin/users';
+      expect(
+        guardLoggedInPublicRoute(
+          isLoggedIn: true,
+          loc: '/login',
+          publicRoutes: routes,
+          featurePaths: featurePaths,
+          canAccessAdmin: true,
+          permissionsLoaded: true,
+        ),
+        '/admin/users',
       );
     });
   });
@@ -338,7 +401,10 @@ void main() {
     test('logged-in non-admin on /admin/users -> /workspaces (#2669)', () {
       expect(
         guardAdminRoute(
-            isLoggedIn: true, canAccessAdmin: false, loc: '/admin/users'),
+            isLoggedIn: true,
+            permissionsLoaded: true,
+            canAccessAdmin: false,
+            loc: '/admin/users'),
         '/workspaces',
       );
     });
@@ -346,7 +412,10 @@ void main() {
     test('logged-in admin on /admin/users -> allowed (null)', () {
       expect(
         guardAdminRoute(
-            isLoggedIn: true, canAccessAdmin: true, loc: '/admin/users'),
+            isLoggedIn: true,
+            permissionsLoaded: true,
+            canAccessAdmin: true,
+            loc: '/admin/users'),
         isNull,
       );
     });
@@ -357,7 +426,10 @@ void main() {
       // the Events tab is their only section there.
       expect(
         guardAdminRoute(
-            isLoggedIn: true, canAccessAdmin: true, loc: '/admin/users'),
+            isLoggedIn: true,
+            permissionsLoaded: true,
+            canAccessAdmin: true,
+            loc: '/admin/users'),
         isNull,
       );
     });
@@ -368,7 +440,10 @@ void main() {
       // workspace list without ever seeing the login form.
       expect(
         guardAdminRoute(
-            isLoggedIn: false, canAccessAdmin: false, loc: '/admin/users'),
+            isLoggedIn: false,
+            permissionsLoaded: true,
+            canAccessAdmin: false,
+            loc: '/admin/users'),
         isNull,
       );
     });
@@ -376,7 +451,10 @@ void main() {
     test('non-admin on non-admin route -> allowed (null)', () {
       expect(
         guardAdminRoute(
-            isLoggedIn: true, canAccessAdmin: false, loc: '/workspaces'),
+            isLoggedIn: true,
+            permissionsLoaded: true,
+            canAccessAdmin: false,
+            loc: '/workspaces'),
         isNull,
       );
     });
@@ -386,11 +464,70 @@ void main() {
       // refreshListenable notification; the guard must answer every
       // evaluation identically (the #2670 lesson).
       final first = guardAdminRoute(
-          isLoggedIn: true, canAccessAdmin: false, loc: '/admin/users');
+          isLoggedIn: true,
+          permissionsLoaded: true,
+          canAccessAdmin: false,
+          loc: '/admin/users');
       final second = guardAdminRoute(
-          isLoggedIn: true, canAccessAdmin: false, loc: '/admin/users');
+          isLoggedIn: true,
+          permissionsLoaded: true,
+          canAccessAdmin: false,
+          loc: '/admin/users');
       expect(first, second);
       expect(first, '/workspaces');
+    });
+
+    test('holds a logged-in /admin route while permissions load (#3540)', () {
+      // The reachable flake path: a navigation to /admin/* lands between
+      // the token write and the /my-permissions response — bouncing on
+      // empty permissions parks an admin on /workspaces with nothing to
+      // re-attempt the route. The gate must hold until the fetch
+      // settles; its completion notify re-parses this location.
+      expect(
+        guardAdminRoute(
+          isLoggedIn: true,
+          permissionsLoaded: false,
+          canAccessAdmin: false,
+          loc: '/admin/users',
+        ),
+        isNull,
+      );
+    });
+
+    test('holds apply to every /admin-prefixed location (#3540)', () {
+      expect(
+        guardAdminRoute(
+          isLoggedIn: true,
+          permissionsLoaded: false,
+          canAccessAdmin: false,
+          loc: '/admin/events',
+        ),
+        isNull,
+      );
+    });
+
+    test('a settled non-admin session still bounces (#3540)', () {
+      expect(
+        guardAdminRoute(
+          isLoggedIn: true,
+          permissionsLoaded: true,
+          canAccessAdmin: false,
+          loc: '/admin/users',
+        ),
+        '/workspaces',
+      );
+    });
+
+    test('logged-out /admin routes never hold — guardAuth owns them', () {
+      expect(
+        guardAdminRoute(
+          isLoggedIn: false,
+          permissionsLoaded: false,
+          canAccessAdmin: false,
+          loc: '/admin/users',
+        ),
+        isNull,
+      );
     });
   });
 
@@ -458,6 +595,24 @@ void main() {
     final featurePaths = {'/celebrate'};
     final routes = _routesWithFeatures(featurePaths);
 
+    test('permissions-loading hold reaches the composed guards (#3540)', () {
+      pendingRedirect = '/admin/users';
+      expect(
+        evaluateGuards(
+          mustChangePassword: false,
+          isLoggedIn: true,
+          bannerRequired: false,
+          loc: '/login',
+          currentUri: '/login',
+          publicRoutes: routes,
+          featurePaths: featurePaths,
+          canAccessAdmin: false,
+          permissionsLoaded: false,
+        ),
+        isNull,
+      );
+    });
+
     test('banner takes precedence over everything', () {
       // Logged-out user on a protected route, but banner required ->
       // sent to /consent, not /login, and pendingRedirect untouched.
@@ -471,6 +626,7 @@ void main() {
           publicRoutes: routes,
           featurePaths: featurePaths,
           canAccessAdmin: false,
+          permissionsLoaded: true,
         ),
         '/consent',
       );
@@ -492,6 +648,7 @@ void main() {
           publicRoutes: routes,
           featurePaths: featurePaths,
           canAccessAdmin: false,
+          permissionsLoaded: true,
         ),
         isNull,
       );
@@ -508,6 +665,7 @@ void main() {
           publicRoutes: routes,
           featurePaths: featurePaths,
           canAccessAdmin: false,
+          permissionsLoaded: true,
         ),
         '/consent',
       );
@@ -528,6 +686,7 @@ void main() {
           publicRoutes: routes,
           featurePaths: featurePaths,
           canAccessAdmin: false,
+          permissionsLoaded: true,
         ),
         isNull,
       );
@@ -548,6 +707,7 @@ void main() {
           publicRoutes: routes,
           featurePaths: featurePaths,
           canAccessAdmin: false,
+          permissionsLoaded: true,
         ),
         '/consent',
       );
@@ -564,6 +724,7 @@ void main() {
           publicRoutes: routes,
           featurePaths: featurePaths,
           canAccessAdmin: false,
+          permissionsLoaded: true,
         ),
         '/login',
       );
@@ -582,6 +743,7 @@ void main() {
           publicRoutes: routes,
           featurePaths: featurePaths,
           canAccessAdmin: false,
+          permissionsLoaded: true,
         ),
         '/workspace/zzz',
       );
@@ -603,6 +765,7 @@ void main() {
           publicRoutes: routes,
           featurePaths: featurePaths,
           canAccessAdmin: false,
+          permissionsLoaded: true,
         ),
         '/workspaces',
       );
@@ -624,6 +787,7 @@ void main() {
           publicRoutes: routes,
           featurePaths: featurePaths,
           canAccessAdmin: true,
+          permissionsLoaded: true,
         ),
         '/admin/users',
       );
@@ -640,6 +804,7 @@ void main() {
           publicRoutes: routes,
           featurePaths: featurePaths,
           canAccessAdmin: false,
+          permissionsLoaded: true,
         ),
         '/workspaces',
       );
@@ -656,6 +821,7 @@ void main() {
           publicRoutes: routes,
           featurePaths: featurePaths,
           canAccessAdmin: true,
+          permissionsLoaded: true,
         ),
         isNull,
       );
@@ -675,6 +841,7 @@ void main() {
           publicRoutes: routes,
           featurePaths: featurePaths,
           canAccessAdmin: false,
+          permissionsLoaded: true,
         ),
         '/login',
       );
@@ -694,6 +861,7 @@ void main() {
           publicRoutes: routes,
           featurePaths: featurePaths,
           canAccessAdmin: false,
+          permissionsLoaded: true,
         ),
         '/workspaces',
       );
@@ -710,6 +878,7 @@ void main() {
           publicRoutes: routes,
           featurePaths: featurePaths,
           canAccessAdmin: false,
+          permissionsLoaded: true,
         ),
         isNull,
       );
@@ -726,6 +895,7 @@ void main() {
           publicRoutes: routes,
           featurePaths: featurePaths,
           canAccessAdmin: false,
+          permissionsLoaded: true,
         ),
         isNull,
       );
@@ -742,6 +912,7 @@ void main() {
           publicRoutes: routes,
           featurePaths: featurePaths,
           canAccessAdmin: false,
+          permissionsLoaded: true,
         ),
         '/change-password',
       );
@@ -758,6 +929,7 @@ void main() {
           publicRoutes: routes,
           featurePaths: featurePaths,
           canAccessAdmin: false,
+          permissionsLoaded: true,
         ),
         isNull,
       );
@@ -774,6 +946,7 @@ void main() {
           publicRoutes: routes,
           featurePaths: featurePaths,
           canAccessAdmin: false,
+          permissionsLoaded: true,
         ),
         '/login',
       );
