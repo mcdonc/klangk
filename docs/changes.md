@@ -4374,3 +4374,12 @@ users(id)`, so the decider handler passing the decider's email violated the
   and the FIPS host image's `cryptography` relink builds from a
   sha256-pinned GitHub tag tarball when PyPI publishes no source release
   for the locked version.
+
+- **Login and `/admin` navigation wait for permission data (#3540).**
+  The router's admin gates now hold their decision while the session's
+  permission data is still loading: a login redirect or a direct
+  `/admin` navigation that arrives before `/my-permissions` answers
+  stays on its page until the fetch settles, then routes with live
+  permissions. Previously such a redirect tested the admin gate against
+  empty permissions and landed the user on the workspaces page instead;
+  the requested admin page was never re-attempted.

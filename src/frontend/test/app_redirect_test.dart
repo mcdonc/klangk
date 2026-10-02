@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -120,7 +121,8 @@ void main() {
           currentUri: state.uri.toString(),
           publicRoutes: routes,
           featurePaths: featurePaths,
-          canAccessAdmin: auth.isAdmin,
+          canAccessAdmin: auth.canAdminSection,
+          permissionsLoaded: auth.permissionsLoaded,
         );
       },
       routes: [
@@ -178,6 +180,172 @@ void main() {
         '/workspace/test-ws-123',
       );
       expect(find.text('workspace-test-ws-123'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'mid-login /admin navigation holds until permissions load, then stays '
+    '(#3540)',
+    (tester) async {
+      // The fmtk flows flake, as a widget test: the login POST returns and
+      // the token lands, but /my-permissions is still in flight when the
+      // router routes to /admin/users (the e2e harness does exactly this —
+      // its login wait matches the typed email, so it navigates mid-
+      // saveToken). The guard must hold, and the fetch's completion notify
+      // must keep the admin there.
+      final permissions = Completer<http.Response>();
+      final token = makeJwt({'sub': 'user-1', 'email': 'user@example.com'});
+      testConfigHttpClientOverride = MockClient((request) async {
+        return http.Response(
+          jsonEncode({
+            'registration_enabled': true,
+            'login_banner_title': '',
+            'login_banner': '',
+            'oidc_providers': [],
+            'auth_modes': 'password',
+          }),
+          200,
+        );
+      });
+      testAuthHttpClientOverride = MockClient((request) async {
+        final path = request.url.path;
+        if (path.contains('/api/v1/auth/login')) {
+          return http.Response(jsonEncode({'access_token': token}), 200);
+        }
+        if (path.contains('/api/v1/my-permissions')) {
+          return permissions.future;
+        }
+        if (path.contains('/api/v1/config')) {
+          return http.Response('{}', 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      final auth = AuthService();
+      final router = buildRouter(auth, '/login');
+      await tester.pumpWidget(
+        ChangeNotifierProvider.value(
+          value: auth,
+          child: MaterialApp.router(routerConfig: router),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final fields = find.byType(TextField);
+      await tester.enterText(fields.first, 'user@example.com');
+      await tester.enterText(fields.last, 'password');
+      await tester.tap(find.widgetWithText(FilledButton, 'Log In'));
+      // The permission fetch never resolves until the completer fires, so
+      // the login button's loading spinner animates forever — pump cycles
+      // (not pumpAndSettle) drive the POST, the token write, and the
+      // deferred-fetch boundary.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Login completed; the permission fetch is still pending.
+      expect(auth.isLoggedIn, isTrue);
+      expect(auth.permissionsLoaded, isFalse);
+
+      // The mid-login /admin navigation: must not bounce to /workspaces.
+      router.go('/admin/users');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(
+        router.routerDelegate.currentConfiguration.uri.toString(),
+        '/admin/users',
+      );
+
+      // The fetch settles as an admin session: the completion notify
+      // re-parses /admin/users and the admin stays put.
+      permissions.complete(http.Response(
+        jsonEncode({
+          'user_id': 'u1',
+          'email': 'user@example.com',
+          'is_admin': true,
+          'permissions': <String, List<String>>{},
+          'groups': <Map<String, dynamic>>[],
+        }),
+        200,
+      ));
+      await tester.pumpAndSettle();
+      expect(
+        router.routerDelegate.currentConfiguration.uri.toString(),
+        '/admin/users',
+      );
+      expect(auth.permissionsLoaded, isTrue);
+      expect(find.text('admin-users'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'mid-login /admin navigation bounces a settled non-admin (#3540)',
+    (tester) async {
+      // Same window, but the fetch settles WITHOUT admin permission: the
+      // completion notify must bounce the held /admin location.
+      final permissions = Completer<http.Response>();
+      final token = makeJwt({'sub': 'user-1', 'email': 'user@example.com'});
+      testConfigHttpClientOverride = MockClient((request) async {
+        return http.Response('{}', 200);
+      });
+      testAuthHttpClientOverride = MockClient((request) async {
+        final path = request.url.path;
+        if (path.contains('/api/v1/auth/login')) {
+          return http.Response(jsonEncode({'access_token': token}), 200);
+        }
+        if (path.contains('/api/v1/my-permissions')) {
+          return permissions.future;
+        }
+        if (path.contains('/api/v1/config')) {
+          return http.Response('{}', 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      final auth = AuthService();
+      final router = buildRouter(auth, '/login');
+      await tester.pumpWidget(
+        ChangeNotifierProvider.value(
+          value: auth,
+          child: MaterialApp.router(routerConfig: router),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final fields = find.byType(TextField);
+      await tester.enterText(fields.first, 'user@example.com');
+      await tester.enterText(fields.last, 'password');
+      await tester.tap(find.widgetWithText(FilledButton, 'Log In'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(auth.isLoggedIn, isTrue);
+      expect(auth.permissionsLoaded, isFalse);
+
+      router.go('/admin/users');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(
+        router.routerDelegate.currentConfiguration.uri.toString(),
+        '/admin/users',
+      );
+
+      permissions.complete(http.Response(
+        jsonEncode({
+          'user_id': 'u1',
+          'email': 'user@example.com',
+          'is_admin': false,
+          'permissions': <String, List<String>>{},
+          'groups': <Map<String, dynamic>>[],
+        }),
+        200,
+      ));
+      await tester.pumpAndSettle();
+      expect(
+        router.routerDelegate.currentConfiguration.uri.toString(),
+        '/workspaces',
+      );
+      expect(find.text('workspaces-list'), findsOneWidget);
     },
   );
 
