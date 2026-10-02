@@ -82,6 +82,16 @@ void main() {
       expect(find.byType(CodeForgeWeb), findsOneWidget);
     });
 
+    testWidgets('turns off word suggestions', (tester) async {
+      await pumpRenderer(
+        tester,
+        Builder(builder: (c) => CodeEditorRenderer().build(c, codeFile())),
+      );
+      await settle(tester);
+      final editor = tester.widget<CodeForgeWeb>(find.byType(CodeForgeWeb));
+      expect(editor.enableSuggestions, isFalse);
+    });
+
     testWidgets('shows read-only when no save path is available',
         (tester) async {
       await pumpRenderer(

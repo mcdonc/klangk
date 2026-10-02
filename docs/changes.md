@@ -2731,6 +2731,10 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   reached the clipboard. The write is now deferred to the next input event
   in the page (a click or keypress delivers it from inside the gesture
   task). See [the terminal docs](features/terminal.md).
+- **Word suggestions are off in the Files tab editor.** Typing in Edit
+  mode no longer opens a completion popup, so the arrow keys and Enter
+  always move the cursor or edit the text.
+
 - **Build version reporting survives an operator config mount
   (#3517).** A deployed host container whose operator `klangkd.yaml`
   mounts over the image's config file and omits `version_file` showed
