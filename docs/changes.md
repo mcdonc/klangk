@@ -33,6 +33,8 @@ operators or integrators to act when upgrading.
 
 ## \[Unreleased]
 
+## \[v2.0a11] - 2026-10-02
+
 ### Added
 
 - **Quiet Pi startup with on-demand `/header` (#3537).** The
