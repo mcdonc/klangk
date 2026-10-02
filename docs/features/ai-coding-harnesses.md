@@ -44,6 +44,12 @@ The workspace image ships with several Pi extensions pre-installed:
   LLM proxy
 - **minimax-thinking-tags** — strips `<think>` tags from models that
   emit them
+- **port-map** — provides the `get_hosted_url` tool for building
+  browser-facing URLs for ports opened in the workspace
+- **startup-header** — provides the `/header` command, which re-prints
+  the startup header on demand (context files, skills, prompts,
+  extensions); the header itself is suppressed at startup by the
+  provisioned `quietStartup: true` setting
 
 Extensions are installed at image build time into
 `/opt/klangk/pi-agent/extensions/` and symlinked into the user's
