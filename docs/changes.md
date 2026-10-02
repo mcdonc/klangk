@@ -33,6 +33,8 @@ operators or integrators to act when upgrading.
 
 ## \[Unreleased]
 
+## \[v2.0a10] - 2026-10-02
+
 ### Added
 
 - **`~/.local/bin` on the workspace `PATH` (#3522).** Every login shell in
