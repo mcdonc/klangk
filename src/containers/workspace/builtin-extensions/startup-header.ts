@@ -4,19 +4,26 @@
  * The workspace provisions `quietStartup: true` in settings.json: the
  * startup header scrolls the web terminal on every launch and repeats
  * on every fresh shell. This extension registers `/header`, which
- * re-prints the same information the startup header shows — loaded
- * context files, skills, prompt templates, and extensions — as a
- * persistent session entry that never enters the LLM context.
+ * re-prints the startup header's sections — loaded context files,
+ * skills, prompt templates, and extensions — as a persistent session
+ * entry that never enters the LLM context. The sections are rebuilt
+ * from live session data (pi 0.99.2 exposes no API to re-run its own
+ * renderer), so edge cases can diverge from the startup header: the
+ * Skills section is empty when `enableSkillCommands` is off, and the
+ * Extensions section lists files found on disk rather than ones that
+ * actually loaded.
  */
 
 import { readdirSync } from "node:fs";
+import * as path from "node:path";
 import { Container, Text } from "@earendil-works/pi-tui";
-import type {
-  CustomEntry,
-  EntryRenderOptions,
-  ExtensionAPI,
-  ExtensionCommandContext,
-  Theme,
+import {
+  getAgentDir,
+  type CustomEntry,
+  type EntryRenderOptions,
+  type ExtensionAPI,
+  type ExtensionCommandContext,
+  type Theme,
 } from "@earendil-works/pi-coding-agent";
 
 const ENTRY_TYPE = "klangk-startup-header";
@@ -29,7 +36,11 @@ interface HeaderData {
 }
 
 function contextPaths(ctx: ExtensionCommandContext): string[] {
-  return (ctx.getSystemPromptOptions()?.contextFiles ?? []).map((f) => f.path);
+  // Display cwd-relative like the startup header's formatContextPath.
+  const prefix = ctx.cwd.endsWith("/") ? ctx.cwd : `${ctx.cwd}/`;
+  return (ctx.getSystemPromptOptions()?.contextFiles ?? []).map((f) =>
+    f.path.startsWith(prefix) ? f.path.slice(prefix.length) : f.path,
+  );
 }
 
 function commandNames(pi: ExtensionAPI, source: "skill" | "prompt"): string[] {
@@ -44,16 +55,27 @@ function commandNames(pi: ExtensionAPI, source: "skill" | "prompt"): string[] {
 
 function extensionLabels(pi: ExtensionAPI): string[] {
   const labels = new Set<string>();
-  for (const dir of pi.getSettings().extensions ?? []) {
+  // Settings-configured dirs plus the auto-discovered user and project
+  // dirs pi also loads extensions from.
+  const dirs = [
+    ...(pi.getSettings().extensions ?? []),
+    path.join(getAgentDir(), "extensions"),
+    path.join(process.cwd(), ".pi", "extensions"),
+  ];
+  for (const dir of dirs) {
     let entries: string[];
     try {
-      entries = readdirSync(dir);
+      entries = readdirSync(dir, { withFileTypes: true });
     } catch {
-      continue; // configured directory no longer exists
+      continue; // missing dir, a configured file, or unreadable
     }
     for (const entry of entries) {
-      if (/\.(ts|js|mjs)$/.test(entry)) {
-        labels.add(entry.replace(/\.(ts|js|mjs)$/, ""));
+      // pi loads plain `.ts`/`.js` files and subdirectory extensions
+      // (their own index/package manifest) from these dirs.
+      if (entry.isDirectory()) {
+        labels.add(entry.name);
+      } else if (/\.(ts|js)$/.test(entry.name)) {
+        labels.add(entry.name.replace(/\.(ts|js)$/, ""));
       }
     }
   }
@@ -99,11 +121,14 @@ function renderHeader(
   options: EntryRenderOptions,
   theme: Theme,
 ): Container | undefined {
-  const data = entry.data ?? {
+  // Per-key defaults so an entry persisted by an older version (or a
+  // foreign shape) degrades to empty sections instead of throwing.
+  const data = {
     context: [],
     skills: [],
     prompts: [],
     extensions: [],
+    ...(entry.data ?? {}),
   };
   const expandedPaths = options.expanded;
   const container = new Container();
