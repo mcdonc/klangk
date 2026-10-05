@@ -33,6 +33,8 @@ operators or integrators to act when upgrading.
 
 ## \[Unreleased]
 
+## \[v2.0a12] - 2026-10-05
+
 ### Changed
 
 - **Workspace Pi agent updated to 1.0.0 (#3542).** Workspaces now
