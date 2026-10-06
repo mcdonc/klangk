@@ -2465,3 +2465,176 @@ class TestRefreshFirst:
         ops = [r["operation"] for r in _BridgeHandler.requests]
         assert "erase" not in ops
         assert "auth_flow_start" not in ops
+
+
+# --- forge proxy (token stays on the host) ----------------------------------
+
+
+class TestForgeProxyHelper:
+    EGRESS = "http://host.containers.internal:8995"
+
+    def test_capability_lines_collected(self, monkeypatch):
+        import io
+
+        monkeypatch.setattr(
+            sys,
+            "stdin",
+            io.StringIO(
+                "capability[]=authtype\ncapability[]=state\nhost=h\n\n"
+            ),
+        )
+        cred = helper.read_credential_input()
+        assert cred["capability"] == ["authtype", "state"]
+
+    def test_is_forge_proxy_request(self, monkeypatch):
+        monkeypatch.setattr(helper, "BRIDGE_URL", self.EGRESS)
+        hit = {
+            "host": "host.containers.internal:8995",
+            "path": "forge-proxy/f/o/r.git",
+        }
+        assert helper.is_forge_proxy_request(hit)
+        assert not helper.is_forge_proxy_request(
+            {**hit, "path": "llm-proxy/x"}
+        )
+        assert not helper.is_forge_proxy_request({**hit, "host": "forge.test"})
+        monkeypatch.setattr(helper, "BRIDGE_URL", "")
+        assert not helper.is_forge_proxy_request(hit)
+
+    def test_forge_proxy_output(self, monkeypatch):
+        monkeypatch.setattr(helper, "_get_workspace_token", lambda: "ws-jwt")
+        out = helper.forge_proxy_output({"capability": ["authtype"]})
+        assert "authtype=Bearer" in out and "credential=ws-jwt" in out
+        assert "password" not in out
+        assert helper.forge_proxy_output({}) is None
+        monkeypatch.setattr(helper, "_get_workspace_token", lambda: "")
+        assert helper.forge_proxy_output({"capability": ["authtype"]}) is None
+
+    def test_forge_auth_already_connected(self, monkeypatch, capsys):
+        calls = []
+        monkeypatch.setattr(
+            helper,
+            "_post_egress_json",
+            lambda path, timeout=30: {"connected": True, "login": "me"},
+        )
+        monkeypatch.setattr(helper, "_configure_forge_rewrite", calls.append)
+        assert helper.run_forge_auth("Forge.Test", "bid") == 0
+        assert (
+            calls == ["forge.test"]
+            and "already authorized" in capsys.readouterr().out
+        )
+
+    def test_forge_auth_runs_txn_through_bridge(self, monkeypatch, capsys):
+        answers = {"status": {"connected": False}, "start": {"txn_id": "t1"}}
+        monkeypatch.setattr(
+            helper,
+            "_post_egress_json",
+            lambda path, timeout=30: answers[
+                "start" if path.endswith("/start") else "status"
+            ],
+        )
+        sent = {}
+
+        def fake_bridge(op, cred, bid, timeout=None, extra=None):
+            sent.update(op=op, extra=extra)
+            return {
+                "status": "ok",
+                "result": json.dumps({"status": "connected", "login": "me"}),
+            }
+
+        monkeypatch.setattr(helper, "post_bridge", fake_bridge)
+        monkeypatch.setattr(
+            helper, "_configure_forge_rewrite", lambda host: None
+        )
+        assert helper.run_forge_auth("forge.test", "bid") == 0
+        assert sent == {"op": "auth_flow_start", "extra": {"txn_id": "t1"}}
+        assert "authorized forge.test as me" in capsys.readouterr().out
+
+    def test_forge_auth_failures(self, monkeypatch):
+        monkeypatch.setattr(
+            helper,
+            "_post_egress_json",
+            lambda path, timeout=30: {"detail": "nope"},
+        )
+        assert helper.run_forge_auth("forge.test", "bid") == 1
+        monkeypatch.setattr(
+            helper,
+            "_post_egress_json",
+            lambda path, timeout=30: (
+                {"txn_id": "t"} if path.endswith("/start") else {}
+            ),
+        )
+        monkeypatch.setattr(helper, "post_bridge", lambda *a, **k: None)
+        assert helper.run_forge_auth("forge.test", "bid") == 1
+
+    def test_post_egress_json(self, monkeypatch):
+        class H(BaseHTTPRequestHandler):
+            def _send(self, code, body):
+                self.send_response(code)
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                self._send(200, b'{"connected": false}')
+
+            def do_POST(self):
+                self._send(404, b'{"detail": "forge is not proxied"}')
+
+            def log_message(self, *a):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), H)
+        Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            monkeypatch.setattr(
+                helper, "BRIDGE_URL", f"http://127.0.0.1:{server.server_port}"
+            )
+            monkeypatch.setattr(helper, "_get_workspace_token", lambda: "")
+            assert helper._post_egress_json(
+                "/forge-proxy/f/_klangk/status"
+            ) == {"connected": False}
+            assert helper._post_egress_json(
+                "/forge-proxy/f/_klangk/oauth/start"
+            ) == {"detail": "forge is not proxied"}
+            monkeypatch.setattr(helper, "BRIDGE_URL", "http://127.0.0.1:1")
+            assert "detail" in helper._post_egress_json(
+                "/forge-proxy/f/_klangk/status", timeout=2
+            )
+        finally:
+            server.shutdown()
+
+    def test_get_for_proxy_answers_bearer_without_bridge(
+        self, fake_browser_id
+    ):
+        token = fake_browser_id / "klangk-workspace-token"
+        token.write_text("#!/bin/sh\necho ws-jwt\n")
+        result = run_helper(
+            "get",
+            "capability[]=authtype\nprotocol=http\nhost=host.containers.internal:8995\n"
+            "path=forge-proxy/forge.test/o/r.git/info/refs\n\n",
+            env_override={"KLANGKWS_BRIDGE_URL": self.EGRESS},
+            extra_path=str(fake_browser_id),
+        )
+        assert result.returncode == 0
+        assert (
+            "authtype=Bearer" in result.stdout
+            and "credential=ws-jwt" in result.stdout
+        )
+
+    def test_store_for_proxy_is_dropped(self, fake_browser_id):
+        result = run_helper(
+            "store",
+            "protocol=http\nhost=host.containers.internal:8995\npath=forge-proxy/f/x\n\n",
+            env_override={"KLANGKWS_BRIDGE_URL": self.EGRESS},
+            extra_path=str(fake_browser_id),
+        )
+        assert result.returncode == 0 and result.stdout == ""
+
+    def test_forge_auth_usage(self, fake_browser_id):
+        result = run_helper(
+            "forge-auth",
+            env_override={"KLANGKWS_BRIDGE_URL": self.EGRESS},
+            extra_path=str(fake_browser_id),
+        )
+        assert result.returncode == 2 and "usage" in result.stderr

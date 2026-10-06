@@ -88,6 +88,7 @@ from . import (
     inactivity,
     model,
     caddy as caddy_mod,
+    forge_proxy as forge_proxy_mod,
     oidc,
     features,
     nix,
@@ -271,6 +272,8 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     app.state.proxy_watchdog = caddy_mod.CaddyWatchdog(app)
     # #2070: In-process LLM router backed by litellm.Router (subsystem).
     app.state.llm_router = LLMRouter(app)
+    # Host-side custody of git-forge OAuth tokens (forge_proxy.py).
+    app.state.forge_proxy = forge_proxy_mod.ForgeProxy(app)
     # #1480: Terminal(app_state) groups the ~25 tmux-session
     # management functions that share a Podman dependency. Reaches podman,
     # the registry, and settings through the single app_state reference.

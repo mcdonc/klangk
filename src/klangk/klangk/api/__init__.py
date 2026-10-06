@@ -63,6 +63,7 @@ from . import (
     admin as _admin_routes,
     auth as _auth_routes,
     browser_delegate as _browser_routes,
+    forge_proxy as _forge_proxy_routes,
     llm_proxy as _llm_proxy_routes,
     resources as _resources_routes,
     workspaces as _workspace_routes,
@@ -454,6 +455,8 @@ router.include_router(_admin_routes.router)
 # LLM proxy routes live at /llm-proxy/ (outside /api/v1/) so they are
 # mounted on root_router, not on the api-prefixed router.  #2072
 root_router.include_router(_llm_proxy_routes.router)
+# Forge proxy routes live at /forge-proxy/ (container egress, workspace JWT).
+root_router.include_router(_forge_proxy_routes.router)
 
 
 __all__ = (
