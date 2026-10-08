@@ -2785,6 +2785,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   mode no longer opens a completion popup, so the arrow keys and Enter
   always move the cursor or edit the text.
 
+- **`KLANGKD_LOG_FILE` suspends on a failing sink on every Python
+  version (#3551).** Python 3.14.8 swallows log-file reopen failures
+  inside the stdlib, so a rotated or unwritable log path kept retrying
+  on every record with a traceback printed to stderr instead of
+  suspending the sink with a single warning. The file sink now runs
+  the reopen check itself and suspends file logging until the next
+  config reload; a SIGHUP to a healthy path heals it as before.
+
 - **Build version reporting survives an operator config mount
   (#3517).** A deployed host container whose operator `klangkd.yaml`
   mounts over the image's config file and omits `version_file` showed

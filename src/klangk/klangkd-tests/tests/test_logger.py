@@ -727,6 +727,48 @@ class TestLogFileSink:
         logging.getLogger("klangk.sink.hostile").info("healed")
         assert "healed" in target.read_text()
 
+    def test_reopen_failure_suspends_sink_under_3148_stdlib(
+        self, clean_root, tmp_path, caplog, monkeypatch
+    ):
+        """#3551: Python 3.14.8 wraps WatchedFileHandler.emit's
+        reopenIfNeeded in a try/except that routes failures to handleError,
+        so a hostile reopen no longer raises out of the stdlib emit. The
+        handler must run the check itself and still suspend the sink —
+        pinned here on a 3.14.7 toolchain by installing the 3.14.8 shape
+        of the stdlib emit (the plain hostile-path test above passes on
+        3.14.7 either way and so cannot catch the regression)."""
+
+        def emit_swallowing_reopen_errors(self, record):
+            try:
+                self.reopenIfNeeded()
+            except Exception:
+                self.handleError(record)
+            else:
+                logging.FileHandler.emit(self, record)
+
+        monkeypatch.setattr(
+            logging.handlers.WatchedFileHandler,
+            "emit",
+            emit_swallowing_reopen_errors,
+        )
+        target = tmp_path / "k.jsonl"
+        settings = _make_settings(log_file=str(target))
+        logger_mod.configure(settings)
+        logging.getLogger("klangk.sink.stdlib3148").info("good")
+        target.unlink()
+        target.mkdir()
+        with caplog.at_level(logging.WARNING, logger="klangk.logger"):
+            logging.getLogger("klangk.sink.stdlib3148").info("hostile")
+        (handler,) = _klangk_file_handlers(clean_root)
+        assert handler._sink_broken is True
+        assert (
+            sum(
+                "file logging suspended" in r.getMessage()
+                for r in caplog.records
+            )
+            == 1
+        )
+
     def test_uvicorn_records_share_the_configured_format(
         self, clean_root, tmp_path, capsys
     ):
@@ -788,9 +830,11 @@ class TestLogFileSink:
         def raise_recursion(self, record):
             raise RecursionError("too deep")
 
-        monkeypatch.setattr(
-            logging.handlers.WatchedFileHandler, "emit", raise_recursion
-        )
+        # Patched at FileHandler: RotationSafeFileHandler.emit runs the
+        # watched-file check itself and delegates to FileHandler.emit
+        # directly (#3551), so WatchedFileHandler.emit is no longer on
+        # the call path.
+        monkeypatch.setattr(logging.FileHandler, "emit", raise_recursion)
         try:
             with pytest.raises(RecursionError):
                 handler.emit(record)
