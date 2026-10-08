@@ -470,7 +470,18 @@ class RotationSafeFileHandler(logging.handlers.WatchedFileHandler):
         try:
             if self.should_rollover(record):
                 self.do_rollover()
-            super().emit(record)
+            # Run the watched-file check here instead of relying on
+            # super().emit() to surface it: Python 3.14.8 wraps
+            # WatchedFileHandler.emit's reopenIfNeeded in its own
+            # try/except and routes failures to handleError, so a
+            # hostile path (the file replaced by a directory, a volume
+            # gone) never raises out of super().emit() and the suspend
+            # path below would never engage (#3551). The call is
+            # idempotent — after a successful reopen the stdlib's own
+            # check inside FileHandler.emit is a no-op, and on failure
+            # ours raises before it runs.
+            self.reopenIfNeeded()
+            logging.FileHandler.emit(self, record)
         except RecursionError:
             raise
         except Exception:
