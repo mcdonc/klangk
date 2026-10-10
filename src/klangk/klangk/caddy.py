@@ -945,6 +945,21 @@ class CaddyRenderer:
             "	}\n"
         )
 
+    def _build_forge_block(self, upstream: str, guard: str) -> str:
+        """The ``/forge-proxy/*`` location (forge_proxy.py).
+
+        Same shape as the LLM block: container-source guard, the
+        site-level ``forward_auth`` workspace-token check, then the
+        klangkd backend, which injects the host-held forge token and
+        enforces the route allow-list.
+        """
+        return (
+            "\thandle /forge-proxy/* {\n"
+            f"{guard}"
+            f"\t\treverse_proxy {upstream}\n"
+            "\t}\n"
+        )
+
     def _egress_locations(self, upstream: str, container_srcs: str) -> str:
         """The container-egress locations, shared by headless and full modes.
 
@@ -973,6 +988,7 @@ class CaddyRenderer:
             not_src_matcher = ""
             guard = "		respond 403\n"
         llm = self._build_llm_block(upstream, guard)
+        forge = self._build_forge_block(upstream, guard)
         # #3473: the matcher must cover BOTH bridge endpoints. A bare
         # ``handle /api/v1/browser-delegate`` is an exact-path match, so the
         # streaming sibling ``/api/v1/browser-delegate/stream`` matched no
@@ -1019,6 +1035,7 @@ class CaddyRenderer:
             + delegate_matcher
             + egress_ws
             + llm
+            + forge
             + delegate
             + catch_all
         )

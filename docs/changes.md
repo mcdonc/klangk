@@ -851,6 +851,13 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **Forge proxy for git-forge OAuth tokens.** With `forge_proxy_hosts`
+  set, klangkd keeps a forge's OAuth tokens on the host and workspaces
+  reach the forge through `/forge-proxy/<host>/` with their workspace
+  token, so no forge token enters a container. Operations are enabled
+  explicitly in `forge_proxy_features` and repositories in
+  `forge_proxy_allowed_repos`; both refuse everything when empty.
+
 - **Quiet Pi startup with on-demand `/header` (#3537).** The
   per-user `~/.pi/agent/settings.json` provisioned at first workspace
   login now sets `"quietStartup": true`, so the startup header

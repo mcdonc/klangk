@@ -37,12 +37,13 @@ api_auth = sys.modules["klangk.api.auth"]
 # to preserve the monolith's 90 exactly; the expired-password route
 # (#3177), /audit (#3154), the #3214 admin audit-events route, step-up
 # (#3196), /auth/bind (#3218), the OIDC code exchange (#3201), and the
-# merged events stream (#3251) are the additions since.
-EXPECTED_ROUTE_COUNT = 97
+# merged events stream (#3251) are the additions since, plus the 5 forge-proxy
+# routes (oauth start, status, GET/POST/PATCH forward).
+EXPECTED_ROUTE_COUNT = 104
 
 # Per-domain submodules and the number of routes each owns.  91 sub-routes
 # + 3 routes defined directly on the main router (version, config,
-# my-permissions) + 3 on the root router (health, audit, empty) == 97.
+# my-permissions) + 3 on the root router (health, audit, empty) == 102.
 SUBMODULE_ROUTES = {
     "auth": 21,  # 15 + 2 OIDC login/callback + expired-password (#3177) + step-up (#3196) + bind (#3218) + exchange (#3201)
     "workspaces": 27,
@@ -50,6 +51,7 @@ SUBMODULE_ROUTES = {
     "browser_delegate": 2,
     "admin": 29,  # + the merged events stream (#3251)
     "llm_proxy": 2,
+    "forge_proxy": 7,  # oauth start + status + GET/POST/PUT/PATCH/DELETE forward
 }
 
 # One representative path from every domain (and the cross-cutting

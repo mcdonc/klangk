@@ -18868,3 +18868,152 @@ class TestDpopBindApi:
             resp.json()["access_token"], _SECRET, algorithms=[_ALGORITHM]
         )
         assert payload["cnf"]["jkt"] == dpop_mod.jwk_thumbprint(jwk)
+
+
+# --- relay integration (real app fixtures) -----------------------------------
+
+import json  # noqa: E402
+
+import test_forge_proxy as _forge_tests  # noqa: E402
+
+HOST = _forge_tests.HOST
+providers = _forge_tests.providers
+upstream = _forge_tests.upstream
+from klangk import forge_proxy as fp  # noqa: E402
+
+
+@pytest.mark.asyncio
+class TestBridgeRelay:
+    """The browser-delegate relay enforces the proxied-forge policy."""
+
+    def _setup(self, app, registry, monkeypatch, workspace_id, answer):
+        monkeypatch.setattr(app.state.settings, "forge_proxy_hosts", HOST)
+        app.state.forge_proxy = fp.ForgeProxy(app)
+        sock = MagicMock()
+        registry.register_browser(f"bid-{workspace_id}", workspace_id, sock)
+        session = AsyncMock()
+        session.browser_subscribers = {sock}
+        session.dispatch_browser_request_to = AsyncMock(return_value=answer)
+        session.dispatch_browser_request_stream_to = MagicMock()
+        return session
+
+    def _headers(self, app, workspace_id):
+        token = app.state.auth.create_workspace_token(workspace_id)
+        return {"Authorization": f"Bearer {token}"}
+
+    async def test_refuses_pat_prompt_for_proxied_forge(
+        self, client, app, user, registry, sockets, providers, monkeypatch
+    ):
+        session = self._setup(app, registry, monkeypatch, "ws-r1", {})
+        try:
+            with patch.object(sockets, "get_session", return_value=session):
+                resp = await client.post(
+                    "/api/v1/browser-delegate",
+                    json={
+                        "action": "git_credential",
+                        "operation": "get",
+                        "host": HOST,
+                        "browser_id": "bid-ws-r1",
+                    },
+                    headers=self._headers(app, "ws-r1"),
+                )
+            assert resp.status_code == 403
+            session.dispatch_browser_request_to.assert_not_awaited()
+        finally:
+            registry.revoke_workspace_browsers("ws-r1")
+            del app.state.forge_proxy
+
+    async def test_txn_code_consumed_by_klangkd(
+        self,
+        client,
+        app,
+        user,
+        registry,
+        sockets,
+        providers,
+        monkeypatch,
+        upstream,
+    ):
+        upstream.on(
+            "POST", "/login/oauth/access_token", body={"access_token": "at"}
+        )
+        upstream.on("GET", "/api/v1/user", body={"login": "me"})
+        session = self._setup(app, registry, monkeypatch, "ws-r2", None)
+        txn_id = app.state.forge_proxy.start("ws-r2", HOST)
+        state = app.state.forge_proxy._txns[txn_id].state
+        session.dispatch_browser_request_to.return_value = {
+            "status": "ok",
+            "result": json.dumps({"code": "c0de", "state": state}),
+        }
+        try:
+            with patch.object(sockets, "get_session", return_value=session):
+                resp = await client.post(
+                    "/api/v1/browser-delegate",
+                    json={
+                        "action": "git_credential",
+                        "operation": "auth_flow_start",
+                        "host": HOST,
+                        "txn_id": txn_id,
+                        "browser_id": "bid-ws-r2",
+                    },
+                    headers=self._headers(app, "ws-r2"),
+                )
+            assert resp.status_code == 200
+            assert "c0de" not in resp.text
+            assert json.loads(resp.json()["result"])["status"] == "connected"
+            assert app.state.forge_proxy.status("ws-r2", HOST)["connected"]
+        finally:
+            registry.revoke_workspace_browsers("ws-r2")
+            del app.state.forge_proxy
+
+    async def test_txn_unknown_is_403(
+        self,
+        client,
+        app,
+        user,
+        registry,
+        sockets,
+        providers,
+        monkeypatch,
+        upstream,
+    ):
+        session = self._setup(app, registry, monkeypatch, "ws-r3", {})
+        try:
+            with patch.object(sockets, "get_session", return_value=session):
+                resp = await client.post(
+                    "/api/v1/browser-delegate",
+                    json={
+                        "action": "git_credential",
+                        "operation": "auth_flow_start",
+                        "txn_id": "nope",
+                        "browser_id": "bid-ws-r3",
+                    },
+                    headers=self._headers(app, "ws-r3"),
+                )
+            assert resp.status_code == 403
+        finally:
+            registry.revoke_workspace_browsers("ws-r3")
+            del app.state.forge_proxy
+
+    async def test_stream_refuses_proxied_forge(
+        self, client, app, user, registry, sockets, providers, monkeypatch
+    ):
+        session = self._setup(app, registry, monkeypatch, "ws-r4", {})
+        try:
+            with patch.object(sockets, "get_session", return_value=session):
+                resp = await client.post(
+                    "/api/v1/browser-delegate/stream",
+                    json={
+                        "action": "git_credential",
+                        "operation": "auth_flow_start",
+                        "host": HOST,
+                        "authorize_url": f"https://{HOST}/x",
+                        "browser_id": "bid-ws-r4",
+                    },
+                    headers=self._headers(app, "ws-r4"),
+                )
+            assert resp.status_code == 403
+            session.dispatch_browser_request_stream_to.assert_not_called()
+        finally:
+            registry.revoke_workspace_browsers("ws-r4")
+            del app.state.forge_proxy

@@ -1461,6 +1461,49 @@ class KlangkSettings(BaseSettings):
     # applies to requests and registrations after it; already-attached
     # container envs keep the stale ID but the endpoint 403s regardless.
     browser_delegate_enabled: bool = True
+    # forge_proxy_hosts: comma-separated git-forge hosts whose OAuth
+    # tokens klangkd keeps host-side (forge_proxy.py). For these hosts the
+    # browser-delegate relay refuses container-built authorization flows,
+    # PAT prompts and credential-cache reads, and containers reach the
+    # forge through the allow-listed ``/forge-proxy/<host>/`` egress route
+    # with their workspace JWT. Empty (default) disables the proxy.
+    forge_proxy_hosts: str = ""
+    # forge_proxy_allowed_repos: comma-separated repositories workspaces
+    # reach through the forge proxy: ``owner/repo``, ``owner/*``, or ``*``
+    # for every repository. A ``:ro`` suffix allows reads only; ``:issues``
+    # allows reads plus issue work (opening, commenting, editing, closing,
+    # assigning and labelling, as forge_proxy_features enables) and refuses
+    # pushes and other writes. A repository no rule matches is refused with
+    # 403, so an empty value (the default) allows none.
+    forge_proxy_allowed_repos: str = ""
+    # forge_proxy_features: comma-separated operations the forge proxy
+    # performs; every other operation is refused with 403, so an empty
+    # value (the default) allows none. ``read`` (account, repositories,
+    # issues, comments, labels), ``git-read`` (clone and fetch),
+    # ``git-push``, ``issues`` (open issues and comments), ``issue-edit``
+    # (edit, close, assign and label), ``site-create`` (generate from a
+    # template in forge_proxy_template_repos), ``collaborators``,
+    # ``api-passthrough`` (any other /api/v1/ call; the forge's own
+    # permissions and the token's scopes decide), or ``*`` for all.
+    # forge_proxy_allowed_repos applies to every repository path.
+    forge_proxy_features: str = ""
+    # forge_proxy_template_repos: comma-separated ``owner/repo`` template
+    # repositories a workspace may generate a new repository from through
+    # the forge proxy. The new repository is created in the signed-in
+    # forge account (or an owner in forge_proxy_template_owners) and must
+    # also pass forge_proxy_allowed_repos. Empty (default) allows none.
+    forge_proxy_template_repos: str = ""
+    # forge_proxy_template_owners: comma-separated organizations a
+    # workspace may generate a repository into, besides its own account.
+    forge_proxy_template_owners: str = ""
+    # forge_proxy_collaborator_accounts: comma-separated forge accounts a
+    # workspace may add as read-only collaborators to a repository the
+    # signed-in account owns (for example a build service account).
+    # Empty (default) allows none.
+    forge_proxy_collaborator_accounts: str = ""
+    # forge_proxy_ca_cert: optional PEM file added to the default trust
+    # store for klangkd's calls to proxied forges (a private CA).
+    forge_proxy_ca_cert: str | None = None
     health_check_interval: float | None = None
     health_check_startup_grace: float | None = None
     health_check_timeout: float | None = None

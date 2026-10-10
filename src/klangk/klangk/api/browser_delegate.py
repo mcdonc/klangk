@@ -12,6 +12,8 @@ from fastapi.responses import (
 )
 from pydantic import BaseModel
 
+from .. import forge_proxy as forge_proxy_mod
+from . import forge_proxy as forge_proxy_routes
 from .common import get_app_dep
 from .common import (
     require_workspace_token,
@@ -83,6 +85,40 @@ def _resolve_bridge_target(
     return session, target_sock, body.model_dump(exclude={"browser_id"})
 
 
+async def _forge_relay(app, workspace_id, session, target_sock, payload):
+    """Apply the forge proxy's bridge policy; None leaves the plain relay.
+
+    Proxied forges (forge_proxy.py): the container may only start a
+    klangkd-issued authorization; its code is exchanged here and never
+    relayed back, and nothing that could hand the container a forge
+    credential (its own authorize URL, a PAT prompt, a cache read) passes.
+    """
+    forge = getattr(app.state, "forge_proxy", None)
+    policy = forge.bridge_policy(payload) if forge else "pass"
+    if policy == "refuse":
+        raise HTTPException(
+            status_code=403,
+            detail="This forge is proxied: run `git-credential-klangk forge-auth <host>`",
+        )
+    if policy != "txn":
+        return None
+
+    async def dispatch(request, timeout):
+        return await session.dispatch_browser_request_to(
+            target_sock, request, timeout=timeout
+        )
+
+    client = forge_proxy_routes.http_client_for(app)
+    try:
+        return await forge.relay_authorization(
+            workspace_id, payload, dispatch, client
+        )
+    except forge_proxy_mod.ForgeProxyError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.detail)
+    finally:
+        await client.aclose()
+
+
 @router.post("/browser-delegate")
 async def browser_delegate(
     body: BrowserDelegateRequest,
@@ -99,6 +135,11 @@ async def browser_delegate(
     session, target_sock, payload = _resolve_bridge_target(
         body, app.state.container_registry, app.state.sockets, workspace_id
     )
+    relayed = await _forge_relay(
+        app, workspace_id, session, target_sock, payload
+    )
+    if relayed is not None:
+        return relayed
     # Credential get operations may wait for user interaction (PAT
     # dialog or OAuth device flow) — allow up to 15 minutes (matching
     # GitHub's device code expiry). The browser authorization flow
@@ -140,6 +181,14 @@ async def browser_delegate_stream(
     session, target_sock, payload = _resolve_bridge_target(
         body, app.state.container_registry, app.state.sockets, workspace_id
     )
+    # Proxied-forge credential flows are never streamed: an authorization
+    # code or token must not reach the container through this path either.
+    forge = getattr(app.state, "forge_proxy", None)
+    if forge and forge.bridge_policy(payload) != "pass":
+        raise HTTPException(
+            status_code=403,
+            detail="This forge is proxied: run `git-credential-klangk forge-auth <host>`",
+        )
     # Fetch the workspace so its settings.bridge_timeout override can apply.
     # One DB lookup per stream request — these are not high-frequency
     # (one per browser-delegated long-running action from the container).
