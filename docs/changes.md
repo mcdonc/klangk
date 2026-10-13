@@ -851,6 +851,14 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **`klangk-jwt` feature (#3554).** New dormant feature — activate with
+  `KLANGKD_FEATURES_ENABLE=klangk-jwt` — that answers a `klangk_jwt`
+  bridge action by returning the browser tab's raw session JWT to a
+  workspace caller (the `klangk-jwt` shell helper and the `klangk_jwt` Pi
+  tool). The browser asks the user to confirm each retrieval;
+  `KLANGKWS_FEATURE_KLANGK_JWT_REQUIRE_CONSENT=false` returns the token
+  without a prompt. See
+  [Feature Activation](features/features.md).
 - **Quiet Pi startup with on-demand `/header` (#3537).** The
   per-user `~/.pi/agent/settings.json` provisioned at first workspace
   login now sets `"quietStartup": true`, so the startup header
