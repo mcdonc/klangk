@@ -34,7 +34,7 @@ export default function (pi: any) {
     async execute(
       _toolCallId: string,
       _params: Record<string, never>,
-      _signal: AbortSignal | undefined,
+      signal: AbortSignal | undefined,
       _onUpdate: any,
       _ctx: any,
     ) {
@@ -58,20 +58,31 @@ export default function (pi: any) {
             action: "klangk_jwt",
             browser_id: browserId,
           }),
+          signal,
         });
 
-        const data = (await resp.json()) as {
-          token?: string;
-          error?: string;
+        // The bridge wraps feature responses as
+        // {"status":"ok","result":"<json-string>"} — unwrap before reading
+        // the token/error fields.
+        const envelope = (await resp.json()) as {
+          result?: string;
           detail?: string;
         };
+        let data: { token?: string; error?: string } = envelope;
+        if (typeof envelope.result === "string") {
+          try {
+            data = JSON.parse(envelope.result);
+          } catch {
+            // keep the envelope — surfaces as "no token" below
+          }
+        }
         if (resp.ok && data.token) {
           return {
             content: [{ type: "text", text: data.token }],
             details: {},
           };
         }
-        const reason = data.error || data.detail || `HTTP ${resp.status}`;
+        const reason = data.error || envelope.detail || `HTTP ${resp.status}`;
         return {
           content: [{ type: "text", text: `klangk_jwt failed: ${reason}` }],
           details: {},

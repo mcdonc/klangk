@@ -41,6 +41,22 @@ def _run_helper(name):
     return ""
 
 
+def _unwrap_bridge_response(resp):
+    """Unwrap the bridge's {"status": "ok", "result": ...} envelope.
+
+    The bridge wraps feature responses as {"status": "ok", "result":
+    "<json-string>"}; return the inner dict when wrapped, the original
+    response otherwise (also on an unwrappable result).
+    """
+    result = resp.get("result")
+    if isinstance(result, str):
+        try:
+            return json.loads(result)
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return resp
+
+
 def _fail(reason):
     print(reason, file=sys.stderr)
     return 1
@@ -65,7 +81,7 @@ def main():
     )
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-            parsed = json.loads(resp.read())
+            parsed = _unwrap_bridge_response(json.loads(resp.read()))
     except urllib.error.HTTPError as e:
         try:
             detail = json.loads(e.read()).get("detail", "")

@@ -37,7 +37,9 @@ void main() {
     test('answers with an error when the tab holds no token', () async {
       final bare = KlangkJwtFeature(
         tokenReader: () async => null,
-        httpClient: _configClient(),
+        httpClient: _configClient(
+          {'klangk_jwt_require_consent': 'false'},
+        ),
       );
       final result =
           await bare.handlers['klangk_jwt']!({'action': 'klangk_jwt'});
@@ -48,11 +50,28 @@ void main() {
     test('an empty stored token counts as no token', () async {
       final bare = KlangkJwtFeature(
         tokenReader: () async => '',
-        httpClient: _configClient(),
+        httpClient: _configClient(
+          {'klangk_jwt_require_consent': 'false'},
+        ),
       );
       final result = await bare.handlers['klangk_jwt']!({});
       expect(jsonDecode(result), {'error': 'no session token'});
       bare.dispose();
+    });
+
+    test('a denied caller learns nothing about the login state', () async {
+      // Consent runs before the token read, so a denial answers 'cancelled'
+      // whether or not the tab holds a token — the login-state oracle stays
+      // closed (review finding on #3555).
+      final oracle = KlangkJwtFeature(
+        tokenReader: () async => 'jwt-secret',
+        httpClient: _configClient(),
+      );
+      final pending = oracle.handlers['klangk_jwt']!({});
+      await Future<void>.delayed(Duration.zero);
+      oracle.pendingConsentForTest!.complete(false);
+      expect(jsonDecode(await pending), {'error': 'cancelled'});
+      oracle.dispose();
     });
   });
 

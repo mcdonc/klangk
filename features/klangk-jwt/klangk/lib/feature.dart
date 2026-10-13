@@ -48,12 +48,15 @@ class KlangkJwtFeature extends ToolPlugin with ChangeNotifier {
   Widget? buildOverlay(BuildContext context) => _ConsentOverlay(feature: this);
 
   Future<String> _handle(Map<String, dynamic> request) async {
+    // Consent comes first: a caller the user denies (or one on a tab that
+    // never shows the dialog) must not learn even whether the tab holds a
+    // token — the login-state oracle stays closed.
+    if (await _consentRequired() && !await _askConsent()) {
+      return jsonEncode({'error': 'cancelled'});
+    }
     final token = await _readToken();
     if (token == null || token.isEmpty) {
       return jsonEncode({'error': 'no session token'});
-    }
-    if (await _consentRequired() && !await _askConsent()) {
-      return jsonEncode({'error': 'cancelled'});
     }
     return jsonEncode({'token': token});
   }
@@ -85,6 +88,7 @@ class KlangkJwtFeature extends ToolPlugin with ChangeNotifier {
 
   /// The completer of the currently pending consent request — test hook
   /// for resolving the dialog without pumping widgets.
+  @visibleForTesting
   Completer<bool>? get pendingConsentForTest => _pending?.completer;
 
   /// Show the consent dialog and wait for the user's decision. A second
