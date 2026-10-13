@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+"""Print the user's klangk web session JWT, retrieved via the browser bridge.
+
+Usage: klangk-jwt
+
+Reads the current browser ID (klangk-browser-id) and workspace token
+(klangk-workspace-token) per invocation, POSTs a ``klangk_jwt`` action to
+the browser-delegate bridge, and prints the raw JWT string on stdout. The
+browser tab answers only when the klangk-jwt feature is active
+(``KLANGKD_FEATURES_ENABLE``); by default it also asks the user to confirm
+each retrieval, so this can block until the user decides (15-minute
+budget, matching the git-credential waits).
+
+Exit status: 0 with the token on stdout; 1 with a reason on stderr (no
+browser, feature inactive, user denied, no session token).
+"""
+
+import json
+import os
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+
+BRIDGE_URL = os.environ.get("KLANGKWS_BRIDGE_URL", "")
+# The retrieval may block on the user's consent decision — the same
+# human-timescale budget the git-credential get operation uses.
+TIMEOUT = 900
+
+
+def _run_helper(name):
+    """One helper's trimmed stdout, or '' when it is unavailable."""
+    try:
+        result = subprocess.run(
+            [name], capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return ""
+
+
+def _fail(reason):
+    print(reason, file=sys.stderr)
+    return 1
+
+
+def main():
+    browser_id = _run_helper("klangk-browser-id")
+    if not (BRIDGE_URL and browser_id):
+        return _fail("no bridge configured (no browser attached)")
+
+    headers = {"Content-Type": "application/json"}
+    workspace_token = _run_helper("klangk-workspace-token")
+    if workspace_token:
+        headers["Authorization"] = f"Bearer {workspace_token}"
+
+    req = urllib.request.Request(
+        f"{BRIDGE_URL}/api/v1/browser-delegate",
+        data=json.dumps({"action": "klangk_jwt", "browser_id": browser_id})
+        .encode(),
+        headers=headers,
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            parsed = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        try:
+            detail = json.loads(e.read()).get("detail", "")
+        except (json.JSONDecodeError, OSError):
+            detail = ""
+        return _fail(f"bridge refused: {e.code} {detail}".strip())
+    except (urllib.error.URLError, OSError, json.JSONDecodeError) as e:
+        return _fail(f"bridge unreachable: {e}")
+
+    if parsed.get("error"):
+        return _fail(f"browser declined: {parsed['error']}")
+    token = parsed.get("token")
+    if not token:
+        return _fail("browser returned no token")
+    print(token)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
