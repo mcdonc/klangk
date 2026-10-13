@@ -33,6 +33,17 @@ operators or integrators to act when upgrading.
 
 ## \[Unreleased]
 
+### Added
+
+- **`klangk-jwt` feature (#3554).** New dormant feature — activate with
+  `KLANGKD_FEATURES_ENABLE=klangk-jwt` — that answers a `klangk_jwt`
+  bridge action by returning the browser tab's raw session JWT to a
+  workspace caller (the `klangk-jwt` shell helper and the `klangk_jwt` Pi
+  tool). The browser asks the user to confirm each retrieval;
+  `KLANGKWS_FEATURE_KLANGK_JWT_REQUIRE_CONSENT=false` returns the token
+  without a prompt. See
+  [Feature Activation](features/features.md).
+
 ## \[v2.0a12] - 2026-10-05
 
 ### Changed
@@ -1269,15 +1280,6 @@ sync` report a clear permission-denied error.
   [ACLs](reference/acl.md).
 
 ### Added
-
-- **`klangk-jwt` feature (#3554).** New dormant feature — activate with
-  `KLANGKD_FEATURES_ENABLE=klangk-jwt` — that answers a `klangk_jwt`
-  bridge action by returning the browser tab's raw session JWT to a
-  workspace caller (the `klangk-jwt` shell helper and the `klangk_jwt` Pi
-  tool). The browser asks the user to confirm each retrieval;
-  `KLANGKWS_FEATURE_KLANGK_JWT_REQUIRE_CONSENT=false` returns the token
-  without a prompt. See
-  [Feature Activation](features/features.md).
 
 - **`host` and `instance` fields on JSON log records (#3330).** Every
   JSON log line (console in `KLANGKD_LOG_FORMAT=json` and the
