@@ -89,36 +89,11 @@ bare install does not surface them. Opt in by adding them to
 
 [![Boing Ball feature triggered from Pi](../assets/boing-ball.png)](../assets/boing-ball.png)
 
-| Feature      | What it does                                                                 | Activate                                      |
-| ------------ | ---------------------------------------------------------------------------- | --------------------------------------------- |
-| `word-count` | File-stats tool for Pi (lines, words, characters, size)                      | add `word-count` to `KLANGKD_FEATURES_ENABLE` |
-| `soliplex`   | Soliplex knowledge-base tools (list/query/reply, multi-turn RAG)             | add `soliplex` to `KLANGKD_FEATURES_ENABLE`   |
-| `boingball`  | Bouncing Boing Ball animation overlay, triggered from Pi (#3149)             | add `boingball` to `KLANGKD_FEATURES_ENABLE`  |
-| `klangk-jwt` | Session-JWT retrieval from the browser via the bridge, consent-gated (#3554) | add `klangk-jwt` to `KLANGKD_FEATURES_ENABLE` |
-
-### `klangk-jwt`
-
-The session-JWT retrieval feature (#3554). It answers a `klangk_jwt`
-bridge action by returning the browser tab's raw session JWT — the
-`klangk_jwt` sessionStorage value — to the calling workspace process
-(the `klangk-jwt` shell helper, or the `klangk_jwt` Pi tool). The feature
-only retrieves the string: klangk's own API refuses that token outside
-the browser (DPoP binding, #3218), so the expected consumer is a separate
-system that chooses to accept the klangk session JWT and validates it
-itself.
-
-Retrieval is consent-gated by default: the tab shows a dialog naming what
-is being shared, and a Deny answers the caller with an error. The deploy
-turns the prompt off with `KLANGKWS_FEATURE_KLANGK_JWT_REQUIRE_CONSENT=false`
-(scope `frontend`, surfaced to the UI as `klangk_jwt_require_consent` via
-`GET /api/v1/config`); with the prompt off, the handler returns the token
-to any bridge-authenticated caller in the workspace.
-
-It ships dormant because it hands a session credential to workspace
-callers — a bare install surfaces nothing, and an operator opts in
-deliberately. The workspace-side caveat below applies too: the Pi tool
-appears in the tool list whenever the feature is compiled in, and on a
-dormant deploy it reports the bridge's "Unknown action" refusal.
+| Feature      | What it does                                                     | Activate                                      |
+| ------------ | ---------------------------------------------------------------- | --------------------------------------------- |
+| `word-count` | File-stats tool for Pi (lines, words, characters, size)          | add `word-count` to `KLANGKD_FEATURES_ENABLE` |
+| `soliplex`   | Soliplex knowledge-base tools (list/query/reply, multi-turn RAG) | add `soliplex` to `KLANGKD_FEATURES_ENABLE`   |
+| `boingball`  | Bouncing Boing Ball animation overlay, triggered from Pi (#3149) | add `boingball` to `KLANGKD_FEATURES_ENABLE`  |
 
 ### `soliplex`
 

@@ -103,17 +103,13 @@ async def browser_delegate(
     # dialog or OAuth device flow) — allow up to 15 minutes (matching
     # GitHub's device code expiry). The browser authorization flow
     # waits on the same human timescale: sign-in + 2FA + approval at the
-    # provider (#3385). The klangk_jwt retrieval waits on the consent
-    # dialog (#3554) — same budget.
+    # provider (#3385).
     action = payload.get("action", "")
     operation = payload.get("operation", "")
     timeout = (
         900.0
-        if action == "klangk_jwt"
-        or (
-            action == "git_credential"
-            and operation in ("get", "auth_flow_start")
-        )
+        if action == "git_credential"
+        and operation in ("get", "auth_flow_start")
         else 30.0
     )
     result = await session.dispatch_browser_request_to(
