@@ -33,6 +33,24 @@ operators or integrators to act when upgrading.
 
 ## \[Unreleased]
 
+### Added
+
+- **`auth-fetch` feature.** New default-on feature: a workspace process
+  calls the `klangk-auth-fetch` helper to have the user's browser fetch a
+  URL with the browser's session credentials; when the site answers 401
+  (an `nginx` `auth_request` / oauth2-proxy gate, say), the browser opens
+  the target URL itself in a sign-in window and polls the gate's stock
+  `/oauth2/auth` endpoint (plain 401 unauthenticated, 2xx once the
+  session cookie exists) until sign-in completes, then delivers the page
+  text to the container and closes the window. The site needs no
+  klangk-specific endpoints — only CORS with credentials for the klangk
+  origin, and the klangk origin must share the target's registrable
+  domain (same-site) so the login cookie rides the browser-side fetch.
+  Admit the authenticated site's origin in the frontend CSP with
+  `csp_connect_origins` (e.g. `https://docs.example.mil`); see
+  [Features](features/features.md) and the feature README
+  (`features/auth-fetch/README.md`).
+
 ### Fixed
 
 - **`KLANGKD_LOG_FILE` suspends on a failing sink on every Python

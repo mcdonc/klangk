@@ -59,7 +59,7 @@ dormant feature in means listing it alongside the defaults you want to keep:
 
 ```bash
 # turn on soliplex (and boingball) while keeping the stock set
-KLANGKD_FEATURES_ENABLE=beep,bobdobbs,boingball,browser-fetch,celebrate,git-credential,soliplex
+KLANGKD_FEATURES_ENABLE=auth-fetch,beep,bobdobbs,boingball,browser-fetch,celebrate,git-credential,soliplex
 ```
 
 Read at boot and on `SIGHUP` (reloadable). When the upstream `defaults` change,
@@ -70,11 +70,12 @@ config-file key.
 
 ## Default features
 
-These five are compiled in and active by default (the manifest's `defaults`
+These six are compiled in and active by default (the manifest's `defaults`
 list):
 
 | Feature          | What it does                                                |
 | ---------------- | ----------------------------------------------------------- |
+| `auth-fetch`     | Fetch authenticated web content through the user's browser  |
 | `beep`           | Plays an audible beep via the Web Audio API                 |
 | `bobdobbs`       | Bob "J.R." Dobbs quote overlay, triggered from Pi           |
 | `browser-fetch`  | HTTP fetch using the browser's session cookies, from Pi     |

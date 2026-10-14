@@ -4933,10 +4933,13 @@ class TestMonitor:
 
     @pytest.mark.asyncio
     async def test_heartbeat_keeps_session_alive(self, monkeypatch):
-        """A quiet monitor sends a heartbeat frame (#3151): with the
-        server's idle session timeout armed, a receive-only socket is
-        closed after the window — the monitor must keep its own
-        session alive the way the web client does."""
+        """A quiet monitor keeps sending heartbeat frames (#3151): with
+        the server's idle session timeout armed, a receive-only socket
+        is closed after the window — the monitor must keep its own
+        session alive the way the web client does. The stream ends only
+        after the SECOND heartbeat (event handshake, not a wall-clock
+        race): the loop provably beats again after a send, however the
+        runner schedules the interval waits."""
         import asyncio
 
         from klangk.cli import monitor as monitor_mod
@@ -4944,23 +4947,26 @@ class TestMonitor:
 
         monkeypatch.setattr(monitor_mod, "MONITOR_HEARTBEAT_SECONDS", 0.01)
 
-        class _SlowConn:
-            """Yields nothing for a beat, then ends the stream."""
+        class _QuietConn:
+            """Silent until two heartbeats have been sent, then ends."""
 
             def __init__(self):
                 self.sent: list[str] = []
+                self._done = asyncio.Event()
 
             def __aiter__(self):
                 return self
 
             async def __anext__(self):
-                await asyncio.sleep(0.05)
+                await self._done.wait()
                 raise StopAsyncIteration
 
             async def send(self, data):
                 self.sent.append(data)
+                if len(self.sent) >= 2:
+                    self._done.set()
 
-        conn = _SlowConn()
+        conn = _QuietConn()
         with patch(
             "klangk.cli.main.websockets.connect",
             return_value=_FakeMonitorCM(conn),
@@ -4968,8 +4974,34 @@ class TestMonitor:
             await monitor_connection(
                 "http://x", "tok", 1024, command=[], types=[], workspaces=[]
             )
-        assert conn.sent, "no heartbeat sent on a quiet connection"
+        assert len(conn.sent) >= 2, "the heartbeat loop did not beat again"
         assert json.loads(conn.sent[0]) == {"cmd": "heartbeat"}
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_skips_send_when_stopped(self, monkeypatch):
+        """The monitor twin of the shell session's gap test: the wait
+        times out *and* stop is set before the re-check — the send is
+        skipped and the loop exits without a frame."""
+        import asyncio
+
+        from klangk.cli import monitor as monitor_mod
+
+        sent: list[str] = []
+        stop = asyncio.Event()
+
+        class _Conn:
+            async def send(self, data):
+                sent.append(data)
+
+        async def stop_then_time_out(fut, timeout):
+            stop.set()
+            raise asyncio.TimeoutError
+
+        monkeypatch.setattr(
+            monitor_mod.asyncio, "wait_for", stop_then_time_out
+        )
+        await monitor_mod.monitor_heartbeat_loop(_Conn(), stop)
+        assert sent == []
 
     @pytest.mark.asyncio
     async def test_heartbeat_stops_while_waiting(self, monkeypatch):

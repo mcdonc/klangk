@@ -28,6 +28,8 @@ features:
     path: features/word-count
   - name: browser-fetch
     path: features/browser-fetch
+  - name: auth-fetch
+    path: features/auth-fetch
   - name: boingball
     path: features/boingball
   - name: git-credential
