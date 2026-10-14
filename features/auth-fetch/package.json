@@ -1,0 +1,5 @@
+{
+  "name": "@klangk/auth-fetch",
+  "version": "1.0.0",
+  "description": "Fetch authenticated web content through the user's browser: opens a sign-in window when the target site needs auth, then delivers the page text to the container"
+}
