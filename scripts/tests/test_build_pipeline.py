@@ -52,16 +52,14 @@ EXPECTED_FEATURE_NAMES = {
     "boingball",
     "git-credential",
     "soliplex",  # vendored local in #1686 (was a remote git: entry in #1664)
-    "klangk-jwt",  # dormant bridge action for session-JWT retrieval (#3554)
 }
 
 # Compiled-in Dart features that are NOT in DEFAULT_FEATURES — dormant unless
 # an operator opts in via KLANGKD_FEATURES_ENABLE. Soliplex (#1664, vendored
 # local in #1686) is the canonical "compiled-in ⊋ defaults" case; boingball
 # joined it in #3149 (dropped from the default set so the shipped CSP can omit
-# script-src 'unsafe-eval'); klangk-jwt ships dormant because it hands the
-# browser session JWT to workspace callers (#3554).
-DORMANT_FEATURE_NAMES = {"soliplex", "boingball", "klangk-jwt"}
+# script-src 'unsafe-eval').
+DORMANT_FEATURE_NAMES = {"soliplex", "boingball"}
 
 # Features with a klangk/ Dart package that declare a ToolPlugin → the tool
 # class emitted into createAllFeatures/createAllNamedFeatures. Features
@@ -74,7 +72,6 @@ EXPECTED_DART_FEATURES = {
     "boingball": "BoingBallFeature",
     "git-credential": "GitCredentialFeature",
     "soliplex": "SoliplexFeature",
-    "klangk-jwt": "KlangkJwtFeature",
 }
 
 # Dart features that declare a WorkspaceTabPlugin (tab-only, or both a
@@ -481,7 +478,6 @@ class TestManifestContract:
         # on-switch was removed with the chat feature, #2716).
         assert all_keys == {
             "KLANGKWS_FEATURE_BOING_SPEED": "frontend",
-            "KLANGKWS_FEATURE_KLANGK_JWT_REQUIRE_CONSENT": "frontend",
             "KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID": "container",
             "KLANGKWS_FEATURE_GITLAB_OAUTH_CLIENT_ID": "container",
             "KLANGKWS_FEATURE_GITEA_OAUTH_CLIENT_ID": "container",
@@ -525,16 +521,15 @@ class TestManifestContract:
         and excludes dormant ones.
 
         Every stock Dart feature is default-on except soliplex (#1664,
-        vendored local in #1686), boingball (#3149), and klangk-jwt (#3554):
-        all three are compiled-in (appear in features[]) but dormant (NOT in
-        defaults) — operators opt in with KLANGKD_FEATURES_ENABLE. Soliplex
-        is the canonical "compiled-in ⊋ defaults" case from #1655."""
+        vendored local in #1686) and boingball (#3149): both are compiled-in
+        (appear in features[]) but dormant (NOT in defaults) — operators opt
+        in with KLANGKD_FEATURES_ENABLE. Soliplex is the canonical
+        "compiled-in ⊋ defaults" case from #1655."""
         manifest = self._build_manifest(tmp_path, monkeypatch)
         feature_names = {f["name"] for f in manifest["features"]}
         defaults = set(manifest["defaults"])
         dormant = feature_names - defaults
-        # Soliplex, boingball, and klangk-jwt are the dormant Dart features
-        # today.
+        # Soliplex and boingball are the dormant Dart features today.
         assert dormant == DORMANT_FEATURE_NAMES, (
             f"Dormant Dart features drifted (expected only "
             f"{sorted(DORMANT_FEATURE_NAMES)}): {sorted(dormant)}"
