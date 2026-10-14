@@ -1466,8 +1466,10 @@ class FlutterRun:
         # signal — a synthetic pointer event corrupts the widget build
         # scope instead, the #3385 probe). A real user clicks the
         # dialog's Reopen link; the driven browser only ever opens the
-        # URLs the suite itself computed.
-        base_flags = "--disable-popup-blocking"
+        # URLs the suite itself computed. Self-signed TLS targets (the
+        # auth-fetch stand-in gate) need cert errors bypassed — the
+        # programmatic probe fetch gets no cert click-through.
+        base_flags = "--disable-popup-blocking --ignore-certificate-errors"
         if headless_requested():
             base_flags += (
                 " --headless=new --no-sandbox --disable-gpu "
