@@ -1,0 +1,170 @@
+#!/usr/bin/env python3
+"""Fetch a URL through the user's browser, authenticating first if needed.
+
+Called as: klangk-auth-fetch URL [--probe URL] [--timeout SECS] [--json]
+
+POSTs an auth_fetch request to the browser-delegate bridge. The browser
+feature fetches the URL with the user's session credentials; on 401 it
+opens the URL in a popup for the user to sign in (the site's own login
+flow), polls the site's /auth-fetch probe until the session exists, then
+returns the page text. Prints the body to stdout (or the full JSON result
+with --json) and exits 0; exits 1 on error, cancellation or timeout.
+"""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+BRIDGE_URL = os.environ.get("KLANGKWS_BRIDGE_URL", "")
+# The whole interaction may block on the user signing in.
+TIMEOUT = 900
+DEBUG = os.environ.get("AUTH_FETCH_KLANGK_DEBUG", "")
+
+
+def _debug(msg):
+    if DEBUG:
+        print(f"klangk-auth-fetch: {msg}", file=sys.stderr)
+
+
+def _get_workspace_token():
+    """Read the current workspace token via klangk-workspace-token."""
+    try:
+        result = subprocess.run(
+            ["klangk-workspace-token"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return ""
+
+
+def _get_browser_id():
+    """Read the current browser ID via klangk-browser-id."""
+    try:
+        result = subprocess.run(
+            ["klangk-browser-id"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return ""
+
+
+def default_probe(url):
+    """The auth-probe URL for a target URL: same origin, /auth-fetch."""
+    parts = urllib.parse.urlsplit(url)
+    if not parts.scheme or not parts.netloc:
+        return ""
+    return f"{parts.scheme}://{parts.netloc}/auth-fetch"
+
+
+def _unwrap_bridge_response(resp):
+    """Unwrap the bridge's {"status": "ok", "result": ...} envelope."""
+    result = resp.get("result")
+    if isinstance(result, str):
+        try:
+            return json.loads(result)
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return resp
+
+
+def post_bridge(payload, timeout):
+    """POST to the browser-delegate bridge. Returns parsed JSON or None."""
+    data = json.dumps(payload).encode()
+    headers = {"Content-Type": "application/json"}
+    workspace_token = _get_workspace_token()
+    if workspace_token:
+        headers["Authorization"] = f"Bearer {workspace_token}"
+    req = urllib.request.Request(
+        f"{BRIDGE_URL}/api/v1/browser-delegate",
+        data=data,
+        headers=headers,
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read()
+            parsed = json.loads(body)
+            _debug(f"bridge response: {json.dumps(parsed)[:500]}")
+            return parsed
+    except (urllib.error.URLError, OSError, json.JSONDecodeError, ValueError) as e:
+        _debug(f"bridge error: {e}")
+        return None
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Fetch a URL via the user's browser, signing in first "
+        "when the site requires authentication."
+    )
+    parser.add_argument("url", help="the URL to fetch")
+    parser.add_argument(
+        "--probe",
+        default="",
+        help="auth probe URL (default: <origin>/auth-fetch)",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=TIMEOUT,
+        help="seconds to wait for the whole interaction (default 900)",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="print the full JSON result instead of just the body",
+    )
+    args = parser.parse_args()
+
+    browser_id = _get_browser_id()
+    if not (BRIDGE_URL and browser_id):
+        print("klangk-auth-fetch: no bridge configured", file=sys.stderr)
+        sys.exit(1)
+
+    probe = args.probe or default_probe(args.url)
+    payload = {
+        "action": "auth_fetch",
+        "operation": "get",
+        "browser_id": browser_id,
+        "url": args.url,
+    }
+    if probe:
+        payload["auth_probe"] = probe
+        _debug(f"probe: {probe}")
+
+    resp = post_bridge(payload, args.timeout)
+    if not resp:
+        print("klangk-auth-fetch: no answer from the browser", file=sys.stderr)
+        sys.exit(1)
+
+    result = _unwrap_bridge_response(resp)
+    if result.get("error"):
+        print(f"klangk-auth-fetch: {result['error']}", file=sys.stderr)
+        sys.exit(1)
+
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        body = result.get("body", "")
+        if body:
+            print(body)
+    # A missing body with no error is still a completed fetch.
+    sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()

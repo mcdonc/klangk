@@ -851,6 +851,16 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **`auth-fetch` feature.** New default-on feature: a workspace process
+  calls the `klangk-auth-fetch` helper to have the user's browser fetch a
+  URL with the browser's session credentials; when the site answers 401
+  (an `nginx` `auth_request` / oauth2-proxy gate, say), the browser opens
+  a sign-in window, polls the auth probe until the session cookie exists,
+  then delivers the page text to the container. Set
+  `KLANGKWS_FEATURE_AUTH_FETCH_ORIGIN` to the authenticated site's origin
+  (`scheme://host[:port]`) so the frontend CSP allows the browser-side
+  fetch; see [Features](features/features.md) and the feature README
+  (`features/auth-fetch/README.md`).
 - **Quiet Pi startup with on-demand `/header` (#3537).** The
   per-user `~/.pi/agent/settings.json` provisioned at first workspace
   login now sets `"quietStartup": true`, so the startup header

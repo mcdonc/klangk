@@ -52,6 +52,7 @@ EXPECTED_FEATURE_NAMES = {
     "boingball",
     "git-credential",
     "soliplex",  # vendored local in #1686 (was a remote git: entry in #1664)
+    "auth-fetch",
 }
 
 # Compiled-in Dart features that are NOT in DEFAULT_FEATURES — dormant unless
@@ -72,6 +73,7 @@ EXPECTED_DART_FEATURES = {
     "boingball": "BoingBallFeature",
     "git-credential": "GitCredentialFeature",
     "soliplex": "SoliplexFeature",
+    "auth-fetch": "AuthFetchFeature",
 }
 
 # Dart features that declare a WorkspaceTabPlugin (tab-only, or both a
@@ -477,6 +479,7 @@ class TestManifestContract:
         # Spot-check the keys declared today (the chat feature's agent
         # on-switch was removed with the chat feature, #2716).
         assert all_keys == {
+            "KLANGKWS_FEATURE_AUTH_FETCH_ORIGIN": "frontend",
             "KLANGKWS_FEATURE_BOING_SPEED": "frontend",
             "KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID": "container",
             "KLANGKWS_FEATURE_GITLAB_OAUTH_CLIENT_ID": "container",
@@ -486,10 +489,11 @@ class TestManifestContract:
             "KLANGKWS_FEATURE_SOLIPLEX_URL": "frontend",
         }
 
-    def test_csp_connect_origin_only_on_soliplex_url(self, tmp_path, monkeypatch):
-        # The soliplex server URL is the one shipped key whose origin the
-        # browser CSP must allow in connect-src (the feature fetches it
-        # browser-side); every other key keeps the flag false. A flagged
+    def test_csp_connect_origin_keys(self, tmp_path, monkeypatch):
+        # The soliplex server URL and the auth-fetch origin are the two
+        # shipped keys whose origin the browser CSP must allow in
+        # connect-src (both features fetch it browser-side); every other
+        # key keeps the flag false. A flagged
         # key must also ship an empty default — a non-empty default would
         # widen the CSP on every deploy with zero operator action (env /
         # features_config: is the operator's choice; the default is the
@@ -497,7 +501,8 @@ class TestManifestContract:
         manifest = self._build_manifest(tmp_path, monkeypatch)
         flagged = flagged_csp_specs(manifest)
         assert [(name, key) for name, key, _ in flagged] == [
-            ("soliplex", "KLANGKWS_FEATURE_SOLIPLEX_URL")
+            ("auth-fetch", "KLANGKWS_FEATURE_AUTH_FETCH_ORIGIN"),
+            ("soliplex", "KLANGKWS_FEATURE_SOLIPLEX_URL"),
         ]
         for _name, _key, spec in flagged:
             assert spec["default"] == "", (
@@ -509,8 +514,8 @@ class TestManifestContract:
     def test_defaults_are_default_features_constant(self, tmp_path, monkeypatch):
         """The manifest's defaults list == DEFAULT_FEATURES in
         import_dart_features.py — the build-time constant. This is the full
-        conceptual default-on set (5 today), a SUPERSET of the default-on Dart
-        features (4): the extra name is the TS-only browser-fetch, always-on in
+        conceptual default-on set (6 today), a SUPERSET of the default-on Dart
+        features (5): the extra name is the TS-only browser-fetch, always-on in
         the workspace image and harmlessly ignored by the frontend's Dart-only
         active-set filter (#1655 asymmetry)."""
         manifest = self._build_manifest(tmp_path, monkeypatch)

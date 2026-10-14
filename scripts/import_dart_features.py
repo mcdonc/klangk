@@ -51,6 +51,7 @@ DEFAULT_FEATURES = [
     "browser-fetch",
     "celebrate",
     "git-credential",
+    "auth-fetch",
 ]
 
 FEATURE_API_DEP = {
