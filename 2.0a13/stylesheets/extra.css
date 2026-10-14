@@ -1,0 +1,17 @@
+/* Prevent wrapping in the first two table columns (Variable, Default)
+   but let the Description column (last) wrap freely. */
+.md-typeset table:not([class]) td:first-child code,
+.md-typeset table:not([class]) td:nth-child(2) code {
+  white-space: nowrap;
+}
+
+/* Force tables to use full width and auto-size columns */
+.md-typeset table:not([class]) {
+  table-layout: auto;
+  width: 100%;
+}
+
+/* Description column gets at least 40% of the table width */
+.md-typeset table:not([class]) td:last-child {
+  min-width: 40%;
+}
