@@ -14,7 +14,11 @@ session cookie is the credential, and the browser is the HTTP client.
 
 The site needs no klangk-specific pages or endpoints — only stock
 nginx/oauth2-proxy configuration plus two standard settings that let a
-cross-site browser fetch work (see [Site requirements](#site-requirements)).
+cross-origin browser fetch work (see [Site requirements](#site-requirements)).
+Admit the target's origin in the klangk frontend CSP with the
+csp_connect_origins setting (`KLANGKD_CSP_CONNECT_ORIGINS` env or the
+`csp_connect_origins:` key in `klangkd.yaml`, reloadable on SIGHUP) —
+the feature declares no config key of its own.
 
 ## Components
 

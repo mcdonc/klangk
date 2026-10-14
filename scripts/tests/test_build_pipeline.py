@@ -479,7 +479,6 @@ class TestManifestContract:
         # Spot-check the keys declared today (the chat feature's agent
         # on-switch was removed with the chat feature, #2716).
         assert all_keys == {
-            "KLANGKWS_FEATURE_AUTH_FETCH_ORIGIN": "frontend",
             "KLANGKWS_FEATURE_BOING_SPEED": "frontend",
             "KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID": "container",
             "KLANGKWS_FEATURE_GITLAB_OAUTH_CLIENT_ID": "container",
@@ -490,10 +489,12 @@ class TestManifestContract:
         }
 
     def test_csp_connect_origin_keys(self, tmp_path, monkeypatch):
-        # The soliplex server URL and the auth-fetch origin are the two
-        # shipped keys whose origin the browser CSP must allow in
-        # connect-src (both features fetch it browser-side); every other
-        # key keeps the flag false. A flagged
+        # The soliplex server URL is the one shipped key whose origin
+        # the browser CSP must allow in connect-src (the feature fetches
+        # it browser-side); every other key keeps the flag false.
+        # auth-fetch declares no key of its own — operators admit its
+        # target origins via the generic csp_connect_origins setting. A
+        # flagged
         # key must also ship an empty default — a non-empty default would
         # widen the CSP on every deploy with zero operator action (env /
         # features_config: is the operator's choice; the default is the
@@ -501,7 +502,6 @@ class TestManifestContract:
         manifest = self._build_manifest(tmp_path, monkeypatch)
         flagged = flagged_csp_specs(manifest)
         assert [(name, key) for name, key, _ in flagged] == [
-            ("auth-fetch", "KLANGKWS_FEATURE_AUTH_FETCH_ORIGIN"),
             ("soliplex", "KLANGKWS_FEATURE_SOLIPLEX_URL"),
         ]
         for _name, _key, spec in flagged:

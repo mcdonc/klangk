@@ -862,10 +862,10 @@ sync` report a clear permission-denied error.
   klangk-specific endpoints — only CORS with credentials for the klangk
   origin, and the klangk origin must share the target's registrable
   domain (same-site) so the login cookie rides the browser-side fetch.
-  Set `KLANGKWS_FEATURE_AUTH_FETCH_ORIGIN` to the authenticated site's
-  origin (`scheme://host[:port]`) so the frontend CSP allows the
-  browser-side fetch; see [Features](features/features.md) and the
-  feature README (`features/auth-fetch/README.md`).
+  Admit the authenticated site's origin in the frontend CSP with
+  `csp_connect_origins` (e.g. `https://docs.example.mil`); see
+  [Features](features/features.md) and the feature README
+  (`features/auth-fetch/README.md`).
 - **Quiet Pi startup with on-demand `/header` (#3537).** The
   per-user `~/.pi/agent/settings.json` provisioned at first workspace
   login now sets `"quietStartup": true`, so the startup header

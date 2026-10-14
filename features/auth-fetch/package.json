@@ -1,15 +1,5 @@
 {
   "name": "@klangk/auth-fetch",
   "version": "1.0.0",
-  "description": "Fetch authenticated web content through the user's browser: opens a sign-in window when the target site needs auth, then delivers the page text to the container",
-  "klangk": {
-    "config": {
-      "KLANGKWS_FEATURE_AUTH_FETCH_ORIGIN": {
-        "description": "Origin (scheme://host[:port]) of the authenticated site the browser fetches with credentials; added to the frontend CSP connect-src. Set it to the oauth2-proxy/nginx host (e.g. https://thinknix52.tail33f8f4.ts.net:9443) -- without it the browser blocks the cross-origin fetch and the feature reports 'probe unreachable'",
-        "scope": "frontend",
-        "csp_connect_origin": true,
-        "default": ""
-      }
-    }
-  }
+  "description": "Fetch authenticated web content through the user's browser: opens a sign-in window when the target site needs auth, then delivers the page text to the container"
 }
