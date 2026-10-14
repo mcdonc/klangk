@@ -33,6 +33,8 @@ operators or integrators to act when upgrading.
 
 ## \[Unreleased]
 
+## \[v2.0a13] - 2026-10-14
+
 ### Added
 
 - **`auth-fetch` feature.** New default-on feature: a workspace process
