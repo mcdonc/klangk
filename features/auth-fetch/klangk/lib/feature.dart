@@ -4,11 +4,10 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
-import 'auth_page_messages.dart';
 import 'fetch_result.dart';
 import 'fetch_with_credentials.dart';
 import 'open_url.dart';
-import 'self_origin.dart';
+import 'popup_handle.dart';
 
 /// Poll the auth probe this often while waiting for the user to sign in.
 const authFetchPollInterval = Duration(seconds: 2);
@@ -19,11 +18,11 @@ const authFetchPollInterval = Duration(seconds: 2);
 /// for a URL. This feature fetches it with the browser's session
 /// credentials; when the site answers 401 (an auth_request/oauth2-proxy
 /// gate), it opens the URL in a popup so the user can complete the site's
-/// own login flow there, polls the site's /auth-fetch probe until the
-/// session cookie is accepted, then fetches the original URL and answers
-/// with the page text. The session cookie is the credential — no OAuth
-/// client, token or git involvement (that machinery lives in
-/// git-credential).
+/// own login flow there, polls the site's /oauth2/auth probe (the stock
+/// oauth2-proxy auth endpoint) until the session cookie is accepted, then fetches the
+/// original URL and answers with the page text. The session cookie is the
+/// credential — no OAuth client, token or git involvement (that machinery
+/// lives in git-credential).
 class AuthFetchFeature extends ToolPlugin with ChangeNotifier {
   /// The pending fetch (one at a time), if any.
   _PendingAuthFetch? _pending;
@@ -33,36 +32,10 @@ class AuthFetchFeature extends ToolPlugin with ChangeNotifier {
   /// The last terminal error, reported to the container on a null result.
   String? _lastError;
 
-  /// Announcements from the authenticated site's landing page (the popup
-  /// this feature opened). Injectable for tests; on the web this is the
-  /// cross-origin postMessage stream.
-  final Stream<Map<String, String>> _authPageMessages;
+  /// The sign-in popup this flow opened, closed when the flow ends.
+  AuthFetchPopup? _popup;
 
-  StreamSubscription<Map<String, String>>? _authPageSub;
-
-  AuthFetchFeature({Stream<Map<String, String>>? authPageMessages})
-      : _authPageMessages = authPageMessages ?? klangkAuthPageMessages() {
-    _authPageSub = _authPageMessages.listen(_deliverAuthPageMessage);
-  }
-
-  /// One announcement from the popup's landing page: accepted only when it
-  /// names the pending URL's own origin (a hostile page cannot complete a
-  /// flow it did not cause). A 200 completes the fetch with the page text
-  /// the popup itself rendered — no cross-site fetch needed.
-  void _deliverAuthPageMessage(Map<String, String> message) {
-    final pending = _pending;
-    if (pending == null || pending.completer.isCompleted) return;
-    final uri = Uri.tryParse(pending.url);
-    if (uri == null || message['origin'] != uri.origin) return;
-    if (message['status'] != '200') return;
-    final pageText = message['pageText'];
-    final body = (pageText == null || pageText.trim().isEmpty)
-        ? 'authenticated\n'
-        : pageText;
-    _completePending(
-      _AuthFetchOutcome(200, body, message['identity'] ?? ''),
-    );
-  }
+  AuthFetchFeature();
 
   @override
   Map<String, ToolHandler> get handlers => {'auth_fetch': _handle};
@@ -71,7 +44,6 @@ class AuthFetchFeature extends ToolPlugin with ChangeNotifier {
   void dispose() {
     _pollTimer?.cancel();
     _pollTimer = null;
-    _authPageSub?.cancel();
     _completePending(null);
     super.dispose();
   }
@@ -90,19 +62,6 @@ class AuthFetchFeature extends ToolPlugin with ChangeNotifier {
     }
   }
 
-  /// <site-origin>/klangk-relay?target=<url>&origin=<self> — the relay
-  /// endpoint served by the companion nginx role. Falls back to the raw
-  /// URL when the origin can't be derived (the flow still works via the
-  /// cross-site poll where the browser allows it).
-  String _relayUrl(String url) {
-    final origin = Uri.tryParse(url)?.origin;
-    if (origin == null) return url;
-    final self = klangkSelfOrigin();
-    final selfParam =
-        self.isEmpty ? '' : '&origin=${Uri.encodeComponent(self)}';
-    return '$origin/klangk-relay?target=${Uri.encodeComponent(url)}$selfParam';
-  }
-
   Future<String> _handleGet(Map<String, dynamic> request) async {
     if (_pending != null) {
       return jsonEncode({'error': 'busy: another auth fetch is pending'});
@@ -114,8 +73,10 @@ class AuthFetchFeature extends ToolPlugin with ChangeNotifier {
     final probe =
         (request['auth_probe'] as String?)?.trim() ?? defaultAuthProbe(url);
     if (probe == null || probe.isEmpty) {
-      return jsonEncode({'error': 'missing auth_probe (and no /auth-fetch '
-          'convention URL could be derived from the target)'});
+      return jsonEncode({
+        'error': 'missing auth_probe (and no /oauth2/auth '
+            'convention URL could be derived from the target)'
+      });
     }
     final timeoutSecs = (request['timeout'] as num?)?.toInt() ?? 900;
 
@@ -123,11 +84,6 @@ class AuthFetchFeature extends ToolPlugin with ChangeNotifier {
       url: url,
       probe: probe,
       host: Uri.tryParse(url)?.host ?? url,
-      // The popup opens the site's generic relay (infrastructure served
-      // by the companion nginx role, not the target page): it fetches the
-      // target same-origin with the session cookie and postMessages the
-      // body back to this origin.
-      popupUrl: _relayUrl(url),
     );
     notifyListeners();
 
@@ -140,7 +96,7 @@ class AuthFetchFeature extends ToolPlugin with ChangeNotifier {
       _completePending(null);
       return jsonEncode({'error': _lastError});
     }
-    if (probeResult.status == 200) {
+    if (probeResult.is2xx) {
       return await _finishWithPage(probeResult);
     }
     if (probeResult.status != 401) {
@@ -149,11 +105,11 @@ class AuthFetchFeature extends ToolPlugin with ChangeNotifier {
       return jsonEncode({'error': _lastError});
     }
 
-    // Sign-in flow: popup the site's relay (unauthenticated → the site's
-    // own login dance runs, then the relay delivers the page text) and
-    // poll the probe as a fallback for browsers where cross-site
-    // credentialed fetches work.
-    openUrl(_pending!.popupUrl);
+    // Sign-in flow: popup the target URL itself (the site's own login
+    // dance runs there and lands the session cookie) and poll the probe
+    // until it accepts the cookie. The site needs no klangk-specific
+    // pages beyond the probe.
+    _popup = openUrl(_pending!.url);
     _startPolling();
 
     _AuthFetchOutcome? outcome;
@@ -224,7 +180,7 @@ class AuthFetchFeature extends ToolPlugin with ChangeNotifier {
       if (pending == null || pending.completer.isCompleted) return;
       try {
         final probeResult = await fetchWithCredentials(pending.probe);
-        if (probeResult.status == 200) {
+        if (probeResult.is2xx) {
           await _finishWithPage(probeResult);
         }
       } catch (_) {
@@ -233,17 +189,26 @@ class AuthFetchFeature extends ToolPlugin with ChangeNotifier {
     });
   }
 
-  /// Resolve the pending request (null = cancelled/timeout), stop polling
-  /// and clear the dialog.
+  /// Resolve the pending request (null = cancelled/timeout), stop polling,
+  /// close the sign-in popup and clear the dialog.
   void _completePending(_AuthFetchOutcome? outcome) {
     _pollTimer?.cancel();
     _pollTimer = null;
+    _popup?.close();
+    _popup = null;
     final pending = _pending;
     _pending = null;
     notifyListeners();
     if (pending != null && !pending.completer.isCompleted) {
       pending.completer.complete(outcome);
     }
+  }
+
+  /// Re-open the sign-in popup (popup blockers, closed too early).
+  void reopenPopup() {
+    final pending = _pending;
+    if (pending == null) return;
+    _popup = openUrl(pending.url);
   }
 
   @override
@@ -256,17 +221,12 @@ class _PendingAuthFetch {
   final String url;
   final String probe;
   final String host;
-
-  /// The URL the popup opens: the site's /klangk-relay (infrastructure
-  /// served by the companion nginx role), not the target page.
-  final String popupUrl;
   final completer = Completer<_AuthFetchOutcome?>();
 
   _PendingAuthFetch({
     required this.url,
     required this.probe,
     required this.host,
-    required this.popupUrl,
   });
 }
 
@@ -317,7 +277,7 @@ class _AuthFetchOverlayState extends State<_AuthFetchOverlay> {
       child: _AuthFetchDialog(
         host: pending.host,
         url: pending.url,
-        reopenUrl: pending.popupUrl,
+        onReopen: () => widget.feature.reopenPopup(),
         onCancel: () => widget.feature._completePending(null),
       ),
     );
@@ -329,16 +289,13 @@ class _AuthFetchOverlayState extends State<_AuthFetchOverlay> {
 class _AuthFetchDialog extends StatelessWidget {
   final String host;
   final String url;
-
-  /// What the re-open button launches: the site's relay, like the initial
-  /// popup.
-  final String reopenUrl;
+  final VoidCallback onReopen;
   final VoidCallback onCancel;
 
   const _AuthFetchDialog({
     required this.host,
     required this.url,
-    required this.reopenUrl,
+    required this.onReopen,
     required this.onCancel,
   });
 
@@ -382,7 +339,7 @@ class _AuthFetchDialog extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
                     TextButton(
-                      onPressed: () => openUrl(reopenUrl),
+                      onPressed: onReopen,
                       child: const Text('Open sign-in page again'),
                     ),
                     const SizedBox(width: 8),

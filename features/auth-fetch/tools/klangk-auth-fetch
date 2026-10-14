@@ -6,8 +6,8 @@ Called as: klangk-auth-fetch URL [--probe URL] [--timeout SECS] [--json]
 POSTs an auth_fetch request to the browser-delegate bridge. The browser
 feature fetches the URL with the user's session credentials; on 401 it
 opens the URL in a popup for the user to sign in (the site's own login
-flow), polls the site's /auth-fetch probe until the session exists, then
-returns the page text. Prints the body to stdout (or the full JSON result
+flow), polls the site's /oauth2/auth probe (the stock oauth2-proxy auth
+endpoint) until the session exists, then returns the page text. Prints the body to stdout (or the full JSON result
 with --json) and exits 0; exits 1 on error, cancellation or timeout.
 """
 
@@ -64,11 +64,11 @@ def _get_browser_id():
 
 
 def default_probe(url):
-    """The auth-probe URL for a target URL: same origin, /auth-fetch."""
+    """The auth-probe URL for a target URL: same origin, /oauth2/auth."""
     parts = urllib.parse.urlsplit(url)
     if not parts.scheme or not parts.netloc:
         return ""
-    return f"{parts.scheme}://{parts.netloc}/auth-fetch"
+    return f"{parts.scheme}://{parts.netloc}/oauth2/auth"
 
 
 def _unwrap_bridge_response(resp):
@@ -115,7 +115,7 @@ def main():
     parser.add_argument(
         "--probe",
         default="",
-        help="auth probe URL (default: <origin>/auth-fetch)",
+        help="auth probe URL (default: <origin>/oauth2/auth)",
     )
     parser.add_argument(
         "--timeout",

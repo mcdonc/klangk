@@ -6,13 +6,20 @@ class CredentialsFetchResult {
   final Map<String, String> headers;
 
   const CredentialsFetchResult(this.status, this.body, this.headers);
+
+  /// Any 2xx counts as authenticated: the stock probe (oauth2-proxy's
+  /// /oauth2/auth) answers 202 on success, not 200.
+  bool get is2xx => status >= 200 && status < 300;
 }
 
 /// The auth-probe URL convention this feature polls: same origin as the
-/// target URL, path /auth-fetch (served by the companion nginx role as a
-/// plain-401-until-authenticated endpoint).
+/// target URL, path /oauth2/auth — the oauth2-proxy auth endpoint every
+/// canonical nginx auth_request integration already proxies. It answers
+/// plain 401 while unauthenticated and 2xx once the session cookie is
+/// accepted (statuses a background fetch can read).
 String? defaultAuthProbe(String url) {
   final uri = Uri.tryParse(url);
   if (uri == null || !uri.hasScheme || uri.host.isEmpty) return null;
-  return uri.replace(path: '/auth-fetch', query: '', fragment: '').toString();
+  final port = uri.hasPort ? ':${uri.port}' : '';
+  return '${uri.scheme}://${uri.host}$port/oauth2/auth';
 }
