@@ -33,6 +33,18 @@ operators or integrators to act when upgrading.
 
 ## \[Unreleased]
 
+### Fixed
+
+- **Password-change toast always shows, and error toasts no longer
+  stick for a day.** The "Password changed. Log in with your new
+  password." message now appears reliably after a forced password
+  change: it used to be skipped when the logout-driven navigation
+  unmounted the change page first, or queued forever behind a sticky
+  toast. The workspaces page's load/delete error toasts now dismiss
+  themselves after 8 seconds instead of waiting a day for their close
+  icon — a day-long toast blocked every later message and its close
+  icon sat where corner action buttons live, intercepting their taps.
+
 ## \[v2.0a13] - 2026-10-14
 
 ### Added
