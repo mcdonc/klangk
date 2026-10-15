@@ -59,14 +59,26 @@ class _ForcedChangePasswordPageState extends State<ForcedChangePasswordPage> {
         // The change revokes every session of the old credential
         // (#3152), including this one — end the client session and
         // send the user to log in with the new password (#3172).
+        //
+        // The messenger is captured BEFORE the logout await: the
+        // logout's auth notification re-runs the router guards, which
+        // can bounce to /login and unmount this page before the await
+        // returns — an `if (mounted)`-guarded showSnackBar would then
+        // skip the message entirely. The root messenger outlives the
+        // page, and hideCurrentSnackBar() replaces whatever toast is
+        // on screen, so a sticky snackbar (a load error that waits for
+        // its close icon) cannot queue this message out of sight.
+        final messenger = ScaffoldMessenger.of(context);
         setState(() => _changing = false);
         await auth.logout();
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
+        messenger
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
             const SnackBar(
               content: Text('Password changed. Log in with your new password.'),
             ),
           );
+        if (mounted) {
           context.go('/login');
         }
       } else {
