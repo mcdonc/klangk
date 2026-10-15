@@ -16,9 +16,9 @@ name: "Fuzz API: retry infra kills"
 # triage.)
 #
 # A retry job inside fuzz-daily.yml itself cannot work:
-# rerunFailedJobs requires the run to be completed, and the run is not
-# complete while one of its jobs is still executing. Hence this
-# separate workflow_run-triggered workflow.
+# the rerun-failed-jobs endpoint requires the run to be completed,
+# and the run is not complete while one of its jobs is still
+# executing. Hence this separate workflow_run-triggered workflow.
 #
 # The gate allows the original attempt plus two automatic reruns
 # (run_attempt < 3); after that the failure stands for human triage.
@@ -29,7 +29,7 @@ on:
     types: [completed]
 
 permissions:
-  actions: write # rerunFailedJobs
+  actions: write # the rerun-failed-jobs endpoint
 
 concurrency:
   group: ${{ github.workflow }}
@@ -83,12 +83,13 @@ jobs:
               `runner shutdown detected (attempt ${run.run_attempt}); ` +
               "re-running the fuzz job",
             );
-            // github.request with the literal REST route, not an SDK
-            // method name: the bundled octokit has renamed this method
-            // before (rerunFailedJobs -> rerunFailedJobsForWorkflowRun
-            // -> reRunWorkflowFailedJobs), and a stale name fails only
-            // at the moment the retry fires — silently, as a TypeError
-            // (#3565). The route is the documented stable surface:
+            // github.request with the literal REST route, not the SDK
+            // method: the SDK name is reRunWorkflowFailedJobs, but the
+            // original code called rerunFailedJobs — a name that never
+            // existed in any octokit release — and a bad method name
+            // fails only at the moment the retry fires, silently, as
+            // a TypeError (#3565). The documented route is the stable
+            // surface:
             // POST /repos/{owner}/{repo}/actions/runs/{run_id}/rerun-failed-jobs
             try {
               await github.request(

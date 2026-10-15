@@ -24,9 +24,11 @@ that would otherwise drift silently:
 - the workflow carries exactly the actions: write permission that
   the rerun-failed-jobs endpoint needs;
 - the rerun call addresses the documented REST route via
-  ``github.request`` — SDK method names for it have been renamed
-  across octokit releases, and a stale name dies as a TypeError only
-  when the retry actually fires (#3565).
+  ``github.request`` — the SDK method for it is
+  ``reRunWorkflowFailedJobs``, but the original code called
+  ``rerunFailedJobs``, a name that never existed in any octokit
+  release, and the resulting TypeError surfaced only when a retry
+  actually fired (#3565).
 
 If one of these fails, a workflow edit drifted from the policy; fix the
 workflow, not the test.
@@ -126,14 +128,17 @@ def test_retry_has_actions_write():
 
 def test_rerun_targets_the_documented_endpoint():
     script = retry_script(load_workflow(RETRY))
+    assert "github.request(" in script, (
+        "the rerun must go through github.request — the route is the "
+        "documented stable surface, unlike SDK method names (#3565)"
+    )
     assert (
         '"POST /repos/{owner}/{repo}/actions/runs/{run_id}/rerun-failed-jobs"' in script
     ), (
-        "the rerun must go through github.request with the documented "
-        "REST route — SDK method names for it have been renamed across "
-        "octokit releases, and calling a missing one failed as "
-        "'rerunFailedJobs is not a function' only when a retry fired "
-        "(#3565)"
+        "the rerun must target the documented REST route — the original "
+        "code called github.rest.actions.rerunFailedJobs, a method that "
+        "never existed in any octokit release (the SDK name is "
+        "reRunWorkflowFailedJobs), so every retry crashed on it (#3565)"
     )
     assert "rerunFailedJobs(" not in script, (
         "github.rest.actions.rerunFailedJobs does not exist in the "
