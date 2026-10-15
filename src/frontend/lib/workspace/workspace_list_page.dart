@@ -364,9 +364,12 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
     } catch (e) {
       debugPrint('Failed to load workspaces: $e');
       if (mounted) {
+        // Auto-dismissing: a sticky load-error toast would block the
+        // snackbar queue (every later message waits behind it) and its
+        // close icon sits where corner FABs live, intercepting taps.
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            duration: Duration(days: 1),
+            duration: Duration(seconds: 8),
             showCloseIcon: true,
             content: Text('Failed to load workspaces'),
           ),
@@ -527,9 +530,12 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
     } catch (e) {
       debugPrint('Workspace delete error: $e');
       if (mounted) {
+        // Auto-dismissing for the same reason as the load-error toast:
+        // a sticky snackbar starves the queue and its close icon
+        // intercepts corner-FAB taps.
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            duration: Duration(days: 1),
+            duration: Duration(seconds: 8),
             showCloseIcon: true,
             content: Text('Could not delete workspace. Please try again.'),
           ),

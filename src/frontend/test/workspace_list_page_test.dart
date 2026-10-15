@@ -1149,6 +1149,24 @@ void main() {
       expect(find.textContaining('Failed to load workspaces'), findsOneWidget);
     });
 
+    testWidgets('load-error snackbar auto-dismisses', (tester) async {
+      // The toast used to wait a day for its close icon: it starved the
+      // snackbar queue (later messages queued behind it forever) and its
+      // close button intercepted corner-FAB taps — the fmtk flows flake.
+      testAuthHttpClientOverride = withPermissions((request) async {
+        throw Exception('Network error');
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Failed to load workspaces'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 9));
+      // Let the exit animation finish — pump(9s) lands mid-dismiss.
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Failed to load workspaces'), findsNothing);
+    });
+
     testWidgets('shows created date for workspaces', (tester) async {
       testAuthHttpClientOverride = withPermissions((request) async {
         if (request.url.path == '/api/v1/workspaces') {
