@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:klangk_frontend/auth/auth_service.dart';
 import 'package:klangk_frontend/auth/forced_change_password_page.dart';
+import 'package:klangk_frontend/widgets/obscure_toggle.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
 void main() {
@@ -50,9 +51,10 @@ void main() {
         builder: (context, auth, _) => MaterialApp(
           // What the router does on logout: the guarded page is
           // replaced by the login route (which has its own Scaffold —
-          // the snackbar displays over it).
+          // the snackbar displays over it). Non-const so the page's
+          // constructor is a runtime call, not a compile-time constant.
           home: auth.isLoggedIn
-              ? const ForcedChangePasswordPage()
+              ? ForcedChangePasswordPage()
               : const Scaffold(body: Center(child: Text('Login page'))),
         ),
       ),
@@ -123,6 +125,51 @@ void main() {
 
       // Not queued behind the day-long toast: it replaced it.
       expect(find.text('Failed to load workspaces'), findsNothing);
+      expect(
+        find.textContaining('Log in with your new password'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('reveal toggles flip each field, submit from confirm', (
+      tester,
+    ) async {
+      useTallSurface(tester);
+      mockBackend();
+      await tester.pumpWidget(bounceHost());
+      await tester.pumpAndSettle();
+
+      // Each field's eye toggle flips that field's obscureText. The
+      // New Password and Confirm fields share one reveal flag (the
+      // page's design), so the confirm toggle flips both at once.
+      final fields = find.byType(TextField);
+      final toggles = find.byType(KObscureToggle);
+      expect(tester.widget<TextField>(fields.at(0)).obscureText, isTrue);
+      await tester.tap(toggles.at(0));
+      await tester.pump();
+      expect(tester.widget<TextField>(fields.at(0)).obscureText, isFalse);
+
+      expect(tester.widget<TextField>(fields.at(1)).obscureText, isTrue);
+      expect(tester.widget<TextField>(fields.at(2)).obscureText, isTrue);
+      await tester.tap(toggles.at(1));
+      await tester.pump();
+      expect(tester.widget<TextField>(fields.at(1)).obscureText, isFalse);
+      expect(tester.widget<TextField>(fields.at(2)).obscureText, isFalse);
+
+      await tester.tap(toggles.at(2));
+      await tester.pump();
+      expect(tester.widget<TextField>(fields.at(1)).obscureText, isTrue);
+      expect(tester.widget<TextField>(fields.at(2)).obscureText, isTrue);
+
+      // Enter on the confirm field submits (onFieldSubmitted).
+      final inputs = find.byType(TextFormField);
+      await tester.enterText(inputs.at(0), 'fmtk-Mc123!A1');
+      await tester.enterText(inputs.at(1), 'fmtk-Post123!C3');
+      await tester.enterText(inputs.at(2), 'fmtk-Post123!C3');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Login page'), findsOneWidget);
       expect(
         find.textContaining('Log in with your new password'),
         findsOneWidget,
