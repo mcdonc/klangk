@@ -83,12 +83,22 @@ jobs:
               `runner shutdown detected (attempt ${run.run_attempt}); ` +
               "re-running the fuzz job",
             );
+            // github.request with the literal REST route, not an SDK
+            // method name: the bundled octokit has renamed this method
+            // before (rerunFailedJobs -> rerunFailedJobsForWorkflowRun
+            // -> reRunWorkflowFailedJobs), and a stale name fails only
+            // at the moment the retry fires — silently, as a TypeError
+            // (#3565). The route is the documented stable surface:
+            // POST /repos/{owner}/{repo}/actions/runs/{run_id}/rerun-failed-jobs
             try {
-              await github.rest.actions.rerunFailedJobs({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                run_id: run.id,
-              });
+              await github.request(
+                "POST /repos/{owner}/{repo}/actions/runs/{run_id}/rerun-failed-jobs",
+                {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  run_id: run.id,
+                },
+              );
             } catch (err) {
               // 422 = the run refused a rerun — most likely a
               // duplicate event delivery racing an already-started

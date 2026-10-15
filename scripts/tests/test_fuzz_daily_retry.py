@@ -22,7 +22,11 @@ that would otherwise drift silently:
 - the signature check looks for the job name and the upload-step name
   that fuzz-daily.yml actually uses;
 - the workflow carries exactly the actions: write permission that
-  rerunFailedJobs needs.
+  the rerun-failed-jobs endpoint needs;
+- the rerun call addresses the documented REST route via
+  ``github.request`` — SDK method names for it have been renamed
+  across octokit releases, and a stale name dies as a TypeError only
+  when the retry actually fires (#3565).
 
 If one of these fails, a workflow edit drifted from the policy; fix the
 workflow, not the test.
@@ -115,5 +119,24 @@ def test_signature_names_match_fuzz_daily():
 def test_retry_has_actions_write():
     permissions = load_workflow(RETRY)["permissions"]
     assert permissions == {"actions": "write"}, (
-        "rerunFailedJobs needs actions: write; keep the grant this narrow (#3471)"
+        "the rerun-failed-jobs endpoint needs actions: write; keep the "
+        "grant this narrow (#3471)"
+    )
+
+
+def test_rerun_targets_the_documented_endpoint():
+    script = retry_script(load_workflow(RETRY))
+    assert (
+        '"POST /repos/{owner}/{repo}/actions/runs/{run_id}/rerun-failed-jobs"' in script
+    ), (
+        "the rerun must go through github.request with the documented "
+        "REST route — SDK method names for it have been renamed across "
+        "octokit releases, and calling a missing one failed as "
+        "'rerunFailedJobs is not a function' only when a retry fired "
+        "(#3565)"
+    )
+    assert "rerunFailedJobs(" not in script, (
+        "github.rest.actions.rerunFailedJobs does not exist in the "
+        "octokit bundled with actions/github-script v9 — every retry "
+        "crashed on it (#3565)"
     )
