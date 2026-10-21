@@ -61,7 +61,7 @@ jobs:
               - '.github/workflows/macos-smoke.yml'
               - '!**/*.md'
 
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.3.0
         if: steps.filter.outputs.backend == 'true'
         with:
           # Pinned uv + locked sync, mirroring backend-tests.yml (#3574):
