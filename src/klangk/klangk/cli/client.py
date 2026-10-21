@@ -2223,6 +2223,13 @@ class ExecSession(_ShellSession):
     async def _apply_exec_frame(self, msg: str) -> bool:
         """Handle one exec frame; True when the session should stop."""
         data = json.loads(msg)
+        if await self._exec_terminal_frame(data):
+            return True
+        await self._exec_stream_frame(data)
+        return False
+
+    async def _exec_stream_frame(self, data: dict) -> None:
+        """Handle one streaming exec frame (output, stderr, agent)."""
         mtype = data.get("type")
         if mtype == "exec_output":
             await self._write_exec_output(
@@ -2234,10 +2241,14 @@ class ExecSession(_ShellSession):
             )
         elif mtype == "ssh_agent_response":
             self.dispatch_agent_response(data)
-        elif mtype == "exec_exit":
+
+    async def _exec_terminal_frame(self, data: dict) -> bool:
+        """Handle one terminal exec frame; True when it ends the session."""
+        mtype = data.get("type")
+        if mtype == "exec_exit":
             self.exit_code = data.get("code", 0)
             return True
-        elif mtype == "error":
+        if mtype == "error":
             # Server-side nack (e.g. the #2706/#2712 exec-and-sync permission
             # gate on exec_start). stderr, never stdout: stdout
             # carries rsync's binary protocol when this session is
