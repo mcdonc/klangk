@@ -289,7 +289,6 @@ that routes the command's standard error on its own sets `separate_stderr: true`
 in that message. The server then sends standard output in `exec_output` frames
 and standard error in `exec_stderr` frames. Both carry base64-encoded bytes in
 `data`. The final `exec_exit` frame carries the remote exit code in `code`.
-`exec_input`, `exec_close_stdin` and `exec_stop` are unchanged.
 
 Without `separate_stderr`, the server sends both streams as `exec_output`
 frames. File-copy and setup paths, and clients that do not send the field, get
