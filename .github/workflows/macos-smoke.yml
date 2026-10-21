@@ -61,11 +61,15 @@ jobs:
               - '.github/workflows/macos-smoke.yml'
               - '!**/*.md'
 
-      - uses: actions/setup-python@v6
+      - uses: astral-sh/setup-uv@v10
         if: steps.filter.outputs.backend == 'true'
         with:
+          # Pinned uv + locked sync, mirroring backend-tests.yml (#3574):
+          # CI tests the versions the root uv.lock pins, not whatever is
+          # newest on PyPI. setup-uv also provisions the interpreter.
+          version: "0.11.28"
           python-version: "3.14"
-          cache: pip
+          enable-cache: true
 
       - name: Install podman & GNU coreutils/tar (Homebrew)
         if: steps.filter.outputs.backend == 'true'
@@ -90,9 +94,13 @@ jobs:
           mkdir -p /tmp/kci
           echo "TMPDIR=/tmp/kci" >> "$GITHUB_ENV"
 
-      - name: Install dependencies
+      - name: Install dependencies from the lockfile
         if: steps.filter.outputs.backend == 'true'
-        run: pip install -e 'src/klangk/[test]'
+        # Root uv.lock via uv sync — same as backend-tests.yml (#3574).
+        # .venv/bin on PATH keeps the pytest steps below unchanged.
+        run: |
+          uv sync --locked --extra test
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Run tests
         if: steps.filter.outputs.backend == 'true'
