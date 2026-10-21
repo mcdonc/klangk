@@ -5,7 +5,8 @@ name: "macOS: Backend Tests"
 # platform-gated code (netfilter VM hooks, gnubin PATH, podman machine
 # checks) that the Linux suite misses.
 #
-# Mirrors backend-tests.yml (bare pip, no devenv) so the job runs in ~3-4m
+# Mirrors backend-tests.yml (pinned-uv locked sync, no devenv) so the job
+# runs in ~3-4m
 # instead of ~10-17m. This is viable because:
 #   - podman is fully mocked in the unit suite (test_podman/test_container
 #     "must never touch real podman"), so no real podman socket is needed;
@@ -59,13 +60,30 @@ jobs:
               - 'features/**'
               - 'features.yaml'
               - '.github/workflows/macos-smoke.yml'
+              # Dependency pins move what the locked install tests (#3574);
+              # see backend-tests.yml.
+              - 'uv.lock'
+              - 'pyproject.toml'
+              - 'src/klangksidecar/pyproject.toml'
               - '!**/*.md'
 
       - uses: actions/setup-python@v6
         if: steps.filter.outputs.backend == 'true'
         with:
           python-version: "3.14"
-          cache: pip
+
+      - uses: astral-sh/setup-uv@v10.3.0
+        if: steps.filter.outputs.backend == 'true'
+        with:
+          # Pinned uv + locked sync, mirroring backend-tests.yml (#3574):
+          # CI tests the versions the root uv.lock pins, not whatever is
+          # newest on PyPI. uv 0.11.21 matches the devenv and
+          # python-deps-audit pins — all three move together. The
+          # interpreter comes from setup-python (UV_PYTHON_PREFERENCE on
+          # the sync step) — see backend-tests.yml for the 3.14.6
+          # asyncio-subprocess race uv's managed downloads would pin us to.
+          version: "0.11.21"
+          enable-cache: true
 
       - name: Install podman & GNU coreutils/tar (Homebrew)
         if: steps.filter.outputs.backend == 'true'
@@ -90,9 +108,15 @@ jobs:
           mkdir -p /tmp/kci
           echo "TMPDIR=/tmp/kci" >> "$GITHUB_ENV"
 
-      - name: Install dependencies
+      - name: Install dependencies from the lockfile
         if: steps.filter.outputs.backend == 'true'
-        run: pip install -e 'src/klangk/[test]'
+        env:
+          UV_PYTHON_PREFERENCE: only-system
+        # Root uv.lock via uv sync — same as backend-tests.yml (#3574).
+        # .venv/bin on PATH keeps the pytest steps below unchanged.
+        run: |
+          uv sync --locked --extra test
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Run tests
         if: steps.filter.outputs.backend == 'true'
