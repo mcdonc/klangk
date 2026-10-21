@@ -20,6 +20,13 @@ on:
       - "devenv.yaml"
       - ".github/workflows/backend-e2e-tests.yml"
       - ".github/actions/e2e-suite/**"
+      # Dependency pins: the stack boots from the locked venv, so a uv.lock
+      # or pyproject change is a build-path change (#3574) — and the
+      # pull_request gate must list them or a lock-only PR never starts
+      # this workflow at all.
+      - "uv.lock"
+      - "pyproject.toml"
+      - "src/klangksidecar/pyproject.toml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -50,6 +57,12 @@ jobs:
               - 'devenv.yaml'
               - '.github/workflows/backend-e2e-tests.yml'
               - '.github/actions/e2e-suite/**'
+              # Dependency pins — must mirror the pull_request paths gate
+              # above (a lock-only PR passes the gate; this filter then
+              # decides whether the job runs) (#3574).
+              - 'uv.lock'
+              - 'pyproject.toml'
+              - 'src/klangksidecar/pyproject.toml'
 
       # Stock runners only: bootstrap nix + devenv + podman/uidmap. The nix
       # runner already has the toolchain from its host config. Skipped when

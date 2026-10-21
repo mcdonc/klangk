@@ -2220,36 +2220,61 @@ class ExecSession(_ShellSession):
         else:
             sink.write(raw)
 
+    async def _frame_exec_output(self, data: dict) -> bool:
+        """An exec_output frame: stdout bytes to the stdout sink."""
+        await self._write_exec_output(
+            base64.b64decode(data["data"]), self.stdout, self._stdout_fd
+        )
+        return False
+
+    async def _frame_exec_stderr(self, data: dict) -> bool:
+        """An exec_stderr frame: stderr bytes to the stderr sink."""
+        await self._write_exec_output(
+            base64.b64decode(data["data"]), self.stderr, self._stderr_fd
+        )
+        return False
+
+    async def _frame_ssh_agent_response(self, data: dict) -> bool:
+        """An ssh_agent_response frame: hand it to the agent dispatcher."""
+        self.dispatch_agent_response(data)
+        return False
+
+    async def _frame_exec_exit(self, data: dict) -> bool:
+        """An exec_exit frame: record the code and stop the session."""
+        self.exit_code = data.get("code", 0)
+        return True
+
+    async def _frame_server_error(self, data: dict) -> bool:
+        """A server-side nack (e.g. the #2706/#2712 exec-and-sync
+        permission gate on exec_start). stderr, never stdout: stdout
+        carries rsync's binary protocol when this session is the sync
+        transport, and rsync relays transport stderr to the user's
+        rsync output."""
+        print(
+            f"klangk: {data.get('message', 'unknown error')}",
+            file=sys.stderr,
+        )
+        self.exit_code = 1
+        return True
+
+    # Dispatch table (#3415 rank-A rule): one async handler per frame
+    # type, each returning True when the session should stop. A frame
+    # with an unknown (or missing) type is ignored (False).
+    _EXEC_FRAME_HANDLERS = {
+        "exec_output": _frame_exec_output,
+        "exec_stderr": _frame_exec_stderr,
+        "ssh_agent_response": _frame_ssh_agent_response,
+        "exec_exit": _frame_exec_exit,
+        "error": _frame_server_error,
+    }
+
     async def _apply_exec_frame(self, msg: str) -> bool:
         """Handle one exec frame; True when the session should stop."""
         data = json.loads(msg)
-        mtype = data.get("type")
-        if mtype == "exec_output":
-            await self._write_exec_output(
-                base64.b64decode(data["data"]), self.stdout, self._stdout_fd
-            )
-        elif mtype == "exec_stderr":
-            await self._write_exec_output(
-                base64.b64decode(data["data"]), self.stderr, self._stderr_fd
-            )
-        elif mtype == "ssh_agent_response":
-            self.dispatch_agent_response(data)
-        elif mtype == "exec_exit":
-            self.exit_code = data.get("code", 0)
-            return True
-        elif mtype == "error":
-            # Server-side nack (e.g. the #2706/#2712 exec-and-sync permission
-            # gate on exec_start). stderr, never stdout: stdout
-            # carries rsync's binary protocol when this session is
-            # the sync transport, and rsync relays transport stderr
-            # to the user's rsync output.
-            print(
-                f"klangk: {data.get('message', 'unknown error')}",
-                file=sys.stderr,
-            )
-            self.exit_code = 1
-            return True
-        return False
+        handler = self._EXEC_FRAME_HANDLERS.get(data.get("type"))
+        if handler is None:
+            return False
+        return await handler(self, data)
 
     async def stdout_forward(self) -> None:
         while True:

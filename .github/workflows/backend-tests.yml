@@ -44,6 +44,12 @@ jobs:
               - 'features/**'
               - 'features.yaml'
               - '.github/workflows/backend-tests.yml'
+              # Dependency pins: a uv.lock or pyproject change moves what the
+              # locked install tests (#3574) — without these, a dependabot
+              # lock-only PR skips every suite and merges untested.
+              - 'uv.lock'
+              - 'pyproject.toml'
+              - 'src/klangksidecar/pyproject.toml'
               # Docs-only .md changes (READMEs, feature docs) can't affect
               # the suite — a PR whose diff is otherwise docs-only skips it (#2957).
               - '!**/*.md'
@@ -52,13 +58,42 @@ jobs:
         if: steps.filter.outputs.python == 'true'
         with:
           python-version: "3.14"
-          cache: pip
 
-      - name: Install dependencies
+      - uses: astral-sh/setup-uv@v10.3.0
         if: steps.filter.outputs.python == 'true'
-        # One unified distribution (src/klangk) ships the klangk package
-        # (server + CLI). The two unit suites share one --cov gate (#1606).
-        run: pip install -e 'src/klangk/[test]'
+        with:
+          # Pinned uv: lock semantics can change between uv versions, so CI
+          # should not float on the latest release either. 0.11.21 is the uv
+          # the devenv ships and python-deps-audit pins — all three move
+          # together (a newer uv can write a lock revision older uvs reject).
+          version: "0.11.21"
+          # The interpreter comes from setup-python, not uv's managed
+          # downloads: uv 0.11.21 can only provision 3.14.6, whose asyncio
+          # subprocess loses the child watcher when a first wait() is
+          # cancelled — the post-kill wait() in podman._wait_podman never
+          # completes and test_stuck_child_timeout_bounds_run hangs to its
+          # pytest-timeout (#3574). UV_PYTHON_PREFERENCE=only-system (on the
+          # sync step below) makes uv adopt the setup-python interpreter
+          # (current patch, fix included).
+          enable-cache: true
+
+      - name: Install dependencies from the lockfile
+        if: steps.filter.outputs.python == 'true'
+        env:
+          UV_PYTHON_PREFERENCE: only-system
+        # Locked install from the root uv.lock — the same one devenv syncs
+        # (`klangk:uv-sync`). An unlocked `pip install -e 'src/klangk/[test]'`
+        # resolved whatever was newest on PyPI, and an upstream litellm
+        # release flipped every backend run red overnight (#3574); the
+        # lock pins litellm 1.95.0. Dependency updates now land through
+        # dependabot's uv.lock PRs, whose own CI run validates the new
+        # versions before merge. The workspace root is virtual (no
+        # [project]); --extra test applies klangk[test] to the members,
+        # mirroring the devenv task. .venv/bin goes on PATH so the
+        # pytest steps below run the locked interpreter unchanged.
+        run: |
+          uv sync --locked --extra test
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Run tests
         if: steps.filter.outputs.python == 'true'
