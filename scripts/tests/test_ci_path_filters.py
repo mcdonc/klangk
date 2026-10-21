@@ -234,3 +234,56 @@ def test_e2e_paths_allowlists_still_match_build_path_md():
             "agent-context.md-only change must still start the e2e suite "
             "(#3051)"
         )
+
+
+# Dependency-pin paths (#3574): the backend suites install from the root
+# uv.lock, so a lock-only or pyproject-only PR must still run them. Two
+# layers decide that, and both must list the pins: the workflow's
+# ``pull_request`` ``paths:`` gate (whether the run starts at all — GitHub
+# skips the whole workflow on a non-match, so a dorny filter alone is
+# inert for PRs) and the dorny/paths-filter predicate (whether the job
+# runs past its skip notice). backend-e2e carries both layers; the two
+# unit suites trigger with ``paths-ignore`` and carry only the dorny
+# layer. ``src/klangk/pyproject.toml`` needs no entry — ``src/klangk/**``
+# already covers it.
+LOCK_PIN_PATHS = ["uv.lock", "pyproject.toml", "src/klangksidecar/pyproject.toml"]
+
+DORNY_PIN_FILTERS = {
+    "backend-tests.yml": "python",
+    "macos-smoke.yml": "backend",
+    "backend-e2e-tests.yml": "e2e",
+}
+
+
+def dorny_filter_entries(wf, key):
+    """The dorny/paths-filter predicate entries for one filter key."""
+    for job in wf["jobs"].values():
+        for step in job.get("steps", []):
+            if str(step.get("uses", "")).startswith("dorny/paths-filter"):
+                filters = yaml.safe_load(step["with"]["filters"])
+                return filters[key]
+    raise AssertionError("no dorny/paths-filter step found")
+
+
+@pytest.mark.parametrize("name,key", sorted(DORNY_PIN_FILTERS.items()))
+def test_dorny_filters_count_dependency_pins(name, key):
+    entries = dorny_filter_entries(load_workflow(name), key)
+    for pin in LOCK_PIN_PATHS:
+        assert pin in entries, (
+            f"{name}: {pin} missing from the {key!r} filter — a lock-only "
+            "PR skips the suite and the pinned dependency version lands "
+            "untested (#3574)"
+        )
+
+
+def test_backend_e2e_trigger_gate_lists_dependency_pins():
+    """The pull_request paths gate must list the pins too: a lock-only PR
+    matching only the dorny filter never starts the workflow, so the
+    dorny half alone cannot gate a merge (#3574)."""
+    allowlist = pull_request_trigger(load_workflow("backend-e2e-tests.yml"))["paths"]
+    for pin in LOCK_PIN_PATHS:
+        assert pin in allowlist, (
+            "backend-e2e-tests.yml: pull_request paths must list "
+            f"{pin} — the dorny filter alone never runs for a lock-only "
+            "PR (#3574)"
+        )

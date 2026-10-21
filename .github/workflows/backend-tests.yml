@@ -49,7 +49,6 @@ jobs:
               # lock-only PR skips every suite and merges untested.
               - 'uv.lock'
               - 'pyproject.toml'
-              - 'src/klangk/pyproject.toml'
               - 'src/klangksidecar/pyproject.toml'
               # Docs-only .md changes (READMEs, feature docs) can't affect
               # the suite — a PR whose diff is otherwise docs-only skips it (#2957).

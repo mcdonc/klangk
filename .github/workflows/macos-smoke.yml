@@ -64,7 +64,6 @@ jobs:
               # see backend-tests.yml.
               - 'uv.lock'
               - 'pyproject.toml'
-              - 'src/klangk/pyproject.toml'
               - 'src/klangksidecar/pyproject.toml'
               - '!**/*.md'
 
