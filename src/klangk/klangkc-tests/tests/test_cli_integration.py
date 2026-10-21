@@ -1503,6 +1503,51 @@ class TestWsExec:
         assert "file-list" in output
 
     @pytest.mark.asyncio
+    async def test_ws_exec_piped_accepts_stderr_sink(self):
+        import base64
+
+        from klangk.cli.client import ws_exec_piped
+
+        ws_mock = MagicMock()
+        ws_mock.__aenter__ = AsyncMock(return_value=ws_mock)
+        ws_mock.__aexit__ = AsyncMock(return_value=None)
+        ws_mock.send = AsyncMock()
+        ws_mock.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "container_ready", "workspaceId": "ws1"}),
+                json.dumps(
+                    {
+                        "type": "exec_output",
+                        "data": base64.b64encode(b"data").decode(),
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "exec_stderr",
+                        "data": base64.b64encode(b"warning").decode(),
+                    }
+                ),
+                json.dumps({"type": "exec_exit", "code": 4}),
+            ]
+        )
+        stderr = io.BytesIO()
+
+        with patch(
+            "klangk.cli.transport.websockets.connect", return_value=ws_mock
+        ):
+            code, output = await ws_exec_piped(
+                "http://localhost",
+                "token",
+                "ws1",
+                ["command"],
+                stderr=stderr,
+            )
+
+        assert code == 4
+        assert output == "data"
+        assert stderr.getvalue() == b"warning"
+
+    @pytest.mark.asyncio
     async def test_ws_exec_connection_failure(self):
         from klangk.cli.client import ws_exec
 
@@ -2298,6 +2343,74 @@ class TestGetHandle:
 
 class TestExecOnWsRealFd:
     """Test exec_on_ws with a real file descriptor (pipe)."""
+
+    async def test_separates_stderr_and_preserves_exit_code(self):
+        import base64
+
+        from klangk.cli.client import exec_on_ws
+
+        ws = AsyncMock()
+        ws.send = AsyncMock()
+        ws.recv = AsyncMock(
+            side_effect=[
+                json.dumps(
+                    {
+                        "type": "exec_output",
+                        "data": base64.b64encode(b"o\n").decode(),
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "exec_stderr",
+                        "data": base64.b64encode(b"e\n").decode(),
+                    }
+                ),
+                json.dumps({"type": "exec_exit", "code": 7}),
+            ]
+        )
+        stdout = io.BytesIO()
+        stderr = io.BytesIO()
+
+        code = await exec_on_ws(
+            ws,
+            ["sh", "-c", "echo o; echo e >&2"],
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+        start = json.loads(ws.send.await_args_list[0].args[0])
+        assert start["separate_stderr"] is True
+        assert stdout.getvalue() == b"o\n"
+        assert stderr.getvalue() == b"e\n"
+        assert code == 7
+
+    async def test_old_server_merged_output_still_works(self):
+        """An old server ignores the request and returns merged output."""
+        import base64
+
+        from klangk.cli.client import exec_on_ws
+
+        ws = AsyncMock()
+        ws.send = AsyncMock()
+        ws.recv = AsyncMock(
+            side_effect=[
+                json.dumps(
+                    {
+                        "type": "exec_output",
+                        "data": base64.b64encode(b"o\ne\n").decode(),
+                    }
+                ),
+                json.dumps({"type": "exec_exit", "code": 5}),
+            ]
+        )
+        stdout = io.BytesIO()
+        stderr = io.BytesIO()
+
+        code = await exec_on_ws(ws, ["false"], stdout=stdout, stderr=stderr)
+
+        assert stdout.getvalue() == b"o\ne\n"
+        assert stderr.getvalue() == b""
+        assert code == 5
 
     async def test_stdin_fd_sends_data(self):
         import base64

@@ -4118,6 +4118,71 @@ class TestExecController:
         # Session claimed and stopped by the finally block.
         session.stop.assert_awaited_once()
 
+    @pytest.mark.parametrize(
+        ("stream", "separate_stderr", "expected_type"),
+        [
+            ("stderr", True, "exec_stderr"),
+            ("stderr", False, "exec_output"),
+            ("stdout", True, "exec_output"),
+        ],
+    )
+    async def test_forward_output_stderr_compatibility(
+        self, app_state, stream, separate_stderr, expected_type
+    ):
+        """Only clients that opt in receive the dedicated stderr frame."""
+        from klangk.podman import ExecOutput
+
+        app_state = _make_app_state()
+        ctrl, sock, _ = self._controller(app_state=app_state)
+        session = AsyncMock()
+        session.returncode = 9
+        ctrl.session = session
+
+        async def fake_output():
+            yield ExecOutput(b"diagnostic", stream)
+
+        session.output = fake_output
+        with patch.object(
+            app_state.state.container_registry, "record_activity"
+        ):
+            await ctrl.forward_output(session, separate_stderr=separate_stderr)
+
+        frames = [c.args[0] for c in sock.send_json.call_args_list]
+        assert frames[0]["type"] == expected_type
+        assert base64.b64decode(frames[0]["data"]) == b"diagnostic"
+        assert frames[-1] == {"type": "exec_exit", "code": 9}
+
+    async def test_start_from_old_client_merges_stderr(self, app_state):
+        """An exec_start without the capability keeps the legacy stream."""
+        from klangk.podman import ExecOutput
+
+        app_state = _make_app_state()
+        ctrl, sock, _ = self._controller(app_state=app_state)
+
+        async def fake_output():
+            yield ExecOutput(b"legacy diagnostic", "stderr")
+
+        with (
+            patch("klangk.wshandler.controllers.ExecSession") as mock_exec,
+            patch.object(
+                app_state.state.container_registry, "record_activity"
+            ),
+        ):
+            session = mock_exec.return_value
+            session.start = AsyncMock()
+            session.stop = AsyncMock()
+            session.output = fake_output
+            session.returncode = 0
+            await ctrl.start({"command": ["legacy-client"]})
+            task = ctrl.task
+            assert task is not None
+            await task
+
+        frames = [c.args[0] for c in sock.send_json.call_args_list]
+        assert frames[0]["type"] == "exec_output"
+        assert base64.b64decode(frames[0]["data"]) == b"legacy diagnostic"
+        assert frames[-1] == {"type": "exec_exit", "code": 0}
+
     async def test_forward_output_exit_code_defaults_to_1(self, app_state):
         app_state = _make_app_state()
         registry = app_state.state.container_registry

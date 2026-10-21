@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+import sys
 
 import httpx
 import typer
@@ -127,6 +128,7 @@ def exec_cmd(
             command,
             max_size=context.ws_max_size(),
             login=not raw,
+            stderr=sys.stderr.buffer,
         )
     )
     raise typer.Exit(code=exit_code)
