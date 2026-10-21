@@ -85,6 +85,17 @@ class PodmanTimeoutError(PodmanError):
     """
 
 
+class ExecOutput(bytes):
+    """One exec output chunk, tagged with its originating stream."""
+
+    stream: str
+
+    def __new__(cls, data: bytes, stream: str) -> "ExecOutput":
+        chunk = bytes.__new__(cls, data)
+        chunk.stream = stream
+        return chunk
+
+
 _NOT_FOUND_HINTS = ("no such", "not found", "no container")
 _IN_USE_HINTS = ("in use", "being used", "already in use")
 
@@ -991,7 +1002,7 @@ def _is_workspace_volume(v: dict, instance: str, workspace_id: str) -> bool:
 
 
 class ExecSession:
-    """Manages a podman exec session with raw stdin/stdout pipes (no PTY)."""
+    """Manages a podman exec session with raw stdio pipes (no PTY)."""
 
     def __init__(
         self,
@@ -1013,7 +1024,7 @@ class ExecSession:
         self._returncode: int | None = None
 
     async def start(self, command: list[str], *, login: bool = False) -> None:
-        """Start a command via podman exec with piped stdin/stdout.
+        """Start a command via podman exec with piped stdin/stdout/stderr.
 
         By default *command* is passed to ``podman exec`` as raw argv
         (no shell) -- the right thing for programmatic transports like
@@ -1061,7 +1072,7 @@ class ExecSession:
             *exec_cmd,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
+            stderr=asyncio.subprocess.PIPE,
             env=subprocess_env(),
         )
         self._read_task = asyncio.create_task(self._read_stdout())
@@ -1072,14 +1083,15 @@ class ExecSession:
             command,
         )
 
-    async def _pump_stdout(self, stdout) -> None:
-        """Read chunks to the bounded queue (a full queue blocks,
-        back-pressuring the process via its kernel pipe buffer)."""
-        while True:
-            data = await stdout.read(65536)
-            if not data:
-                break
-            await self._output_queue.put(data)
+    async def _pump_output(self, reader, stream: str) -> None:
+        """Drain one process stream into the shared bounded queue."""
+        try:
+            while data := await reader.read(65536):
+                await self._output_queue.put(ExecOutput(data, stream))
+        except asyncio.CancelledError:
+            raise
+        except OSError:
+            pass
 
     async def _await_proc_exit(self) -> None:
         """Wait (bounded) for the process to exit so returncode is set
@@ -1096,15 +1108,14 @@ class ExecSession:
             pass
 
     async def _read_stdout(self) -> None:
-        """Read stdout in a background task and queue chunks."""
+        """Drain stdout and stderr concurrently, then mark output complete."""
         assert self._proc is not None
         assert self._proc.stdout is not None
-        try:
-            await self._pump_stdout(self._proc.stdout)
-        except asyncio.CancelledError:
-            raise
-        except OSError:
-            pass
+        assert self._proc.stderr is not None
+        await asyncio.gather(
+            self._pump_output(self._proc.stdout, "stdout"),
+            self._pump_output(self._proc.stderr, "stderr"),
+        )
         await self._await_proc_exit()
         self._output_queue.send_sentinel()
 
@@ -1140,7 +1151,7 @@ class ExecSession:
         return self._read_task is not None and self._read_task.done()
 
     async def output(self) -> AsyncGenerator[bytes, None]:
-        """Yield stdout data as it arrives."""
+        """Yield tagged stdout and stderr chunks as they arrive."""
         while self._running:
             try:
                 data = await asyncio.wait_for(
