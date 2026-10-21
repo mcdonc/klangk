@@ -2785,6 +2785,11 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **`klangk exec` keeps stderr separate.** The command's standard error goes
+  to the CLI's standard error, and standard output carries only the command's
+  standard output, in login-shell and `--raw` modes. A programmatic caller that
+  passes no stderr sink gets both streams on standard output.
+
 - **Password-change toast always shows, and error toasts no longer
   stick for a day.** The "Password changed. Log in with your new
   password." message now appears reliably after a forced password
