@@ -4427,6 +4427,7 @@ class TestMainCLI:
         # #1041: default exec runs as a login shell so ~/.profile is
         # sourced (login=True); the command list is passed through.
         assert mock_exec.call_args.kwargs["login"] is True
+        assert mock_exec.call_args.kwargs["stderr"] is not None
         assert mock_exec.call_args.args[3] == ["echo", "hi"]
 
     def test_exec_raw_flag_passes_login_false(self, logged_in_cfg):
@@ -4454,6 +4455,7 @@ class TestMainCLI:
                 )
         assert result.exit_code == 0
         assert mock_exec.call_args.kwargs["login"] is False
+        assert mock_exec.call_args.kwargs["stderr"] is not None
 
     def test_exec_connection_error_clean_exit(self, logged_in_cfg):
         """A server error during exec (e.g. permission denied) prints a

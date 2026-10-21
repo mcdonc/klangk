@@ -35,6 +35,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def exec_output_frame_type(data: bytes, separate_stderr: bool) -> str:
+    """Select the stderr frame only when the client negotiated it."""
+    if separate_stderr and getattr(data, "stream", "stdout") == "stderr":
+        return "exec_stderr"
+    return "exec_output"
+
+
 # SSH-agent relay readiness (#2535): ``ssh_agent_started`` must mean the
 # container-side socat is *listening*, not merely that the local
 # ``podman exec`` client was spawned. ``create_subprocess_exec`` returns
@@ -525,6 +533,7 @@ class ExecController:
         # klangk exec sends login=true; klangk exec --raw and the
         # rsync transport send login=false. See #1041.
         login = bool(msg.get("login", False))
+        separate_stderr = msg.get("separate_stderr") is True
         session = ExecSession(
             container_id,
             self._conn.app.state.podman,
@@ -533,7 +542,9 @@ class ExecController:
         )
         await session.start(command, login=login)
         self.session = session
-        self.task = asyncio.create_task(self.forward_output(session))
+        self.task = asyncio.create_task(
+            self.forward_output(session, separate_stderr=separate_stderr)
+        )
         self._conn.app.state.container_registry.record_activity(container_id)
 
     async def input(self, msg: dict) -> None:
@@ -581,13 +592,15 @@ class ExecController:
             self.task = None
         await self.claim_and_stop()
 
-    async def forward_output(self, session: ExecSession) -> None:
-        """Forward exec stdout to the client via WebSocket as base64."""
+    async def forward_output(
+        self, session: ExecSession, *, separate_stderr: bool = False
+    ) -> None:
+        """Forward tagged exec output, merging stderr for legacy clients."""
         try:
             async for data in session.output():
                 self._conn.sock.send_json(
                     {
-                        "type": "exec_output",
+                        "type": exec_output_frame_type(data, separate_stderr),
                         "data": base64.b64encode(data).decode("ascii"),
                     }
                 )

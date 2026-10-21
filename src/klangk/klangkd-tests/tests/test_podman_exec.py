@@ -1,6 +1,7 @@
 """Tests for podman ExecSession: raw podman exec without PTY."""
 
 import asyncio
+import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -18,7 +19,23 @@ podman = Podman(
 )
 
 
-def _mock_proc(stdout_data=b"", returncode=None):
+async def collect_output(session):
+    """Collect all tagged output chunks from an exec session."""
+    return [chunk async for chunk in session.output()]
+
+
+def _mock_reader(data=b""):
+    reader = AsyncMock()
+    chunks = [data] if data else []
+
+    async def read(_size):
+        return chunks.pop(0) if chunks else b""
+
+    reader.read = read
+    return reader
+
+
+def _mock_proc(stdout_data=b"", returncode=None, stderr_data=b""):
     proc = MagicMock()
     proc.returncode = returncode
     proc.stdin = AsyncMock()
@@ -26,19 +43,8 @@ def _mock_proc(stdout_data=b"", returncode=None):
     proc.stdin.drain = AsyncMock()
     proc.stdin.close = MagicMock()
 
-    stdout = AsyncMock()
-    _chunks = [stdout_data] if stdout_data else []
-    _idx = [0]
-
-    async def _read(n):
-        if _idx[0] < len(_chunks):
-            chunk = _chunks[_idx[0]]
-            _idx[0] += 1
-            return chunk
-        return b""
-
-    stdout.read = _read
-    proc.stdout = stdout
+    proc.stdout = _mock_reader(stdout_data)
+    proc.stderr = _mock_reader(stderr_data)
     proc.wait = AsyncMock()
     return proc
 
@@ -58,6 +64,53 @@ class TestExecSession:
         async for data in session.output():
             chunks.append(data)
         assert b"hello world" in b"".join(chunks)
+
+    async def test_start_keeps_stderr_on_its_own_pipe(self):
+        session = ExecSession("cid", podman)
+        proc = _mock_proc(b"out", stderr_data=b"err")
+        with patch(
+            "asyncio.create_subprocess_exec",
+            return_value=proc,
+        ) as mock_exec:
+            await session.start(["sh", "-c", "echo out; echo err >&2"])
+
+        assert mock_exec.call_args.kwargs["stdout"] is asyncio.subprocess.PIPE
+        assert mock_exec.call_args.kwargs["stderr"] is asyncio.subprocess.PIPE
+        chunks = [chunk async for chunk in session.output()]
+        by_stream = {chunk.stream: bytes(chunk) for chunk in chunks}
+        assert by_stream == {"stdout": b"out", "stderr": b"err"}
+
+    async def test_large_stderr_is_drained_without_deadlock(self):
+        """A stderr flood cannot block the process while stdout awaits EOF."""
+        session = ExecSession("cid", podman)
+        real_create = asyncio.create_subprocess_exec
+        stderr_size = 4 * 1024 * 1024
+        script = (
+            "import sys; "
+            "sys.stdout.buffer.write(b'before\\n'); "
+            "sys.stdout.buffer.flush(); "
+            f"sys.stderr.buffer.write(b'e' * {stderr_size}); "
+            "sys.stderr.buffer.flush(); "
+            "sys.stdout.buffer.write(b'after\\n'); "
+            "sys.stdout.buffer.flush(); "
+            "raise SystemExit(23)"
+        )
+
+        async def create_test_process(*_args, **kwargs):
+            return await real_create(sys.executable, "-c", script, **kwargs)
+
+        with patch("asyncio.create_subprocess_exec", new=create_test_process):
+            await session.start(["ignored"])
+            chunks = await asyncio.wait_for(
+                collect_output(session), timeout=10
+            )
+
+        stdout = b"".join(c for c in chunks if c.stream == "stdout")
+        stderr = b"".join(c for c in chunks if c.stream == "stderr")
+        assert stdout == b"before\nafter\n"
+        assert len(stderr) == stderr_size
+        assert session.returncode == 23
+        await session.stop()
 
     async def test_start_default_is_raw_argv(self):
         """#1041: with no ``login`` flag the command is spliced into the

@@ -2117,6 +2117,16 @@ async def cancel_task(task) -> None:
         pass
 
 
+def stream_fileno(stream: io.RawIOBase | None) -> int:
+    """Return a usable stream file descriptor, or -1 when unavailable."""
+    if stream is None:
+        return -1
+    try:
+        return stream.fileno()
+    except io.UnsupportedOperation, AttributeError:
+        return -1
+
+
 class ExecSession(_ShellSession):
     """Non-interactive command execution over WebSocket."""
 
@@ -2128,6 +2138,7 @@ class ExecSession(_ShellSession):
         stdout: io.RawIOBase | None = None,
         timeout: int | None = None,
         login: bool = True,
+        stderr: io.RawIOBase | None = None,
     ):
         local_sock = os.environ.get("SSH_AUTH_SOCK")
         sock = (
@@ -2137,6 +2148,7 @@ class ExecSession(_ShellSession):
         self.command = command
         self.stdin = stdin
         self.stdout = stdout
+        self.stderr = stderr
         self.timeout = timeout
         # ``login`` (default True): run the command as a bash login shell
         # so it sources ~/.profile, matching a terminal (#1041). Set
@@ -2145,13 +2157,8 @@ class ExecSession(_ShellSession):
         self.login = login
         self.exit_code = 1
         self._loop = asyncio.get_event_loop()
-        self._stdout_fd = -1
-        try:
-            if self.stdout is not None:
-                self._stdout_fd = self.stdout.fileno()
-        except io.UnsupportedOperation, AttributeError:
-            pass
-        self._has_stdout_fd = self._stdout_fd >= 0
+        self._stdout_fd = stream_fileno(self.stdout)
+        self._stderr_fd = stream_fileno(self.stderr)
 
     def _stdin_fd(self) -> int | None:
         """stdin's fileno, or None when it has none (BytesIO etc.)."""
@@ -2202,29 +2209,46 @@ class ExecSession(_ShellSession):
             await self._forward_buffered_stdin()
         await self.ws.send(json.dumps({"cmd": "exec_close_stdin"}))
 
-    async def _write_exec_output(self, raw: bytes) -> None:
-        """Write exec output to the fd-backed or plain stdout."""
-        if self.stdout is None:
+    async def _write_exec_output(
+        self, raw: bytes, sink: io.RawIOBase | None, fd: int
+    ) -> None:
+        """Write exec output to an fd-backed or plain binary sink."""
+        if sink is None:
             return
-        if self._has_stdout_fd:
-            await self._loop.run_in_executor(
-                None, os.write, self._stdout_fd, raw
-            )
+        if fd >= 0:
+            await self._loop.run_in_executor(None, os.write, fd, raw)
         else:
-            self.stdout.write(raw)
+            sink.write(raw)
 
     async def _apply_exec_frame(self, msg: str) -> bool:
         """Handle one exec frame; True when the session should stop."""
         data = json.loads(msg)
+        if await self._exec_terminal_frame(data):
+            return True
+        await self._exec_stream_frame(data)
+        return False
+
+    async def _exec_stream_frame(self, data: dict) -> None:
+        """Handle one streaming exec frame (output, stderr, agent)."""
         mtype = data.get("type")
         if mtype == "exec_output":
-            await self._write_exec_output(base64.b64decode(data["data"]))
+            await self._write_exec_output(
+                base64.b64decode(data["data"]), self.stdout, self._stdout_fd
+            )
+        elif mtype == "exec_stderr":
+            await self._write_exec_output(
+                base64.b64decode(data["data"]), self.stderr, self._stderr_fd
+            )
         elif mtype == "ssh_agent_response":
             self.dispatch_agent_response(data)
-        elif mtype == "exec_exit":
+
+    async def _exec_terminal_frame(self, data: dict) -> bool:
+        """Handle one terminal exec frame; True when it ends the session."""
+        mtype = data.get("type")
+        if mtype == "exec_exit":
             self.exit_code = data.get("code", 0)
             return True
-        elif mtype == "error":
+        if mtype == "error":
             # Server-side nack (e.g. the #2706/#2712 exec-and-sync permission
             # gate on exec_start). stderr, never stdout: stdout
             # carries rsync's binary protocol when this session is
@@ -2271,6 +2295,7 @@ class ExecSession(_ShellSession):
                     "cmd": "exec_start",
                     "command": self.command,
                     "login": self.login,
+                    "separate_stderr": self.stderr is not None,
                 }
             )
         )
@@ -2320,13 +2345,16 @@ async def exec_on_ws(
     stdout: io.RawIOBase | None = None,
     timeout: int | None = None,
     login: bool = False,
+    stderr: io.RawIOBase | None = None,
 ) -> int:
     """Run a command on an already-connected WebSocket.
 
-    Returns the remote process exit code.  ``login`` defaults to False
-    (raw argv) -- this is the low-level primitive used by setup/file-copy
-    paths that already build their own ``sh -c`` command; the
-    interactive ``klangk exec`` entrypoint (ws_exec) overrides it to
+    Returns the remote process exit code. When ``stderr`` is supplied,
+    the server sends remote stderr separately and it is written there;
+    omitting it preserves the merged-output protocol. ``login`` defaults
+    to False (raw argv) -- this is the low-level primitive used by
+    setup/file-copy paths that already build their own ``sh -c`` command;
+    the interactive ``klangk exec`` entrypoint (ws_exec) overrides it to
     True. See #1041.
     """
     session = ExecSession(
@@ -2334,6 +2362,7 @@ async def exec_on_ws(
         command,
         stdin=stdin,
         stdout=stdout,
+        stderr=stderr,
         timeout=timeout,
         login=login,
     )
@@ -2347,13 +2376,15 @@ async def ws_exec(
     command: list[str],
     max_size: int = _WS_MAX_SIZE,
     login: bool = True,
+    stderr: io.RawIOBase | None = None,
 ) -> int:
     """Run a command interactively, piping real stdin/stdout.
 
-    Returns the remote process exit code.  Defaults to ``login=True``
-    (run as a bash login shell so ~/.profile is sourced, like a
-    terminal -- #1041); ``klangk exec --raw`` and the rsync transport
-    pass False for raw argv.
+    Pass a binary ``stderr`` sink to request a separate remote stderr
+    stream. Returns the remote process exit code. Defaults to
+    ``login=True`` (run as a bash login shell so ~/.profile is sourced,
+    like a terminal -- #1041); ``klangk exec --raw`` and the rsync
+    transport pass False for raw argv.
     """
     async with workspace_ws(
         server_spec, token, workspace_id, max_size=max_size
@@ -2363,6 +2394,7 @@ async def ws_exec(
             command,
             stdin=sys.stdin.buffer,
             stdout=sys.stdout.buffer,
+            stderr=stderr,
             login=login,
         )
 
@@ -2374,11 +2406,13 @@ async def ws_exec_piped(
     command: list[str],
     stdin_data: bytes | None = None,
     max_size: int = _WS_MAX_SIZE,
+    stderr: io.RawIOBase | None = None,
 ) -> tuple[int, str]:
     """Run a command, optionally piping *stdin_data*, capture stdout.
 
-    Returns ``(exit_code, stdout_text)``.  Does not touch real
-    stdin/stdout — designed for programmatic use (file copy, setup).
+    Returns ``(exit_code, stdout_text)``. Pass a binary ``stderr`` sink to
+    request separate diagnostics; omitting it preserves merged output for
+    existing file-copy and setup callers. Does not touch real stdin/stdout.
     """
     async with workspace_ws(
         server_spec, token, workspace_id, max_size=max_size
@@ -2386,7 +2420,11 @@ async def ws_exec_piped(
         stdin_buf = io.BytesIO(stdin_data) if stdin_data else None
         stdout_buf = io.BytesIO()
         exit_code = await exec_on_ws(
-            ws, command, stdin=stdin_buf, stdout=stdout_buf
+            ws,
+            command,
+            stdin=stdin_buf,
+            stdout=stdout_buf,
+            stderr=stderr,
         )
         return (
             exit_code,

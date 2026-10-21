@@ -282,6 +282,19 @@ klangk export my-project -o bak.tar.gz  # export to specific file
 klangk import bak.tar.gz            # import workspace from archive
 klangk import bak.tar.gz --name new-name  # import with a different name
 
+# Exec stream protocol
+
+The workspace WebSocket starts a command with an `exec_start` message. A client
+that routes the command's standard error on its own sets `separate_stderr: true`
+in that message. The server then sends standard output in `exec_output` frames
+and standard error in `exec_stderr` frames. Both carry base64-encoded bytes in
+`data`. The final `exec_exit` frame carries the remote exit code in `code`.
+
+Without `separate_stderr`, the server sends both streams as `exec_output`
+frames. File-copy and setup paths, and clients that do not send the field, get
+that merged stream. A server that does not know the field ignores it and sends
+the merged stream.
+
 # Sharing
 klangk members my-project           # list workspace members by role
 klangk share my-project user@x.com  # share workspace (default: coder role)
