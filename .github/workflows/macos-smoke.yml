@@ -5,7 +5,8 @@ name: "macOS: Backend Tests"
 # platform-gated code (netfilter VM hooks, gnubin PATH, podman machine
 # checks) that the Linux suite misses.
 #
-# Mirrors backend-tests.yml (bare pip, no devenv) so the job runs in ~3-4m
+# Mirrors backend-tests.yml (pinned-uv locked sync, no devenv) so the job
+# runs in ~3-4m
 # instead of ~10-17m. This is viable because:
 #   - podman is fully mocked in the unit suite (test_podman/test_container
 #     "must never touch real podman"), so no real podman socket is needed;
@@ -59,6 +60,12 @@ jobs:
               - 'features/**'
               - 'features.yaml'
               - '.github/workflows/macos-smoke.yml'
+              # Dependency pins move what the locked install tests (#3574);
+              # see backend-tests.yml.
+              - 'uv.lock'
+              - 'pyproject.toml'
+              - 'src/klangk/pyproject.toml'
+              - 'src/klangksidecar/pyproject.toml'
               - '!**/*.md'
 
       - uses: astral-sh/setup-uv@v10.3.0
@@ -66,9 +73,12 @@ jobs:
         with:
           # Pinned uv + locked sync, mirroring backend-tests.yml (#3574):
           # CI tests the versions the root uv.lock pins, not whatever is
-          # newest on PyPI. setup-uv also provisions the interpreter.
-          version: "0.11.28"
+          # newest on PyPI. setup-uv also provisions and caches the 3.14
+          # interpreter. uv 0.11.21 matches the devenv and python-deps-audit
+          # pins — all three move together.
+          version: "0.11.21"
           python-version: "3.14"
+          cache-python: true
           enable-cache: true
 
       - name: Install podman & GNU coreutils/tar (Homebrew)

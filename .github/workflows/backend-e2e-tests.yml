@@ -50,6 +50,12 @@ jobs:
               - 'devenv.yaml'
               - '.github/workflows/backend-e2e-tests.yml'
               - '.github/actions/e2e-suite/**'
+              # Dependency pins: the stack boots from the locked venv, so a
+              # uv.lock or pyproject change is a build-path change (#3574).
+              - 'uv.lock'
+              - 'pyproject.toml'
+              - 'src/klangk/pyproject.toml'
+              - 'src/klangksidecar/pyproject.toml'
 
       # Stock runners only: bootstrap nix + devenv + podman/uidmap. The nix
       # runner already has the toolchain from its host config. Skipped when

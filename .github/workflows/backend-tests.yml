@@ -44,6 +44,13 @@ jobs:
               - 'features/**'
               - 'features.yaml'
               - '.github/workflows/backend-tests.yml'
+              # Dependency pins: a uv.lock or pyproject change moves what the
+              # locked install tests (#3574) — without these, a dependabot
+              # lock-only PR skips every suite and merges untested.
+              - 'uv.lock'
+              - 'pyproject.toml'
+              - 'src/klangk/pyproject.toml'
+              - 'src/klangksidecar/pyproject.toml'
               # Docs-only .md changes (READMEs, feature docs) can't affect
               # the suite — a PR whose diff is otherwise docs-only skips it (#2957).
               - '!**/*.md'
@@ -52,12 +59,14 @@ jobs:
         if: steps.filter.outputs.python == 'true'
         with:
           # Pinned uv: lock semantics can change between uv versions, so CI
-          # should not float on the latest release either.
-          version: "0.11.28"
-          # Provision the interpreter from the lock's requires-python (>=3.14)
-          # and cache wheels keyed on uv.lock — replaces setup-python's
-          # pip cache.
+          # should not float on the latest release either. 0.11.21 is the uv
+          # the devenv ships and python-deps-audit pins — all three move
+          # together (a newer uv can write a lock revision older uvs reject).
+          version: "0.11.21"
+          # Pinned 3.14 interpreter, provisioned and cached by setup-uv;
+          # satisfies the lock's requires-python floor (>=3.14).
           python-version: "3.14"
+          cache-python: true
           enable-cache: true
 
       - name: Install dependencies from the lockfile
