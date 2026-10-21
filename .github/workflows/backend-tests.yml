@@ -54,6 +54,11 @@ jobs:
               # the suite — a PR whose diff is otherwise docs-only skips it (#2957).
               - '!**/*.md'
 
+      - uses: actions/setup-python@v6
+        if: steps.filter.outputs.python == 'true'
+        with:
+          python-version: "3.14"
+
       - uses: astral-sh/setup-uv@v10.3.0
         if: steps.filter.outputs.python == 'true'
         with:
@@ -62,20 +67,20 @@ jobs:
           # the devenv ships and python-deps-audit pins — all three move
           # together (a newer uv can write a lock revision older uvs reject).
           version: "0.11.21"
-          # Pinned 3.14 interpreter, provisioned and cached by setup-uv;
-          # satisfies the lock's requires-python floor (>=3.14).
-          # Interpreter pinned to the patch the devenv ships (nix CPython
-          # 3.14.7). 3.14.6 must not float in: its asyncio subprocess has a
-          # race where a cancelled first wait() loses the child watcher, so
-          # the post-kill wait() in podman._wait_podman never completes —
-          # test_stuck_child_timeout_bounds_run hangs to its pytest-timeout
-          # on the runners (#3574).
-          python-version: "3.14.7"
-          cache-python: true
+          # The interpreter comes from setup-python, not uv's managed
+          # downloads: uv 0.11.21 can only provision 3.14.6, whose asyncio
+          # subprocess loses the child watcher when a first wait() is
+          # cancelled — the post-kill wait() in podman._wait_podman never
+          # completes and test_stuck_child_timeout_bounds_run hangs to its
+          # pytest-timeout (#3574). UV_PYTHON_PREFERENCE=only-system (on the
+          # sync step below) makes uv adopt the setup-python interpreter
+          # (current patch, fix included).
           enable-cache: true
 
       - name: Install dependencies from the lockfile
         if: steps.filter.outputs.python == 'true'
+        env:
+          UV_PYTHON_PREFERENCE: only-system
         # Locked install from the root uv.lock — the same one devenv syncs
         # (`klangk:uv-sync`). An unlocked `pip install -e 'src/klangk/[test]'`
         # resolved whatever was newest on PyPI, and an upstream litellm
