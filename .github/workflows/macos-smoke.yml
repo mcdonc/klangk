@@ -76,7 +76,9 @@ jobs:
           # interpreter. uv 0.11.21 matches the devenv and python-deps-audit
           # pins — all three move together.
           version: "0.11.21"
-          python-version: "3.14"
+          # Interpreter pinned to the devenv's patch (3.14.7) — see
+          # backend-tests.yml for the 3.14.6 asyncio-subprocess race.
+          python-version: "3.14.7"
           cache-python: true
           enable-cache: true
 

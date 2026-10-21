@@ -64,7 +64,13 @@ jobs:
           version: "0.11.21"
           # Pinned 3.14 interpreter, provisioned and cached by setup-uv;
           # satisfies the lock's requires-python floor (>=3.14).
-          python-version: "3.14"
+          # Interpreter pinned to the patch the devenv ships (nix CPython
+          # 3.14.7). 3.14.6 must not float in: its asyncio subprocess has a
+          # race where a cancelled first wait() loses the child watcher, so
+          # the post-kill wait() in podman._wait_podman never completes —
+          # test_stuck_child_timeout_bounds_run hangs to its pytest-timeout
+          # on the runners (#3574).
+          python-version: "3.14.7"
           cache-python: true
           enable-cache: true
 
