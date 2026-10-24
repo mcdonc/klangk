@@ -1450,6 +1450,7 @@ class FlutterRun:
         self.vm_uri = ""
         self.log_offset = 0
         self.launch_serial = 0
+        self.launch_count = 0
         self.isolate_gone_since: float | None = None
 
     def chrome_env(self) -> dict:
@@ -1532,6 +1533,11 @@ class FlutterRun:
             self.stop()  # a failed boot must not leak the flutter process
             raise
         self.wait_toolkit()
+        # Every completed (re)launch — boot, restart_app, wedge recovery —
+        # bumps the generation so callers can detect that the app they
+        # were driving died under them (the SSO landing re-drive in
+        # test_oidc keys off this).
+        self.launch_count += 1
 
     def adopt(self) -> bool:
         """Adopt a still-healthy app from a previous run (fast re-runs).

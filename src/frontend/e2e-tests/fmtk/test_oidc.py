@@ -289,12 +289,26 @@ def test_sso_entry_appears_only_when_configured(harness, app, oidc_stack):
 
 
 def test_sso_approve_provisions_and_lands(harness, app, oidc_stack):
-    at_login(harness, app)
-    tap_sso(app, oidc_stack)
-    approve_at_idp(oidc_stack, app, 0)
+    for attempt in range(2):
+        at_login(harness, app)
+        generation = app.flutter.launch_count
+        tap_sso(app, oidc_stack)
+        approve_at_idp(oidc_stack, app, 0)
 
-    # the app landed as the JIT-provisioned user (empty owned list)
-    wait_landed(app, "No workspaces yet")
+        # the app landed as the JIT-provisioned user (empty owned list)
+        try:
+            wait_landed(app, "No workspaces yet")
+            break
+        except AssertionError:
+            # A dwds wedge during the callback chain restarts the app
+            # mid-flight (the #3231 recovery): the one-time code dies
+            # with the killed tab and the fresh app boots at the login
+            # page, so this landing can never complete — re-drive the
+            # whole chain once, and only when a restart actually fired
+            # (otherwise the failure is real and raises; the 2026-10-23
+            # and 10-24 nightlies lost this test to that restart).
+            if attempt or app.flutter.launch_count == generation:
+                raise
     assert app.has_text(IDP_EMAIL, 10000), "the provisioned user's email chip"
     app.logout()
 

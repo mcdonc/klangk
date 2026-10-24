@@ -61,6 +61,7 @@ from fmtkharness import (
     find_nodes,
     http_api,
     http_login,
+    node_labels,
     node_type,
     wait_for_fields,
 )
@@ -167,6 +168,30 @@ def wait_row_order(app, upper: str, lower: str, timeout: float = 20) -> None:
             pass  # rows not yet visible after a reload — retry
         time.sleep(1)
     raise FmtkError(f"{upper!r} never rose above {lower!r}")
+
+
+def wait_member_row(app, email: str, timeout: float = 20) -> None:
+    """Block until the members dialog shows ``email``'s member row.
+
+    The API confirming the add (``wait_group_member``) races the
+    dialog's ``_loadMembers`` reload: the picker's result tile is gone
+    before the row's semantics node lands (the cleared field refetches
+    with an empty query and drops the now-member tile), so a lookup in
+    that window finds no node at all (the 2026-10-24 nightly). The row
+    is the avatar ListTile, whose merged label carries the initial and
+    the email as separate lines — matching both lines picks the row and
+    never the tile (email only, no avatar)."""
+    initial = email[0].upper()
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        for node in find_label_nodes(app.snapshot(), email, exact=True):
+            if node_type(node) == "textField":
+                continue
+            lines = {line for label in node_labels(node) for line in label.split("\n")}
+            if initial in lines:
+                return
+        time.sleep(1)
+    raise FmtkError(f"the member row for {email!r} never appeared")
 
 
 def tap_row_button(app, needle: str, index: int = 0, exact: bool = True) -> None:
@@ -522,6 +547,7 @@ def test_groups_create_members_delete_and_admin_icon(harness, app):
     app.tap_labeled_exact(GROUP_NAME)
     app.wait_for_text("Members of")
     add_dialog_member(app, harness, group_id, CODER_EMAIL)
+    wait_member_row(app, CODER_EMAIL)  # the row lands after the API add
     tap_row_button(app, CODER_EMAIL)  # the member row's remove button
     wait_group_member(harness, group_id, CODER_EMAIL, present=False)
     app.tap_button_exact("Done")
@@ -575,6 +601,7 @@ def test_groups_create_members_delete_and_admin_icon(harness, app):
         app.wait_for_text("admins")
         app.tap_labeled_exact("admins")
         app.wait_for_text("Members of")
+        wait_member_row(app, SPECTATOR_EMAIL)  # the reload races the reopen
         tap_row_button(app, SPECTATOR_EMAIL)
         wait_group_member(harness, admins, SPECTATOR_EMAIL, present=False)
         app.tap_button_exact("Done")
