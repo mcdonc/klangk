@@ -288,13 +288,37 @@ def test_sso_entry_appears_only_when_configured(harness, app, oidc_stack):
     ], payload["oidc_providers"]
 
 
-def test_sso_approve_provisions_and_lands(harness, app, oidc_stack):
-    at_login(harness, app)
-    tap_sso(app, oidc_stack)
-    approve_at_idp(oidc_stack, app, 0)
+def sso_chain_lands(harness, app, idp, expect: str, *, remount: bool = False) -> None:
+    """Drive the SSO chain — tap, IdP approve, landing — re-driving
+    the whole chain once when a dwds wedge restart killed the in-flight
+    callback (the #3231 recovery): the one-time code dies with the
+    killed tab and the fresh app boots at the login page, so the
+    landing wait can never succeed (#3582; the 2026-10-23/24 nightlies
+    and the 10-24 branch dispatch lost tests to that restart). Only a
+    restart that actually fired mid-chain earns the re-drive — every
+    other failure raises.
 
+    ``remount`` forces a fresh login-page mount first, for scenarios
+    whose config just swapped under an already-mounted page."""
+    for attempt in range(2):
+        at_login(harness, app)
+        if remount:
+            remount_login(app)
+        app.wait_for_text(PROVIDER_LABEL, 30000)
+        generation = app.flutter.launch_count
+        tap_sso(app, idp)
+        approve_at_idp(idp, app, 0)
+        try:
+            wait_landed(app, expect)
+            return
+        except AssertionError:
+            if attempt or app.flutter.launch_count == generation:
+                raise
+
+
+def test_sso_approve_provisions_and_lands(harness, app, oidc_stack):
     # the app landed as the JIT-provisioned user (empty owned list)
-    wait_landed(app, "No workspaces yet")
+    sso_chain_lands(harness, app, oidc_stack, "No workspaces yet")
     assert app.has_text(IDP_EMAIL, 10000), "the provisioned user's email chip"
     app.logout()
 
@@ -303,7 +327,10 @@ def test_sso_approve_provisions_and_lands(harness, app, oidc_stack):
     entry = admin_user_entry(harness, IDP_EMAIL)
     assert entry is not None, "JIT provisioning never created the user"
     assert entry.get("provider") == "fmtk-idp", entry
-    # the IdP saw the whole leg: authorize -> approve -> PKCE-checked token
+    # the IdP saw the whole leg: authorize -> approve -> PKCE-checked
+    # token. Events accumulate across legs, so under a wedge re-drive
+    # this pins "some leg minted a token", not necessarily the last
+    # one — the landing itself is pinned by wait_landed above.
     assert ("token", IDP_EMAIL) in oidc_stack.events, oidc_stack.events
 
 
@@ -436,13 +463,7 @@ def test_logout_routes_through_idp_when_configured(harness, app, oidc_stack):
     # ...and with logout-redirect off (the config so far), logout stays
     # in-app: covered by the earlier scenarios' plain app.logout() legs
     enable_sso(harness, oidc_stack, logout_redirect=True)
-    at_login(harness, app)
-    remount_login(app)
-    app.wait_for_text(PROVIDER_LABEL, 30000)
-
-    tap_sso(app, oidc_stack)
-    approve_at_idp(oidc_stack, app, 0)
-    wait_landed(app, "No workspaces yet")
+    sso_chain_lands(harness, app, oidc_stack, "No workspaces yet", remount=True)
 
     # logout now routes the tab through the IdP's end-session endpoint
     # and back to the app's login page. The IdP leg is a sub-second
