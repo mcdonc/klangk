@@ -1536,7 +1536,9 @@ class FlutterRun:
         # Every completed (re)launch — boot, restart_app, wedge recovery —
         # bumps the generation so callers can detect that the app they
         # were driving died under them (the SSO landing re-drive in
-        # test_oidc keys off this).
+        # test_oidc keys off this). Unlike ``launch_serial`` (a deep-link
+        # uniqueness counter for restart_app's at-path boots), a failed
+        # relaunch does not bump this — only an app that came up ready.
         self.launch_count += 1
 
     def adopt(self) -> bool:

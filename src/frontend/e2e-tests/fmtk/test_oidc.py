@@ -317,7 +317,10 @@ def test_sso_approve_provisions_and_lands(harness, app, oidc_stack):
     entry = admin_user_entry(harness, IDP_EMAIL)
     assert entry is not None, "JIT provisioning never created the user"
     assert entry.get("provider") == "fmtk-idp", entry
-    # the IdP saw the whole leg: authorize -> approve -> PKCE-checked token
+    # the IdP saw the whole leg: authorize -> approve -> PKCE-checked
+    # token. Events accumulate across legs, so under a wedge re-drive
+    # this pins "some leg minted a token", not necessarily the last
+    # one — the landing itself is pinned by wait_landed above.
     assert ("token", IDP_EMAIL) in oidc_stack.events, oidc_stack.events
 
 
