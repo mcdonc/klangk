@@ -7,6 +7,12 @@ name: "Fuzz API: daily run"
 
 on:
   workflow_dispatch:
+    inputs:
+      runner:
+        description: "Runner kind: the self-hosted nix VM (default) or stock (ubuntu-latest)"
+        type: choice
+        options: [nix, stock]
+        default: nix
   schedule:
     - cron: "0 6 * * *" # daily, 06:00 UTC
 
@@ -16,26 +22,59 @@ concurrency:
 
 jobs:
   fuzz:
-    runs-on: ubuntu-latest
+    # The schedule runs on the self-hosted NixOS runner (label "nix",
+    # klangk-ci VM), which is under our control and is not reclaimed
+    # mid-job: hosted ubuntu-latest eviction kills the fuzz step (exit
+    # 143, #3471) often enough that the 3-attempt auto-retry mask
+    # (fuzz-daily-retry.yml) no longer converts a kill into a green run —
+    # 12 of 15 daily runs red or cancelled between Oct 10 and Oct 24,
+    # 2026, with every retry attempt evicted (#3584). workflow_dispatch
+    # can still pick stock to reproduce hosted-runner behavior; the
+    # retry safety net keys on the eviction signature either way.
+    runs-on: ${{ inputs.runner == 'stock' && 'ubuntu-latest' || 'nix' }}
     # 40 min headroom: worst case ~570 s server-start wait (#3412) + a
     # 10 min fuzz run + ~5 min of devenv/image setup, all inside the job.
     timeout-minutes: 40
     env:
-      # Use system podman on Ubuntu runners (nix podman lacks SUID newuidmap)
-      KLANGKD_PODMAN_BIN: /usr/bin/podman
+      # System podman on stock Ubuntu runners (nix podman lacks SUID
+      # newuidmap). On the nix runner the host podman — with the SUID
+      # newuidmap shims from the host config — resolves from PATH.
+      KLANGKD_PODMAN_BIN: ${{ inputs.runner == 'stock' && '/usr/bin/podman' || 'podman' }}
     steps:
       - uses: actions/checkout@v7
 
+      # Stock runners only: bootstrap nix + devenv + podman/uidmap. The
+      # nix runner already has the toolchain from its host config (#2772
+      # pattern, same as the e2e suites).
       - uses: ./.github/actions/devenv-setup
-        with:
-          # The sidecar image must be present too: workspace start/restart
-          # attaches it, and with the image missing podman tries to pull it
-          # from docker.io and the restart endpoint returns a raw 500 (#3368).
-          build-tasks: klangk:build-workspace-image klangk:build-network-sidecar
+        if: inputs.runner == 'stock'
+
+      - name: Clean leftover CI podman state
+        # Same guard the e2e suites run: label-nix jobs get ephemeral
+        # JIT VMs, but guard against incomplete prior boots or pool
+        # restarts (and it is harmless on stock runners).
+        run: |
+          podman rm -f klangk-prewarm >/dev/null 2>&1 || true
+          podman ps -aq --filter label=klangk.managed=true \
+            | xargs -r podman rm -f >/dev/null 2>&1 || true
+
+      - name: Build images
+        # Both runner kinds build here: on the nix runner there is no
+        # devenv-setup to do it. The sidecar image must be present too:
+        # workspace start/restart attaches it, and with the image missing
+        # podman tries to pull it from docker.io and the restart endpoint
+        # returns a raw 500 (#3368).
+        run: |
+          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh 2>/dev/null || true
+          retry="$GITHUB_WORKSPACE/.github/actions/devenv-setup/scripts/retry-on-invalid-path.sh"
+          "$retry" devenv tasks run klangk:build-workspace-image klangk:build-network-sidecar
 
       - name: Run fuzzer (10 min)
+        # Ungated on purpose: the scheduled run must always execute the
+        # fuzzer — a runner-gated step here is a green run that fuzzes
+        # nothing (pinned by scripts/tests/test_fuzz_daily_runner.py).
         run: |
-          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh 2>/dev/null || true
           devenv shell -- python scripts/fuzz-api.py --duration 10
 
       - name: Upload server log
