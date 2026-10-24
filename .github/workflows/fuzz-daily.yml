@@ -50,9 +50,9 @@ jobs:
         if: inputs.runner == 'stock'
 
       - name: Clean leftover CI podman state
-        # The nix runner is a persistent VM, so a killed prior run can
-        # leave its labeled containers behind (ephemeral stock runners
-        # start clean; the same guard is harmless there).
+        # Same guard the e2e suites run: label-nix jobs get ephemeral
+        # JIT VMs, but guard against incomplete prior boots or pool
+        # restarts (and it is harmless on stock runners).
         run: |
           podman rm -f klangk-prewarm >/dev/null 2>&1 || true
           podman ps -aq --filter label=klangk.managed=true \
@@ -70,6 +70,9 @@ jobs:
           "$retry" devenv tasks run klangk:build-workspace-image klangk:build-network-sidecar
 
       - name: Run fuzzer (10 min)
+        # Ungated on purpose: the scheduled run must always execute the
+        # fuzzer — a runner-gated step here is a green run that fuzzes
+        # nothing (pinned by scripts/tests/test_fuzz_daily_runner.py).
         run: |
           . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh 2>/dev/null || true
           devenv shell -- python scripts/fuzz-api.py --duration 10

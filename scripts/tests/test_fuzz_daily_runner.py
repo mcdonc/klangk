@@ -14,6 +14,8 @@ Pure file-content contract — no network, no runners. Pins the couplings
 that would otherwise drift silently (the #2772 runner-selection pattern,
 as the e2e suites use it):
 
+- the ``schedule`` trigger keeps the daily cron — dropping it (or the
+  cron) silently stops all daily fuzzing with no red run anywhere;
 - workflow_dispatch exposes a ``runner`` choice with the self-hosted VM
   as the default, so the schedule (which cannot pass inputs) lands on
   ``nix`` and stock stays reachable for reproducing hosted behavior;
@@ -29,9 +31,12 @@ as the e2e suites use it):
 - the image build step runs on every runner kind and builds both images
   (a missing sidecar image turns workspace restart into a raw 500,
   #3368);
+- the fuzzer step itself is ungated — a runner-gated fuzzer step is a
+  green run that fuzzes nothing;
 - a leftover-state guard removes ``klangk.managed=true`` containers
-  before the run — the nix runner is a persistent VM, so a killed prior
-  run can leave containers behind.
+  before the run — label-nix jobs get ephemeral JIT VMs, and the guard
+  covers incomplete prior boots or pool restarts (the same
+  belt-and-braces the e2e suites' cleanup step uses).
 
 If one of these fails, a workflow edit drifted from the policy; fix the
 workflow, not the test.
@@ -44,6 +49,7 @@ import yaml
 WORKFLOWS_DIR = Path(__file__).resolve().parent.parent.parent / ".github" / "workflows"
 DAILY = WORKFLOWS_DIR / "fuzz-daily.yml"
 
+DAILY_CRON = "0 6 * * *"
 NIX_RUNS_ON = "${{ inputs.runner == 'stock' && 'ubuntu-latest' || 'nix' }}"
 STOCK_PODMAN = "${{ inputs.runner == 'stock' && '/usr/bin/podman' || 'podman' }}"
 
@@ -80,6 +86,16 @@ def dispatch_input(wf, name):
     if name not in inputs:
         raise AssertionError(f"fuzz-daily.yml: no workflow_dispatch input {name!r}")
     return inputs[name]
+
+
+def test_schedule_keeps_the_daily_cron():
+    schedule = trigger_map(load_daily()).get("schedule") or []
+    crons = [entry.get("cron") for entry in schedule]
+    assert DAILY_CRON in crons, (
+        "the schedule trigger must keep the daily cron — dropping it (or "
+        "the trigger) silently stops all daily fuzzing with no red run "
+        "anywhere"
+    )
 
 
 def test_dispatch_defaults_to_the_self_hosted_runner():
@@ -140,6 +156,14 @@ def test_image_builds_run_on_every_runner_kind():
         )
 
 
+def test_the_fuzzer_step_is_never_gated():
+    step = find_step(load_daily(), "Run fuzzer (10 min)")
+    assert "if" not in step, (
+        "the fuzzer step must not be runner- or input-gated — a gated "
+        "step is a green scheduled run that fuzzes nothing"
+    )
+
+
 def test_leftover_podman_state_is_cleaned_before_the_run():
     step = find_step(load_daily(), "Clean leftover CI podman state")
     assert "if" not in step, (
@@ -147,7 +171,7 @@ def test_leftover_podman_state_is_cleaned_before_the_run():
         "harmless on ephemeral stock runners"
     )
     assert "label=klangk.managed=true" in step["run"], (
-        "the guard must remove klangk.managed=true containers: the nix "
-        "runner is a persistent VM, so a killed prior run can leave its "
-        "containers behind"
+        "the guard must remove klangk.managed=true containers: it covers "
+        "incomplete prior boots or pool restarts on the label-nix JIT "
+        "VMs (the same belt-and-braces the e2e suites' cleanup uses)"
     )
