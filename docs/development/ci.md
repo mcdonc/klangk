@@ -26,17 +26,20 @@ and do not require devenv. The Python suite covers both the `klangkd`
 E2E tests use `devenv shell` with the full environment (podman, workspace
 image, the proxy). The six E2E workflows default to stock GitHub-hosted
 runners; the self-hosted NixOS runner is an opt-in via `workflow_dispatch`.
+The daily fuzz run inverts this default: it executes on the self-hosted
+NixOS runner (`nix` label), and a `workflow_dispatch` `runner` input can
+select stock GitHub-hosted runners to reproduce hosted behavior (#3584).
 
 ## Security
 
-| Workflow                  | File                        | Description                                      |
-| ------------------------- | --------------------------- | ------------------------------------------------ |
-| **CodeQL**                | `codeql.yml`                | GitHub code scanning for vulnerabilities         |
-| **Python Deps Audit**     | `python-deps-audit.yml`     | pip-audit of the locked Python dependency set    |
-| **Daily Fuzz**            | `fuzz-daily.yml`            | Scheduled API fuzzing (daily, 06:00 UTC)         |
-| **Workspace Image Scan**  | `trivy-workspace-scan.yml`  | Scheduled Trivy scan (Mondays, 06:00 UTC)        |
-| **CDK Host Pentest**      | `cdk-host-pentest.yml`      | Scheduled pentest of the host image (daily)      |
-| **CDK Workspace Pentest** | `cdk-workspace-pentest.yml` | Scheduled pentest of the workspace image (daily) |
+| Workflow                  | File                        | Description                                                               |
+| ------------------------- | --------------------------- | ------------------------------------------------------------------------- |
+| **CodeQL**                | `codeql.yml`                | GitHub code scanning for vulnerabilities                                  |
+| **Python Deps Audit**     | `python-deps-audit.yml`     | pip-audit of the locked Python dependency set                             |
+| **Daily Fuzz**            | `fuzz-daily.yml`            | Scheduled API fuzzing (daily, 06:00 UTC, on the self-hosted `nix` runner) |
+| **Workspace Image Scan**  | `trivy-workspace-scan.yml`  | Scheduled Trivy scan (Mondays, 06:00 UTC)                                 |
+| **CDK Host Pentest**      | `cdk-host-pentest.yml`      | Scheduled pentest of the host image (daily)                               |
+| **CDK Workspace Pentest** | `cdk-workspace-pentest.yml` | Scheduled pentest of the workspace image (daily)                          |
 
 ## Container images
 
