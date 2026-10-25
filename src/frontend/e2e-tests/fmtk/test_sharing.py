@@ -263,7 +263,7 @@ def select_dialog_picker_value(app, closed_label: str, item: str) -> None:
             app.tap_labeled_exact(item)  # a missed tap just retries
         else:
             try:
-                app.tap_button_exact(closed_label)
+                app.tap_button_exact(closed_label, timeout=2)
             except FmtkError:
                 pass  # the label left mid-race (the value just landed)
         time.sleep(1)
