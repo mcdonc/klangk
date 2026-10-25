@@ -2193,22 +2193,51 @@ class FmtkClient:
             node = parents.get(id(node))
         raise FmtkError(f"no tappable node above label {label!r}")
 
-    def tap_button_exact(self, label: str) -> None:
+    def tap_button_exact(self, label: str, timeout: float = 10) -> None:
         """Tap the button whose labels carry ``label`` as a whole line.
 
         Button semantics absorb Semantics-wrapper identifiers (only
         text fields keep them), and substring matching collides with
         siblings ('Restart' vs 'Restart now', 'Shut Down' vs 'Shut Down
         Container') — exact-line matching is the deterministic form.
+
+        The shared-workspace card tap failed on the 2026-10-18/25
+        nightlies with web_gesture_not_supported (#3588): the matched
+        button-typed node carried no tap action — consistent with a
+        snapshot taken while the control's semantics settle (label
+        before action), or with a non-tappable labeled node preceding
+        the real one in tree order; the nightlies' artifacts do not
+        distinguish the two. Both states are unusable targets —
+        tap_widget can only tap nodes exposing the tap action — so
+        hits that expose the action are preferred and the lookup waits
+        the window out before failing.
+
+        Raises ``FmtkError`` (not ``HarnessTimeout``) on both failure
+        shapes — callers catch it to detect a label that left mid-race
+        (``select_dialog_picker_value``).
         """
-        hits = [
+        deadline = time.monotonic() + timeout
+        while True:
+            hits = self.button_hits(label)
+            tappable = [node for node in hits if "tap" in (node.get("actions") or [])]
+            if tappable:
+                return self.tap(tappable[0]["ref"])
+            if time.monotonic() >= deadline:
+                if hits:
+                    raise FmtkError(
+                        f"no tappable button labeled {label!r} — the matches "
+                        "carry no tap action (semantics still settling?)"
+                    )
+                raise FmtkError(f"no button labeled {label!r}")
+            time.sleep(1)
+
+    def button_hits(self, label: str) -> list[dict]:
+        """Button-typed snapshot nodes carrying ``label`` as a whole line."""
+        return [
             node
             for node in find_nodes(self.snapshot(), lambda n: node_type(n) == "button")
             if label_has_line(node, label)
         ]
-        if not hits:
-            raise FmtkError(f"no button labeled {label!r}")
-        self.tap(hits[0]["ref"])
 
     def wait_for_label(self, text: str, timeout: float = 30) -> dict:
         """Block until some node's label fields carry ``text``.
