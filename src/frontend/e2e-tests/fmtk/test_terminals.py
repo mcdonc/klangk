@@ -108,8 +108,10 @@ def open_fixture_workspace(app, email: str) -> None:
     """Open ``fmtk-verify`` for a fixture member: the owner finds it
     under Owned by Me, role members tap the Shared with Me segment
     first. The workspace page's Terminal tab is the mount signal. The
-    tile is addressed as a button (shared tiles surface no tap actions,
-    so the exact-label climb finds nothing to tap)."""
+    tile is addressed as a button: its merged semantics can surface the
+    label before the tap action registers, and the exact-label climb
+    (``tap_labeled_exact``) finds no tappable ancestor when that
+    happens (#3588) — ``tap_button_exact`` waits out that window."""
     app.navigate("/workspaces")
     if email != ADMIN_EMAIL:
         app.tap_labeled_exact("Shared with Me")
