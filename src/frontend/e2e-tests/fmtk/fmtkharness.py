@@ -2193,22 +2193,42 @@ class FmtkClient:
             node = parents.get(id(node))
         raise FmtkError(f"no tappable node above label {label!r}")
 
-    def tap_button_exact(self, label: str) -> None:
+    def tap_button_exact(self, label: str, timeout: float = 10) -> None:
         """Tap the button whose labels carry ``label`` as a whole line.
 
         Button semantics absorb Semantics-wrapper identifiers (only
         text fields keep them), and substring matching collides with
         siblings ('Restart' vs 'Restart now', 'Shut Down' vs 'Shut Down
         Container') — exact-line matching is the deterministic form.
+
+        A snapshot taken while a control's semantics settle can carry
+        the label (or the button flag) before the tap action registers
+        — the shared-workspace card after a login landed in that window
+        on the 2026-10-18/25 nightlies (#3588). Hits that expose the
+        tap action are preferred, and the lookup waits the window out
+        before failing; tap_widget can only tap nodes carrying the
+        action, so a non-tappable hit was never a usable target.
         """
-        hits = [
-            node
-            for node in find_nodes(self.snapshot(), lambda n: node_type(n) == "button")
-            if label_has_line(node, label)
-        ]
-        if not hits:
-            raise FmtkError(f"no button labeled {label!r}")
-        self.tap(hits[0]["ref"])
+        deadline = time.monotonic() + timeout
+        while True:
+            hits = [
+                node
+                for node in find_nodes(
+                    self.snapshot(), lambda n: node_type(n) == "button"
+                )
+                if label_has_line(node, label)
+            ]
+            tappable = [node for node in hits if "tap" in (node.get("actions") or [])]
+            if tappable:
+                return self.tap(tappable[0]["ref"])
+            if time.monotonic() >= deadline:
+                if hits:
+                    raise FmtkError(
+                        f"no tappable button labeled {label!r} — the matches "
+                        "carry no tap action (semantics still settling?)"
+                    )
+                raise FmtkError(f"no button labeled {label!r}")
+            time.sleep(1)
 
     def wait_for_label(self, text: str, timeout: float = 30) -> dict:
         """Block until some node's label fields carry ``text``.
