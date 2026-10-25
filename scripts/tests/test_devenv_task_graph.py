@@ -28,19 +28,29 @@ from pathlib import Path
 _DEVENV_NIX = Path(__file__).resolve().parents[2] / "devenv.nix"
 
 _TASK_BLOCK = re.compile(r'"klangk:update-features"\s*=\s*\{(.*?)\n    \};', re.DOTALL)
-_VENV_PREREQ = 'after = [ "klangk:uv-sync" ];'
+# Structural, not exact-format: nixfmt --width=80 rewraps long attr
+# lists (a grown `after` list must not false-red the pin) and a
+# commented-out line must not false-pass it.
+_VENV_PREREQ = re.compile(r'after\s*=\s*\[[^\]]*"klangk:uv-sync"')
+_VENV_EXEC = re.compile(r"exec\s+\$\{venvPython\}")
 
 
 def update_features_block() -> str:
+    """The task's attr body, `#`-comment lines dropped — a commented-out
+    edge is exactly the regression this contract exists to catch."""
     nix = _DEVENV_NIX.read_text()
     match = _TASK_BLOCK.search(nix)
     assert match, "devenv.nix no longer defines the klangk:update-features task"
-    return match.group(1)
+    return "\n".join(
+        line
+        for line in match.group(1).splitlines()
+        if not line.lstrip().startswith("#")
+    )
 
 
 def test_update_features_declares_uv_sync_prerequisite():
     block = update_features_block()
-    assert _VENV_PREREQ in block, (
+    assert _VENV_PREREQ.search(block), (
         "klangk:update-features execs ${venvPython} but does not run "
         "after klangk:uv-sync — a bare `devenv tasks run` (no shell "
         "entry) finds no venv and dies (#3591)"
@@ -52,7 +62,7 @@ def test_update_features_execs_through_the_venv_python():
     exec too, so removing ${venvPython} from the task invalidates the
     prerequisite test's premise instead of silently passing both."""
     block = update_features_block()
-    assert "exec ${venvPython}" in block, (
+    assert _VENV_EXEC.search(block), (
         "klangk:update-features no longer execs ${venvPython}; revisit "
         "the uv-sync prerequisite (#3591)"
     )
