@@ -370,6 +370,14 @@ in
         bash scripts/stub_dart_features.sh
         exec ${venvPython} scripts/update_features.py --payload-dir "${featuresDir}"
       '';
+      # The exec above shells out through the uv venv, so the task
+      # depends on uv-sync — declared, because a bare ``devenv tasks
+      # run`` of anything pulling this task in (fuzz-daily's Build
+      # images step on the nix runner, #3591) runs no shell entry that
+      # would otherwise create it: on a fresh checkout the venv is
+      # missing and the wrapper dies with "venv/bin/python: No such
+      # file or directory".
+      after = [ "klangk:uv-sync" ];
       before = [ "klangk:flutter-build" ];
       showOutput = true;
       execIfModified = [
