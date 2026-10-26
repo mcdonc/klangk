@@ -49,8 +49,7 @@ while true; do
     exit 0
   fi
 
-  stripped=$(strip_ansi "$log")
-  if [ "$attempt" -eq 1 ] && grep -Eq "${signature_res[0]}|${signature_res[1]}" <<<"$stripped"; then
+  if [ "$attempt" -eq 1 ] && grep -Eq "${signature_res[0]}|${signature_res[1]}" <<<"$(strip_ansi "$log")"; then
     echo "::warning::${retry_annotation}"
     attempt=2
     rm -f "$log"

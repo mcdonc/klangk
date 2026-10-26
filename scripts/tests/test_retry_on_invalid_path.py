@@ -107,6 +107,20 @@ def test_getting_attributes_wording_retries_once_and_succeeds():
         )
     assert result.returncode == 0, result.stderr
     assert attempts == 2
+    assert "retrying once" in result.stdout
+
+
+def test_unquoted_path_still_matches():
+    """The quote classes are optional — an unquoted store path (nix
+    wording varies by version) is the same signature, not a new one."""
+    msg = "error: getting attributes of path /nix/store/abc-builder.pl: No such file or directory"
+    with tempfile.TemporaryDirectory() as tmp:
+        result, attempts = _run_wrapper(
+            _fake(tmp, _FAKE_TEMPLATE.format(probe=_probe(msg)))
+        )
+    assert result.returncode == 0, result.stderr
+    assert attempts == 2
+    assert "retrying once" in result.stdout
 
 
 def test_ansi_colored_signature_still_matches():
