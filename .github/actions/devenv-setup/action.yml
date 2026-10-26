@@ -67,8 +67,10 @@ runs:
       run: |
         . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
         # Retry wrapper: devenv 2.2.x's embedded Nix intermittently fails eval
-        # with "path ... is not valid" (UAF, #2774 / cachix/devenv#3064) - a
-        # per-eval coin flip, so one retry converts it to noise (#2775).
+        # reporting a phantom-missing store path ("path ... is not valid" or
+        # "getting attributes of path ...", UAF, #2774 / cachix/devenv#3064,
+        # #3594) - a per-eval coin flip, so one retry converts it to noise
+        # (#2775).
         "$GITHUB_ACTION_PATH/scripts/retry-on-invalid-path.sh" devenv shell -- true
 
     - name: Build
